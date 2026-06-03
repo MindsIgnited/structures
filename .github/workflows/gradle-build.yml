@@ -59,6 +59,36 @@ jobs:
           DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
           DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
+      - name: Setup pnpm for e2e dependencies
+        if: ${{ steps.gradle_build.outcome == 'success' }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js for e2e dependencies
+        if: ${{ steps.gradle_build.outcome == 'success' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            structures-js/structures-api/pnpm-lock.yaml
+            structures-js/structures-cli/pnpm-lock.yaml
+
+      - name: Build structures-api (for e2e link)
+        if: ${{ steps.gradle_build.outcome == 'success' }}
+        working-directory: structures-js/structures-api
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Build structures-cli (for e2e link)
+        if: ${{ steps.gradle_build.outcome == 'success' }}
+        working-directory: structures-js/structures-cli
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
       - name: Run E2E Tests
         id: run_e2e_tests
         continue-on-error: true
