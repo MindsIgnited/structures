@@ -53,12 +53,12 @@ jobs:
           JRELEASER_GPG_SECRET_KEY: ${{ secrets.GPG_KEY_NEW }}
           JRELEASER_GPG_PASSPHRASE: ${{ secrets.GPG_KEY_PASS_NEW }}
 
-      - name: Publish to Docker Hub
-        if: ${{ steps.gradle_build.outcome == 'success' }}
-        run: ./gradlew bootBuildImage --publishImage
-        env:
-          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
-          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
+#      - name: Publish to Docker Hub
+#        if: ${{ steps.gradle_build.outcome == 'success' }}
+#        run: ./gradlew bootBuildImage --publishImage
+#        env:
+#          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+#          DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
       - name: Run E2E Tests
         id: run_e2e_tests
