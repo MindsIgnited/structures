@@ -10,6 +10,12 @@ export default defineConfig(
             alias:{
                 '@' : resolve(__dirname, 'src')
             },
+            dedupe: [
+                '@kinotic/continuum-client',
+                '@kinotic/continuum-idl',
+                'reflect-metadata',
+                'rxjs'
+            ],
         },
         test: {
             globalSetup: './test/setup.ts',
