@@ -1,7 +1,7 @@
 
 services:
   structures-node1:
-    image: docker.io/mindsignited/structures-server:3.5.3-SNAPSHOT
+    image: docker.io/mindsignited/structures-server:3.5.3
     healthcheck:
       test: ["CMD", "/workspace/health-check"]
       interval: 10s
@@ -90,7 +90,7 @@ services:
           memory: 4G
 
   structures-node2:
-    image: docker.io/mindsignited/structures-server:3.5.3-SNAPSHOT
+    image: docker.io/mindsignited/structures-server:3.5.3
     healthcheck:
       test: ["CMD", "/workspace/health-check"]
       interval: 10s
@@ -178,7 +178,7 @@ services:
           memory: 4G
 
   structures-node3:
-    image: docker.io/mindsignited/structures-server:3.5.3-SNAPSHOT
+    image: docker.io/mindsignited/structures-server:3.5.3
     healthcheck:
       test: ["CMD", "/workspace/health-check"]
       interval: 10s

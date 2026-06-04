@@ -241,7 +241,7 @@ get_coredns_template_path() {
 #
 # Read version from gradle.properties
 # Returns:
-#   Version string (e.g., "0.5.0-SNAPSHOT")
+#   Version string (e.g., "3.5.3-SNAPSHOT")
 # Example:
 #   version=$(get_structures_version)
 #
