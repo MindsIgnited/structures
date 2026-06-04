@@ -300,7 +300,7 @@ Load a locally built Docker image into KinD cluster nodes.
 ./kind-cluster.sh load
 
 # Load specific image
-./kind-cluster.sh load --image mindsignited/structures-server:3.5.3
+./kind-cluster.sh load --image mindsignited/structures-server:3.5.4
 
 # Load into specific cluster
 ./kind-cluster.sh load --name test-cluster
