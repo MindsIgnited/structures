@@ -223,7 +223,7 @@ Build structures-server Docker image using Gradle's `bootBuildImage` task with S
 1. Runs `./gradlew :structures-server:bootBuildImage`
 2. Uses Paketo Buildpacks for optimized Java images
 3. Includes health checker buildpack
-4. Tags image as `kinoticai/structures-server:<version>` from gradle.properties
+4. Tags image as `mindsignited/structures-server:<version>` from gradle.properties
 5. Optionally loads into cluster if `--load` flag provided
 
 **Time:** 2-5 minutes (first build), < 1 minute (subsequent builds with cache)
@@ -249,7 +249,7 @@ Load a locally built Docker image into KinD cluster nodes.
 ./kind-cluster.sh load
 
 # Load specific image
-./kind-cluster.sh load --image kinoticai/structures-server:0.5.0
+./kind-cluster.sh load --image mindsignited/structures-server:3.5.3
 
 # Load into specific cluster
 ./kind-cluster.sh load --name test-cluster
@@ -654,7 +654,7 @@ kubectl describe pod <pod-name>
 
 # Common fixes:
 # 1. If ImagePullBackOff on locally built image:
-./kind-cluster.sh load --image kinoticai/structures-server:<version>
+./kind-cluster.sh load --image mindsignited/structures-server:<version>
 
 # 2. If resource constraints:
 # Edit config/structures-server/values.yaml to reduce resource requests
