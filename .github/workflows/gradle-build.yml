@@ -69,7 +69,7 @@ jobs:
         if: ${{ steps.gradle_build.outcome == 'success' }}
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: |
             structures-js/structures-api/pnpm-lock.yaml

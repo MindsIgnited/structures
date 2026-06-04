@@ -15,14 +15,14 @@ importers:
         specifier: ^2.2.0
         version: 2.2.0(vue@3.5.16(typescript@5.8.3))
       '@kinotic/continuum-client':
-        specifier: ^2.14.10
+        specifier: 2.14.10
         version: 2.14.10(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl':
-        specifier: ^2.0.4
+        specifier: 2.0.4
         version: 2.0.4
       '@kinotic/structures-api':
-        specifier: ^3.5.0
-        version: 3.5.0(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
+        specifier: ^3.5.3
+        version: 3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
       '@mdi/js':
         specifier: ^7.4.47
         version: 7.4.47
@@ -360,8 +360,8 @@ packages:
   '@kinotic/continuum-idl@2.0.4':
     resolution: {integrity: sha512-akXcSw6Pw6hdorPV1lU2RXvMS+kpWZQnzfZv3GysyUrVU8IAZU5N1FmBM8QmthJUz+SXNdHgYzuireaV8aLtAw==}
 
-  '@kinotic/structures-api@3.5.0':
-    resolution: {integrity: sha512-YZE32+CwXAbzGHr25Q8VrK5hIy6++w6vtPSN/TMefXTXF1LZO5GAQXFO5s7mBAeT+e09qFRv2f/LCMrV0cJoAA==}
+  '@kinotic/structures-api@3.5.3':
+    resolution: {integrity: sha512-a5gmJbnHhIGdare9o02R1CQkz5LlNUBv+pYqt5a5cjZE15E6/DDJcj0u4uE5jrQGiIJfUL+GLo2GHTMjz/0wiw==}
     peerDependencies:
       '@kinotic/continuum-client': ^2.14.10
 
@@ -1718,7 +1718,7 @@ snapshots:
 
   '@kinotic/continuum-idl@2.0.4': {}
 
-  '@kinotic/structures-api@3.5.0(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))':
+  '@kinotic/structures-api@3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))':
     dependencies:
       '@kinotic/continuum-client': 2.14.10(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl': 2.0.4

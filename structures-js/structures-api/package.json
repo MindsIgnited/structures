@@ -1,6 +1,6 @@
 {
   "name": "@kinotic/structures-api",
-  "version": "3.5.0",
+  "version": "3.5.3",
   "author": "Kinotic Developers",
   "license": "MIT",
   "homepage": "https://kinotic-ai.github.io/kinotic/",
@@ -52,5 +52,6 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
-  }
+  },
+  "packageManager": "pnpm@10.34.1"
 }

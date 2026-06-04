@@ -12,7 +12,7 @@ $ npm install -g @kinotic/structures-cli
 $ structures COMMAND
 running command...
 $ structures (--version)
-@kinotic/structures-cli/3.5.0 darwin-arm64 node-v22.13.1
+@kinotic/structures-cli/3.5.3 darwin-arm64 node-v24.14.1
 $ structures --help [COMMAND]
 USAGE
   $ structures COMMAND
@@ -70,7 +70,7 @@ EXAMPLES
   $ structures autocomplete --refresh-cache
 ```
 
-_See code: [@oclif/plugin-autocomplete](https://github.com/oclif/plugin-autocomplete/blob/v3.2.39/src/commands/autocomplete/index.ts)_
+_See code: [@oclif/plugin-autocomplete](https://github.com/oclif/plugin-autocomplete/blob/v3.2.50/src/commands/autocomplete/index.ts)_
 
 ## `structures gen`
 
@@ -122,7 +122,7 @@ EXAMPLES
   $ structures gen -v
 ```
 
-_See code: [src/commands/generate.ts](https://github.com/kinotic-ai/kinotic/blob/v3.5.0/src/commands/generate.ts)_
+_See code: [src/commands/generate.ts](https://github.com/kinotic-ai/kinotic/blob/v3.5.3/src/commands/generate.ts)_
 
 ## `structures help [COMMAND]`
 
@@ -198,7 +198,7 @@ EXAMPLES
   $ structures init -a my.app -e path/to/entities -g path/to/services
 ```
 
-_See code: [src/commands/initialize.ts](https://github.com/kinotic-ai/kinotic/blob/v3.5.0/src/commands/initialize.ts)_
+_See code: [src/commands/initialize.ts](https://github.com/kinotic-ai/kinotic/blob/v3.5.3/src/commands/initialize.ts)_
 
 ## `structures plugins`
 
@@ -221,7 +221,7 @@ EXAMPLES
   $ structures plugins
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/v5.4.54/src/commands/plugins/index.ts)_
+_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.72/src/commands/plugins/index.ts)_
 
 ## `structures plugins add PLUGIN`
 
@@ -295,7 +295,7 @@ EXAMPLES
   $ structures plugins inspect myplugin
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/v5.4.54/src/commands/plugins/inspect.ts)_
+_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.72/src/commands/plugins/inspect.ts)_
 
 ## `structures plugins install PLUGIN`
 
@@ -344,7 +344,7 @@ EXAMPLES
     $ structures plugins install someuser/someplugin
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/v5.4.54/src/commands/plugins/install.ts)_
+_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.72/src/commands/plugins/install.ts)_
 
 ## `structures plugins link PATH`
 
@@ -375,7 +375,7 @@ EXAMPLES
   $ structures plugins link myplugin
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/v5.4.54/src/commands/plugins/link.ts)_
+_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.72/src/commands/plugins/link.ts)_
 
 ## `structures plugins remove [PLUGIN]`
 
@@ -416,7 +416,7 @@ FLAGS
   --reinstall  Reinstall all plugins after uninstalling.
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/v5.4.54/src/commands/plugins/reset.ts)_
+_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.72/src/commands/plugins/reset.ts)_
 
 ## `structures plugins uninstall [PLUGIN]`
 
@@ -444,7 +444,7 @@ EXAMPLES
   $ structures plugins uninstall myplugin
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/v5.4.54/src/commands/plugins/uninstall.ts)_
+_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.72/src/commands/plugins/uninstall.ts)_
 
 ## `structures plugins unlink [PLUGIN]`
 
@@ -488,7 +488,7 @@ DESCRIPTION
   Update installed plugins.
 ```
 
-_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/v5.4.54/src/commands/plugins/update.ts)_
+_See code: [@oclif/plugin-plugins](https://github.com/oclif/plugin-plugins/blob/5.4.72/src/commands/plugins/update.ts)_
 
 ## `structures sync`
 
@@ -552,7 +552,7 @@ EXAMPLES
   $ structures sync -p -v -s http://localhost:9090
 ```
 
-_See code: [src/commands/synchronize.ts](https://github.com/kinotic-ai/kinotic/blob/v3.5.0/src/commands/synchronize.ts)_
+_See code: [src/commands/synchronize.ts](https://github.com/kinotic-ai/kinotic/blob/v3.5.3/src/commands/synchronize.ts)_
 
 ## `structures update [CHANNEL]`
 
@@ -590,5 +590,5 @@ EXAMPLES
     $ structures update --available
 ```
 
-_See code: [@oclif/plugin-update](https://github.com/oclif/plugin-update/blob/v4.7.16/src/commands/update.ts)_
+_See code: [@oclif/plugin-update](https://github.com/oclif/plugin-update/blob/4.7.46/src/commands/update.ts)_
 <!-- commandsstop -->
