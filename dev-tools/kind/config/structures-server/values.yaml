@@ -18,7 +18,7 @@
 #    ./gradlew :structures-server:bootBuildImage
 #
 # 2. Load into KinD cluster:
-#    kind load docker-image kinoticai/structures-server:3.5.1-SNAPSHOT --name structures-cluster
+#    kind load docker-image mindsignited/structures-server:3.5.3-SNAPSHOT --name structures-cluster
 #
 # OR use the helper script:
 #    ./dev-tools/kind/kind-cluster.sh build --load
@@ -31,9 +31,9 @@ nameOverride: ""
 # Image configuration
 image:
   # Repository matches bootBuildImage output
-  repository: kinoticai/structures-server
-  # Tag from gradle.properties version (structuresVersion=3.5.1-SNAPSHOT)
-  tag: 3.5.2
+  repository: mindsignited/structures-server
+  # Tag from gradle.properties version (structuresVersion=3.5.3-SNAPSHOT)
+  tag: 3.5.3
   # Never pull - use images loaded into KinD cluster
   pullPolicy: Never
   sha: ""
@@ -45,8 +45,8 @@ migration:
   backoffLimit: 3
   activeDeadlineSeconds: 300
   image:
-    repository: kinoticai/structures-migration
-    tag: 3.5.2
+    repository: mindsignited/structures-migration
+    tag: 3.5.3
     # Never pull - use images loaded into KinD cluster
     pullPolicy: Never
     sha: ""

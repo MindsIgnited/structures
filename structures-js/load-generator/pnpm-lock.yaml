@@ -18,11 +18,11 @@ importers:
         specifier: ^2.0.4
         version: 2.0.4
       '@kinotic/structures-api':
-        specifier: ^3.5.0
-        version: 3.5.0(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
+        specifier: ^3.5.3
+        version: 3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
       '@kinotic/structures-cli':
-        specifier: ^3.5.0
-        version: 3.5.0(@types/node@25.1.0)
+        specifier: ^3.5.3
+        version: 3.5.3(@types/node@25.1.0)
       '@opentelemetry/api':
         specifier: 1.9.0
         version: 1.9.0
@@ -572,13 +572,13 @@ packages:
   '@kinotic/continuum-idl@2.0.4':
     resolution: {integrity: sha512-akXcSw6Pw6hdorPV1lU2RXvMS+kpWZQnzfZv3GysyUrVU8IAZU5N1FmBM8QmthJUz+SXNdHgYzuireaV8aLtAw==}
 
-  '@kinotic/structures-api@3.5.0':
-    resolution: {integrity: sha512-YZE32+CwXAbzGHr25Q8VrK5hIy6++w6vtPSN/TMefXTXF1LZO5GAQXFO5s7mBAeT+e09qFRv2f/LCMrV0cJoAA==}
+  '@kinotic/structures-api@3.5.3':
+    resolution: {integrity: sha512-a5gmJbnHhIGdare9o02R1CQkz5LlNUBv+pYqt5a5cjZE15E6/DDJcj0u4uE5jrQGiIJfUL+GLo2GHTMjz/0wiw==}
     peerDependencies:
       '@kinotic/continuum-client': ^2.14.10
 
-  '@kinotic/structures-cli@3.5.0':
-    resolution: {integrity: sha512-hAO4+zrs52genp1ViveAJM7icsCCR8Szjr4V+Fx1jIYRcBIuc0yv42qIngLXuUefTkpXovhyq+ytMofpXiw+lA==}
+  '@kinotic/structures-cli@3.5.3':
+    resolution: {integrity: sha512-L1Z1bsBN2p1RnKNQ9xhdshV83H+uqO21rMlYPWaSvXzHoIzlWcDfLOqNYYFfOggSFttjJeRSm5miir2Iyn/VDA==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -870,67 +870,56 @@ packages:
     resolution: {integrity: sha512-gTJ/JnnjCMc15uwB10TTATBEhK9meBIY+gXP4s0sHD1zHOaIh4Dmy1X9wup18IiY9tTNk5gJc4yx9ctj/fjrIw==}
     cpu: [arm]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.43.0':
     resolution: {integrity: sha512-ZJ3gZynL1LDSIvRfz0qXtTNs56n5DI2Mq+WACWZ7yGHFUEirHBRt7fyIk0NsCKhmRhn7WAcjgSkSVVxKlPNFFw==}
     cpu: [arm]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.43.0':
     resolution: {integrity: sha512-8FnkipasmOOSSlfucGYEu58U8cxEdhziKjPD2FIa0ONVMxvl/hmONtX/7y4vGjdUhjcTHlKlDhw3H9t98fPvyA==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.43.0':
     resolution: {integrity: sha512-KPPyAdlcIZ6S9C3S2cndXDkV0Bb1OSMsX0Eelr2Bay4EsF9yi9u9uzc9RniK3mcUGCLhWY9oLr6er80P5DE6XA==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-loongarch64-gnu@4.43.0':
     resolution: {integrity: sha512-HPGDIH0/ZzAZjvtlXj6g+KDQ9ZMHfSP553za7o2Odegb/BEfwJcR0Sw0RLNpQ9nC6Gy8s+3mSS9xjZ0n3rhcYg==}
     cpu: [loong64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-powerpc64le-gnu@4.43.0':
     resolution: {integrity: sha512-gEmwbOws4U4GLAJDhhtSPWPXUzDfMRedT3hFMyRAvM9Mrnj+dJIFIeL7otsv2WF3D7GrV0GIewW0y28dOYWkmw==}
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-gnu@4.43.0':
     resolution: {integrity: sha512-XXKvo2e+wFtXZF/9xoWohHg+MuRnvO29TI5Hqe9xwN5uN8NKUYy7tXUG3EZAlfchufNCTHNGjEx7uN78KsBo0g==}
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.43.0':
     resolution: {integrity: sha512-ruf3hPWhjw6uDFsOAzmbNIvlXFXlBQ4nk57Sec8E8rUxs/AI4HD6xmiiasOOx/3QxS2f5eQMKTAwk7KHwpzr/Q==}
     cpu: [riscv64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.43.0':
     resolution: {integrity: sha512-QmNIAqDiEMEvFV15rsSnjoSmO0+eJLoKRD9EAa9rrYNwO/XRCtOGM3A5A0X+wmG+XRrw9Fxdsw+LnyYiZWWcVw==}
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.43.0':
     resolution: {integrity: sha512-jAHr/S0iiBtFyzjhOkAics/2SrXE092qyqEg96e90L3t9Op8OTzS6+IX0Fy5wCt2+KqeHAkti+eitV0wvblEoQ==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.43.0':
     resolution: {integrity: sha512-3yATWgdeXyuHtBhrLt98w+5fKurdqvs8B53LaoKD7P7H7FKOONLsBVMNl9ghPQZQuYcceV5CDyPfyfGpMWD9mQ==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-win32-arm64-msvc@4.43.0':
     resolution: {integrity: sha512-wVzXp2qDSCOpcBCT5WRWLmpJRIzv23valvcTwMHEobkjippNf+C3ys/+wf07poPkeNix0paTNemB2XrHr2TnGw==}
@@ -1121,6 +1110,7 @@ packages:
   basic-ftp@5.0.5:
     resolution: {integrity: sha512-4Bcg1P8xhUuqcii/S0Z9wiHIrQVPMermM1any+MX5GeGD7faD3/msQUDGLol9wOcz4/jbg/WJnGqoJF6LiBdtg==}
     engines: {node: '>=10.0.0'}
+    deprecated: Security vulnerability fixed in 5.2.1, please upgrade
 
   bl@4.1.0:
     resolution: {integrity: sha512-1W07cM9gS6DcLperZfFSj+bWLtaPGSOHWhPiGzXmvVJbRLdG82sH/Kn8EtW1VqWVA54AKf2h5k5BbnIbwF3h6w==}
@@ -2864,19 +2854,19 @@ snapshots:
 
   '@kinotic/continuum-idl@2.0.4': {}
 
-  '@kinotic/structures-api@3.5.0(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))':
+  '@kinotic/structures-api@3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))':
     dependencies:
       '@kinotic/continuum-client': 2.14.10(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl': 2.0.4
       reflect-metadata: 0.2.2
       rxjs: 7.8.2
 
-  '@kinotic/structures-cli@3.5.0(@types/node@25.1.0)':
+  '@kinotic/structures-cli@3.5.3(@types/node@25.1.0)':
     dependencies:
       '@inquirer/prompts': 8.1.0(@types/node@25.1.0)
       '@kinotic/continuum-client': 2.14.10(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl': 2.0.4
-      '@kinotic/structures-api': 3.5.0(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
+      '@kinotic/structures-api': 3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
       '@oclif/core': 4.8.0
       '@oclif/plugin-autocomplete': 3.2.39
       '@oclif/plugin-help': 6.2.28

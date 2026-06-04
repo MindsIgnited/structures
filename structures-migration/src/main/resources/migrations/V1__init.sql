@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS struct_structure (
 -- Reindex data from namespace index to struct_application index
 REINDEX namespace INTO struct_application 
 WITH (SCRIPT == 'ctx._source.enableGraphQL = true;
-                 ctx._source.enableOpenAPI = true;',
+                 ctx._source.enableOpenAPI = true;
+                 ctx._source.remove("name");
+                 ctx._source.remove("federatedGraphQl");',
       SKIP_IF_NO_SOURCE == TRUE, 
       WAIT == TRUE);
 
@@ -70,15 +72,21 @@ WITH (SCRIPT == 'ctx._source.applicationId = ctx._source.id;
                  ctx._source.name = "Default";
                  ctx._source.description = "Default project";
                  ctx._source.sourceOfTruth = "TYPESCRIPT";
-                 ctx._source.updated = new Date().getTime();',
+                 ctx._source.updated = new Date().getTime();
+                 ctx._source.remove("federatedGraphQl");',
       SKIP_IF_NO_SOURCE == TRUE,
       WAIT == TRUE);
 
 -- Reindex data from structures index to struct_structure table
-REINDEX structure INTO struct_structure 
+REINDEX structure INTO struct_structure
 WITH (SCRIPT == 'ctx._source.applicationId = ctx._source.namespace;
                  ctx._source.projectId = ctx._source.namespace + "_default";
-                 ctx._source.remove("namespace");',
+                 ctx._source.remove("namespace");
+                 ctx._source.remove("stream");
+                 ctx._source.remove("metadata");
+                 ctx._source.remove("traits");
+                 ctx._source.remove("primaryKey");
+                 ctx._source.remove("itemDefinition");',
       SKIP_IF_NO_SOURCE == TRUE,
       WAIT == TRUE);
 

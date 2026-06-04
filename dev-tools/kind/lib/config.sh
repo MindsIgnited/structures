@@ -241,7 +241,7 @@ get_coredns_template_path() {
 #
 # Read version from gradle.properties
 # Returns:
-#   Version string (e.g., "0.5.0-SNAPSHOT")
+#   Version string (e.g., "3.5.3-SNAPSHOT")
 # Example:
 #   version=$(get_structures_version)
 #
@@ -267,7 +267,7 @@ get_structures_version() {
 #
 # Get image name for structures-server
 # Returns:
-#   Full image name (e.g., "kinoticai/structures-server:0.5.0-SNAPSHOT")
+#   Full image name (e.g., "mindsignited/structures-server:3.5.3-SNAPSHOT")
 # Example:
 #   image=$(get_image_name)
 #
@@ -275,14 +275,14 @@ get_image_name() {
     local version
     version=$(get_structures_version) || return 1
     
-    local image_name="${IMAGE_NAME:-kinoticai/structures-server}"
+    local image_name="${IMAGE_NAME:-mindsignited/structures-server}"
     echo "${image_name}:${version}"
 }
 
 #
 # Get image name for structures-migration
 # Returns:
-#   Full image name (e.g., "kinoticai/structures-migration:0.5.0-SNAPSHOT")
+#   Full image name (e.g., "mindsignited/structures-migration:3.5.3-SNAPSHOT")
 # Example:
 #   migration_image=$(get_migration_image_name)
 #
@@ -290,7 +290,7 @@ get_migration_image_name() {
     local version
     version=$(get_structures_version) || return 1
     
-    echo "kinoticai/structures-migration:${version}"
+    echo "mindsignited/structures-migration:${version}"
 }
 
 #

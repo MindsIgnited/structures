@@ -1,8 +1,8 @@
 # Local frontend runtime config overrides (not for source control)
-structures-frontend-next/public/app-config.override.json
-structures-frontend-next/public/app-config.json.local
-structures-frontend-next/public/config/app-config.override.json
-structures-frontend-next/public/config/app-config.json.local
+structures-frontend/public/app-config.override.json
+structures-frontend/public/app-config.json.local
+structures-frontend/public/config/app-config.override.json
+structures-frontend/public/config/app-config.json.local
 # Local service config overrides (not for source control)
 structures-server/src/main/resources/application-local.yml
 

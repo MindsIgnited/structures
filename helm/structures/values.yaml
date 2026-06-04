@@ -2,9 +2,9 @@ replicaCount: 1
 nameOverride: ""
 
 image:
-  repository: kinoticai/structures-server
+  repository: mindsignited/structures-server
   pullPolicy: Always
-  tag: "3.5.2"
+  tag: "3.5.3"
   sha: ""
 
 # Migration configuration
@@ -14,8 +14,8 @@ migration:
   backoffLimit: 3
   activeDeadlineSeconds: 300
   image:
-    repository: kinoticai/structures-migration
-    tag: "3.5.2"
+    repository: mindsignited/structures-migration
+    tag: "3.5.3"
     pullPolicy: Always
     sha: ""
 

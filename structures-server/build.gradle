@@ -27,9 +27,9 @@ dependencies {
 }
 
 tasks.named('processResources') {
-	dependsOn ":structures-frontend-next:copyDist"
+	dependsOn ":structures-frontend:copyDist"
 }
 
 tasks.named('sourcesJar') {
-	dependsOn ":structures-frontend-next:copyDist"
+	dependsOn ":structures-frontend:copyDist"
 }

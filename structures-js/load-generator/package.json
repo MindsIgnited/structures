@@ -32,8 +32,8 @@
     "@faker-js/faker": "^10.2.0",
     "@kinotic/continuum-client": "^2.14.10",
     "@kinotic/continuum-idl": "^2.0.4",
-    "@kinotic/structures-api": "^3.5.0",
-    "@kinotic/structures-cli": "^3.5.0",
+    "@kinotic/structures-api": "^3.5.3",
+    "@kinotic/structures-cli": "^3.5.3",
     "@opentelemetry/api": "1.9.0",
     "@opentelemetry/exporter-trace-otlp-grpc": "0.211.0",
     "@opentelemetry/instrumentation": "0.211.0",
@@ -46,5 +46,5 @@
     "uuid": "^13.0.0",
     "ws": "^8.19.0"
   },
-  "packageManager": "pnpm@10.28.2"
+  "packageManager": "pnpm@10.34.1"
 }

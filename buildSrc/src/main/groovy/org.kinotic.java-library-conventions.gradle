@@ -35,9 +35,9 @@ publishing {
             }
 
             pom {
-                name = 'Kinotic'
-                description = 'Rapid development platform for AI powered applications'
-                url = 'https://kinotic.ai'
+                name = 'Structures Framework'
+                description = 'Framework for data storage and retrieval, supporting schema evolution!'
+                url = 'https://github.com/MindsIgnited/structures'
 
                 licenses {
                     license {
@@ -47,14 +47,14 @@ publishing {
                 }
                 developers {
                     developer {
-                        name = 'Kinotic AI Development Team'
-                        email = 'develop@kinotic.ai'
+                        name = 'Minds Ignited Developers'
+                        email = 'develop@mindsignited.com'
                     }
                 }
                 scm {
-                    connection = 'scm:git:https://github.com/kinotic-ai/kinotic.git'
-                    developerConnection = 'scm:git:https://github.com/kinotic-ai/kinotic.git'
-                    url = 'https://github.com/kinotic-ai/kinotic'
+                    connection = 'scm:git:https://github.com/MindsIgnited/structures.git'
+                    developerConnection = 'scm:git:https://github.com/MindsIgnited/structures.git'
+                    url = 'https://github.com/MindsIgnited/structures'
                 }
             }
         }

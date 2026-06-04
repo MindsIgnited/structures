@@ -11,7 +11,7 @@
   "dependencies": {
     "@kinotic/continuum-client": "2.14.10",
     "@kinotic/continuum-idl": "^2.0.4",
-    "@kinotic/structures-api": "^3.5.0",
+    "@kinotic/structures-api": "link:../structures-api",
     "@stomp/rx-stomp": "2.1.0",
     "@stomp/stompjs": "7.2.1",
     "reflect-metadata": "^0.2.2",
@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@faker-js/faker": "^10.2.0",
-    "@kinotic/structures-cli": "^3.5.0",
+    "@kinotic/structures-cli": "link:../structures-cli",
     "@types/node": "^25.0.6",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-vue": "^6.0.3",
@@ -41,6 +41,10 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
-  }
+    ],
+    "overrides": {
+      "@kinotic/structures-api": "link:../structures-api"
+    }
+  },
+  "packageManager": "pnpm@10.34.1"
 }
