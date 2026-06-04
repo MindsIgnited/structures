@@ -86,7 +86,9 @@ WITH (SCRIPT == 'ctx._source.applicationId = ctx._source.namespace;
                  ctx._source.remove("metadata");
                  ctx._source.remove("traits");
                  ctx._source.remove("primaryKey");
-                 ctx._source.remove("itemDefinition");',
+                 ctx._source.remove("itemDefinition");
+                 ctx._source.remove("multiTenantSelectionEnabled");
+                 ctx._source.remove("optimisticLockingEnabled");',
       SKIP_IF_NO_SOURCE == TRUE,
       WAIT == TRUE);
 
