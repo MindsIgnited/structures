@@ -269,7 +269,7 @@ oidc-security-service:
 For detailed OIDC configuration and troubleshooting, see:
 - [OIDC Implementation Guide](oidc-docs/OIDC_IMPLEMENTATION.md)
 - [Provider-Specific Guides](oidc-docs/) - Okta, Microsoft, Keycloak, and more
-- [Frontend Configuration](../structures-frontend-next/CONFIGURATION.md)
+- [Frontend Configuration](../structures-frontend/CONFIGURATION.md)
 
 ## License
 

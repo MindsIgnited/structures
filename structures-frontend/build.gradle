@@ -13,12 +13,13 @@ node {
 
     // // Version of node to download and install (only used if download is true)
     // // It will be unpacked in the workDir
-    version = "22.16.0"
+    version = "24.14.1"
 
     // // Version of Yarn to use
     // // Any Yarn task first installs Yarn in the yarnWorkDir
     // // It uses the specified version if defined and the latest version otherwise (by default)
     // yarnVersion = "1.22.21"
+    pnpmVersion = "9.15.5"
 
     // Base URL for fetching node distributions
     // Only used if download is true

@@ -129,7 +129,7 @@ Structures consists of several key components:
 - **[structures-server](structures-server/README.md)**: REST API and web interface
 - **[structures-auth](structures-auth/README.md)**: Authentication with OIDC support
 - **[structures-cli](https://www.npmjs.com/package/@kinotic/structures-cli)**: Command-line tools
-- **[structures-frontend-next](structures-frontend-next/README.md)**: Modern Vue 3 GUI
+- **[structures-frontend-next](structures-frontend/README.md)**: Modern Vue 3 GUI
 
 ## 📚 Documentation
 
