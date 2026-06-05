@@ -1,4 +1,4 @@
-rootProject.name = 'kinotic'
+rootProject.name = 'structures'
 
 rootDir.listFiles().each {
     if (it.directory && new File(it, 'settings.gradle').exists()) {

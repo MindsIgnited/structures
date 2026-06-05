@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Structures Next UI" type="js.build_tools.npm">
-    <package-json value="$PROJECT_DIR$/package.json" />
+    <package-json value="$PROJECT_DIR$/structures-frontend/package.json" />
     <command value="run" />
     <scripts>
       <script value="dev" />
