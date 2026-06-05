@@ -89,7 +89,16 @@ class ConfigService {
       let staticSitePort = import.meta.env.VITE_STATIC_SITE_PORT ? parseInt(import.meta.env.VITE_STATIC_SITE_PORT) : -1
       const connectionInfo: ConnectionInfo = createConnectionInfo();
       if(staticSitePort === -1 && connectionInfo.port){
-        staticSitePort = connectionInfo.port;
+        if ((window.location.hostname === '127.0.0.1'
+            || window.location.hostname === 'localhost')
+            && window.location.port) {
+
+          // we use the current port for local testing/dev usage
+          staticSitePort = parseInt(window.location.port);
+
+        }else{
+          staticSitePort = connectionInfo.port;
+        }
       }
       const resp = await fetch(`${connectionInfo.useSSL ? 'https' : 'http'}://${connectionInfo.host}${staticSitePort === -1 ? '' : ':' + staticSitePort}/${this.config?.frontendConfigurationPath || 'app-config.override.json'}`);
       if (resp.ok) {
