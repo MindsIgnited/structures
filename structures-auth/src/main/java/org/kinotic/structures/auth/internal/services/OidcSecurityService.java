@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 
 @Slf4j
@@ -90,28 +89,25 @@ public class OidcSecurityService implements SecurityService {
                     .parseSignedClaims(token)
                     .getPayload();
 
-            // Validate issuer - this must be hardcoded as email is a standard claim.
-            // there are standard OIDC claims for email, preferred_username, and sub. We test for each
-            // of those in that order.  Then try a few Microsoft specific claims.
+            // Look for an email-formatted value across the standard OIDC claims and a couple of
+            // Microsoft-specific ones. May legitimately be null for M2M tokens — in that case the
+            // matched provider must have allowAnyDomain=true.
             String[] emailClaims = new String[] { "email", "preferred_username", "sub", "upn", "unique_name" };
             String email = null;
             for(String emailClaim : emailClaims) {
-                email = claims.get(emailClaim, String.class);
-                if(email != null && email.contains("@")) {
+                String value = claims.get(emailClaim, String.class);
+                if(value != null && value.contains("@")) {
+                    email = value;
                     break;
                 }
-            }
-            if(email == null) {
-                log.trace("Token has no email found in claims");
-                return CompletableFuture.failedFuture(new RuntimeException("No email found in claims"));
             }
 
             String issuer = claims.getIssuer();
             log.trace("Token has issuer: {}", issuer);
-            OidcProvider oidcProvider = isValidIssuer(issuer, email);
+            OidcProvider oidcProvider = findMatchingProvider(issuer, email);
             if (oidcProvider == null) {
-                log.trace("Token has invalid issuer: {}", issuer);
-                return CompletableFuture.failedFuture(new RuntimeException("Invalid issuer: " + issuer));
+                log.trace("No matching OIDC provider for issuer: {} email: {}", issuer, email);
+                return CompletableFuture.failedFuture(new RuntimeException("No matching OIDC provider for issuer: " + issuer));
             }
             
             // Validate audience
@@ -159,27 +155,56 @@ public class OidcSecurityService implements SecurityService {
         }
     }
 
-    private OidcProvider isValidIssuer(String issuer, String email) {
+    /**
+     * Finds an enabled OIDC provider that matches the token's issuer.
+     * Match rules:
+     *   1. Issuer must equal the provider's authority.
+     *   2. If the token has an email, a provider whose configured domains contain the email's
+     *      domain wins. Otherwise we fall back to a provider with allowAnyDomain=true.
+     *   3. If the token has no email, only a provider with allowAnyDomain=true matches.
+     */
+    private OidcProvider findMatchingProvider(String issuer, String email) {
         if (issuer == null) {
             return null;
         }
 
-        OidcProvider oidcProvider = properties.getOidcProviders().stream()
-                .filter(provider -> issuer.equals(provider.getAuthority()) && provider.getDomains().contains(email.split("@")[1]))
+        List<OidcProvider> candidates = properties.getOidcProviders().stream()
+                .filter(p -> issuer.equals(p.getAuthority()))
+                .filter(OidcProvider::isEnabled)
+                .toList();
+
+        if (candidates.isEmpty()) {
+            log.warn("No enabled Oidc Providers configured for issuer: {}", issuer);
+            return null;
+        }
+
+        String emailDomain = email != null && email.contains("@") ? email.split("@")[1] : null;
+
+        if (emailDomain != null) {
+            OidcProvider domainMatch = candidates.stream()
+                    .filter(p -> p.getDomains() != null && p.getDomains().contains(emailDomain))
+                    .findFirst()
+                    .orElse(null);
+            if (domainMatch != null) {
+                return domainMatch;
+            }
+        }
+
+        OidcProvider anyDomainMatch = candidates.stream()
+                .filter(OidcProvider::isAllowAnyDomain)
                 .findFirst()
                 .orElse(null);
-
-        if (oidcProvider == null) {
-            log.warn("No allowed Oidc Providers configured for issuer: {}", issuer);
-            return null;
+        if (anyDomainMatch != null) {
+            return anyDomainMatch;
         }
 
-        if(!oidcProvider.isEnabled()) {
-            log.warn("Oidc Provider found but is not enabled: {}", issuer);
-            return null;
+        if (emailDomain != null) {
+            log.warn("Issuer {} matched but no provider allows domain {} and no allowAnyDomain provider configured",
+                     issuer, emailDomain);
+        } else {
+            log.warn("Issuer {} matched but token has no email and no allowAnyDomain provider configured", issuer);
         }
-
-        return oidcProvider;
+        return null;
     }
 
     private boolean isValidAudience(OidcProvider oidcProvider, Set<String> audiences) {
@@ -224,15 +249,14 @@ public class OidcSecurityService implements SecurityService {
         //   and can add other users as admins/users.  If that is how we manage that, how do we handle the enterprise
         //   cases, automatically configure those users as we validate the tokens? 
 
-        // Create metadata
-        HashMap<String, String> metadata = new HashMap<>(Map.of(
-            ParticipantConstants.PARTICIPANT_TYPE_METADATA_KEY,
-            ParticipantConstants.PARTICIPANT_TYPE_USER,
-            "email", email != null ? email : "",
-            "name", name != null ? name : (preferredUsername != null ? preferredUsername : subject),
-            "iss", claims.getIssuer(),
-            "aud", claims.getAudience().stream().collect(Collectors.joining(", "))
-        ));
+        HashMap<String, String> metadata = new HashMap<>();
+        metadata.put(ParticipantConstants.PARTICIPANT_TYPE_METADATA_KEY, ParticipantConstants.PARTICIPANT_TYPE_USER);
+        metadata.put("name", name != null ? name : (preferredUsername != null ? preferredUsername : subject));
+        metadata.put("iss", claims.getIssuer());
+        metadata.put("aud", String.join(", ", claims.getAudience()));
+        if (email != null) {
+            metadata.put("email", email);
+        }
 
         if(oidcProvider.getMetadata() != null && !oidcProvider.getMetadata().isEmpty()) {
             metadata.putAll(oidcProvider.getMetadata());

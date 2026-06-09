@@ -33,7 +33,7 @@ image:
   # Repository matches bootBuildImage output
   repository: mindsignited/structures-server
   # Tag from gradle.properties version (structuresVersion=3.5.3-SNAPSHOT)
-  tag: 3.5.4
+  tag: 3.5.5
   # Never pull - use images loaded into KinD cluster
   pullPolicy: Never
   sha: ""
@@ -46,7 +46,7 @@ migration:
   activeDeadlineSeconds: 300
   image:
     repository: mindsignited/structures-migration
-    tag: 3.5.4
+    tag: 3.5.5
     # Never pull - use images loaded into KinD cluster
     pullPolicy: Never
     sha: ""
