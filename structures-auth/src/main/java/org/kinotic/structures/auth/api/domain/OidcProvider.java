@@ -64,6 +64,15 @@ public class OidcProvider {
     private List<String> domains;
 
     /**
+     * If true, this provider matches on issuer alone and skips the email-domain check.
+     * Required for M2M tokens (no email claim, sub is a client id) and useful when the
+     * IDP (e.g. Okta) issues tokens for users from arbitrary email domains.
+     * A provider whose {@link #domains} explicitly matches a token's email domain is
+     * preferred over an allowAnyDomain provider with the same issuer.
+     */
+    private boolean allowAnyDomain;
+
+    /**
      * The audience this service will expect for this OIDC provider.
      */
     private String audience;
