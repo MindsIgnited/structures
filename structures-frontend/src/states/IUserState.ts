@@ -6,6 +6,7 @@ import { createDebug } from '@/util/debug'
 
 const debug = createDebug('user-state');
 import { oidcSessionManager } from '@/util/OidcSessionManager'
+import { configService } from '@/util/config'
 import { createConnectionInfo } from '../util/helpers'
 
 export interface IUserState {
@@ -76,6 +77,21 @@ export class UserState implements IUserState {
 
         try {
             this.connectedInfo = await Continuum.connect(connectionInfo)
+
+            // Frontend role gate. The backend has already validated the token; this is a
+            // UI-only admission check using frontEndRoles configured on the OIDC provider.
+            const providerConfig = await configService.getOidcProviderByName(provider)
+            if (providerConfig?.frontEndRoles && providerConfig.frontEndRoles.length > 0) {
+                const userRoles = this.connectedInfo.participant.roles ?? []
+                const hasRequiredRole = providerConfig.frontEndRoles.some(r => userRoles.includes(r))
+                if (!hasRequiredRole) {
+                    try { await Continuum.disconnect() } catch { /* best effort */ }
+                    this.connectedInfo = null
+                    this.accessDenied = true
+                    throw new Error(`User does not have any required frontend role. Required one of: ${providerConfig.frontEndRoles.join(', ')}`)
+                }
+            }
+
             this.authenticated = true
             this.accessDenied = false
             this.oidcUser = user
