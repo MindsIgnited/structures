@@ -41,17 +41,23 @@ public class OidcSecurityService implements SecurityService {
 
     @Override
     public CompletableFuture<Participant> authenticate(Map<String, String> authenticationInfo) {
-        String authorizationHeader = getAuthorizationHeader(authenticationInfo);
-        if (authorizationHeader == null) {
-            return CompletableFuture.failedFuture(new RuntimeException("No authorization header found"));
+        String token;
+
+        if(authenticationInfo.containsKey("passcode")){
+            token = authenticationInfo.get("passcode").trim();
+        }else{
+            String authorizationHeader = getAuthorizationHeader(authenticationInfo);
+            if (authorizationHeader == null) {
+                return CompletableFuture.failedFuture(new RuntimeException("No authorization header found"));
+            }
+
+            String[] parts = authorizationHeader.split(" ");
+            if (parts.length != 2 || !"Bearer".equalsIgnoreCase(parts[0])) {
+                return CompletableFuture.failedFuture(new RuntimeException("Invalid authorization header format, expected 'Bearer <token>'"));
+            }
+            token = parts[1];
         }
 
-        String[] parts = authorizationHeader.split(" ");
-        if (parts.length != 2 || !"Bearer".equalsIgnoreCase(parts[0])) {
-            return CompletableFuture.failedFuture(new RuntimeException("Invalid authorization header format, expected 'Bearer <token>'"));
-        }
-
-        String token = parts[1];
         return verifyJwtToken(token);
     }
 
