@@ -6,7 +6,7 @@ services:
   structures-migration:
     container_name: structures-migration
     pull_policy: always
-    image: mindsignited/structures-migration:${structuresVersion:-3.5.5}
+    image: mindsignited/structures-migration:${structuresVersion:-3.5.6}
     depends_on:
       structures-elasticsearch:
         condition: service_healthy
@@ -17,7 +17,7 @@ services:
   structures-server:
     container_name: structures-server
     pull_policy: always
-    image: mindsignited/structures-server:${structuresVersion:-3.5.5}
+    image: mindsignited/structures-server:${structuresVersion:-3.5.6}
     depends_on:
       structures-elasticsearch:
         condition: service_healthy

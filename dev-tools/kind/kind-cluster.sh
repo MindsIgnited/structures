@@ -728,7 +728,7 @@ Examples:
   $(basename "$0") load
 
   # Load specific image
-  $(basename "$0") load --image mindsignited/structures-server:3.5.4
+  $(basename "$0") load --image mindsignited/structures-server:3.5.6
 
   # Load into specific cluster
   $(basename "$0") load --name test-cluster
