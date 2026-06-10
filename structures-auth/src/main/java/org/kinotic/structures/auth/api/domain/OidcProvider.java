@@ -83,6 +83,17 @@ public class OidcProvider {
     private List<String> roles;
 
     /**
+     * Roles required to access the frontend application via this provider.
+     * NOT used by the backend authorization flow — the backend will still
+     * authenticate any token that satisfies {@link #roles} (or has none required).
+     * This list is shipped to the frontend in the app config and the frontend
+     * enforces it after login by checking the participant's roles against this
+     * list; users with no matching role are rejected at the UI.
+     * If null or empty, the frontend imposes no additional role gate.
+     */
+    private List<String> frontEndRoles;
+
+    /**
      * Any additional metadata of the OIDC provider, will be added to the Participant metadata.
      */
     private Map<String, String> metadata;

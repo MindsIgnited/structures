@@ -167,11 +167,13 @@ oidc-security-service:
 | `redirect-uri` | string | Yes | OAuth redirect URI after authentication |
 | `post-logout-redirect-uri` | string | Yes | Redirect URI after logout |
 | `silent-redirect-uri` | string | Yes | URI for silent token renewal |
-| `domains` | array | Yes | Email domains this provider handles |
+| `domains` | array | No* | Email domains this provider handles. *Required unless `allow-any-domain: true`. |
+| `allow-any-domain` | boolean | No | If `true`, this provider matches on issuer alone and skips the email-domain check. Required for M2M tokens (no email claim, `sub` is a client id) and useful when the IDP issues tokens for users from arbitrary email domains. A provider whose `domains` matches a token's email domain is preferred over an `allow-any-domain` provider with the same issuer. Default: `false`. |
 | `audience` | string | Yes | Expected audience claim in JWT tokens |
 | `roles-claim-path` | string | No | JSON path to roles claim in JWT |
 | `additional-scopes` | string | No | Additional OAuth scopes to request |
-| `roles` | array | No | Default roles for this provider |
+| `roles` | array | No | Roles required by the backend authorization flow. If set, the token must contain at least one of these in the claim at `roles-claim-path`. |
+| `front-end-roles` | array | No | Roles required to access the **frontend** application via this provider. **Not used by backend authorization** — the backend accepts any token that satisfies `roles` (or has none required). The frontend enforces this list after login by intersecting it with the participant's roles; users with no matching role are rejected at the UI. Leave empty/unset to impose no additional frontend gate. |
 | `metadata` | object | No | Additional provider metadata |
 
 ## Security Considerations
@@ -209,20 +211,32 @@ The library includes comprehensive tests:
 
 ### 2. **Token Validation**
 - Validates JWT signature using JWKS from the issuer
-- Verifies issuer against configured OIDC providers
+- Resolves a matching provider for the token (see **Provider Matching** below)
 - Checks audience claims against provider configuration
 - Validates token expiration
+- If `roles-claim-path` is set, extracts roles and (if `roles` is set on the provider) requires at least one match
 
-### 3. **User Creation**
+### 3. **Provider Matching**
+For each token, an enabled provider is selected as follows:
+1. Filter providers whose `authority` equals the token's `iss` claim.
+2. The matcher looks for an email-formatted value across the `email`, `preferred_username`, `sub`, `upn`, and `unique_name` claims.
+3. If an email was found, a provider whose `domains` contains the email's domain wins.
+4. Otherwise, fall back to any matching provider with `allow-any-domain: true`.
+5. If the token has no email and no candidate has `allow-any-domain: true`, the token is rejected.
+
+This lets a single Okta tenant (one `authority`) split across multiple providers — e.g. a per-customer config with explicit `domains` plus a catchall with `allow-any-domain: true` for M2M tokens and arbitrary-domain users.
+
+### 4. **User Creation**
 - Creates `Participant` objects from JWT claims
 - Extracts user information (email, name, roles)
-- Maps email domains to appropriate OIDC providers
+- Email is omitted from metadata when not present in the token (M2M case)
 - Applies role-based access control
 
-### 4. **Frontend Integration**
+### 5. **Frontend Integration**
 - Serves configuration overrides at `/app-config.override.json`
 - Enables dynamic frontend configuration without rebuilds
 - Supports runtime provider enable/disable
+- `front-end-roles` is shipped to the frontend in the config payload. After login, the frontend intersects this list with the participant's roles and rejects users with no overlap — the backend already accepted the token, but the UI app stays gated behind a role check.
 
 ## Examples
 
@@ -262,6 +276,63 @@ oidc-security-service:
         - "yourcompany.com"
       audience: "0oaowrlsm5Ua1vWD85d7"
       roles-claim-path: "roles"
+```
+
+### Okta with Arbitrary Email Domains + Frontend Role Gate
+
+Use this shape when the IDP issues tokens for customers from any email domain
+and you still want to restrict who can access the frontend. The `domains` entry
+is what the frontend uses for SSO discovery; the backend accepts any domain
+because `allow-any-domain` is `true`.
+
+```yaml
+oidc-security-service:
+  enabled: true
+  oidc-providers:
+    - provider: "okta-customers"
+      display-name: "Okta"
+      enabled: true
+      client-id: "0oaowrlsm5Ua1vWD85d7"
+      authority: "https://acme.okta.com/oauth2/default"
+      redirect-uri: "http://localhost:5173/login"
+      post-logout-redirect-uri: "http://localhost:5173"
+      silent-redirect-uri: "http://localhost:5173/login/silent-renew"
+      audience: "0oaowrlsm5Ua1vWD85d7"
+      domains:
+        - "acme.com"
+      allow-any-domain: true
+      roles-claim-path: "roles"
+      front-end-roles:
+        - "structures-user"
+        - "structures-admin"
+```
+
+### Okta M2M (Machine-to-Machine) Tokens
+
+M2M tokens from Okta typically have no `email` claim and a `sub` that is the
+client id. Set `allow-any-domain: true` so the matcher doesn't try to validate
+an email domain, and use `roles` (combined with `roles-claim-path`) to gate on
+the scope/role assigned to the client. Often configured as a *second* provider
+under the same `authority` as your interactive provider, with a different
+audience.
+
+```yaml
+oidc-security-service:
+  enabled: true
+  oidc-providers:
+    - provider: "okta-m2m"
+      display-name: "Okta M2M"
+      enabled: true
+      client-id: "0oaowrlsm5Ua1vWD85d7"
+      authority: "https://acme.okta.com/oauth2/default"
+      redirect-uri: ""
+      post-logout-redirect-uri: ""
+      silent-redirect-uri: ""
+      audience: "api://internal-m2m"
+      allow-any-domain: true
+      roles-claim-path: "scp"
+      roles:
+        - "m2m-service"
 ```
 
 ## Related Documentation

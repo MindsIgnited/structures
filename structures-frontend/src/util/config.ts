@@ -17,6 +17,7 @@ interface OidcProvider {
   audience?: string;
   domains?: string[];
   roles?: string[];
+  frontEndRoles?: string[];
   rolesClaimPath?: string;
   additionalScopes?: string;
   metadata?: Record<string, string>;

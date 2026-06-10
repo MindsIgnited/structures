@@ -111,6 +111,9 @@ Each OIDC provider has the following configuration options:
 - `redirect_uri`: The redirect URI after successful authentication
 - `post_logout_redirect_uri`: The redirect URI after logout
 - `silent_redirect_uri`: The redirect URI for silent token renewal
+- `domains`: Array of email domains this provider handles. Used by the login UI for SSO discovery and by the backend to match tokens to providers.
+- `allowAnyDomain`: If `true`, this provider matches on issuer alone and the backend skips the email-domain check. Required for M2M tokens (no email claim) and useful when the IDP issues tokens for users from arbitrary email domains. Default: `false`.
+- `frontEndRoles`: Array of roles required to access the frontend application via this provider. The backend ignores this list — it is enforced by the frontend after login by intersecting it with the participant's roles. Users with no matching role are signed out at the UI. Leave empty/unset for no frontend role gate.
 
 ### Microsoft-specific Options
 
