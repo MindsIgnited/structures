@@ -32,10 +32,11 @@ nameOverride: ""
 image:
   # Repository matches bootBuildImage output
   repository: mindsignited/structures-server
-  # Tag from gradle.properties version (structuresVersion=3.5.3-SNAPSHOT)
-  tag: 3.5.7
-  # Never pull - use images loaded into KinD cluster
-  pullPolicy: Never
+  # Published tag pulled from Docker Hub. Overridden by deploy --tag, or by
+  # deploy --build-local which uses the locally built gradle.properties version.
+  tag: 3.5.8-pr7.023aa91
+  # Pull from Docker Hub by default; deploy --build-local overrides this to Never
+  pullPolicy: IfNotPresent
   sha: ""
 
 # Migration configuration
@@ -46,9 +47,10 @@ migration:
   activeDeadlineSeconds: 300
   image:
     repository: mindsignited/structures-migration
-    tag: 3.5.7
-    # Never pull - use images loaded into KinD cluster
-    pullPolicy: Never
+    # Keep in sync with image.tag above; deploy --tag sets both
+    tag: 3.5.8-pr7.023aa91
+    # Pull from Docker Hub by default; deploy --build-local overrides this to Never
+    pullPolicy: IfNotPresent
     sha: ""
 
 ## eviction-tracking uses the evictionTracking logic and paths for tracking eviction events
