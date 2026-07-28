@@ -720,63 +720,23 @@ deploy_elasticsearch() {
     local context="kind-${cluster_name}"
     
     progress "Deploying Elasticsearch..."
-    
-    # Elasticsearch version (matching docker-compose compose.ek-stack.yml)
-    local es_version="8.18.1"
-    local es_image="docker.elastic.co/elasticsearch/elasticsearch:${es_version}"
-    local local_tag="localhost/elasticsearch:${es_version}"
-    
-    # Detect host platform for image pulling
-    local platform="linux/amd64"
-    if [[ "$(uname -m)" == "arm64" ]] || [[ "$(uname -m)" == "aarch64" ]]; then
-        platform="linux/arm64"
-    fi
-    
-    # Pre-pull image for current platform and re-tag to avoid multi-platform issues
-    progress "Pre-loading Elasticsearch image into cluster..."
-    if ! docker image inspect "${local_tag}" &>/dev/null; then
-        progress "Pulling ${es_image} for ${platform}..."
-        # Pull for specific platform
-        if ! docker pull --platform "${platform}" "${es_image}"; then
-            error "Failed to pull Elasticsearch image"
-            return 1
-        fi
-        
-        # Re-tag to local name to create clean single-platform reference
-        progress "Re-tagging image to local reference..."
-        if ! docker tag "${es_image}" "${local_tag}"; then
-            error "Failed to tag Elasticsearch image"
-            return 1
-        fi
-    fi
-    
-    # Load the locally-tagged image into KinD (avoids multi-platform issues)
-    progress "Loading image into KinD cluster..."
-    if ! kind load docker-image "${local_tag}" --name "${cluster_name}"; then
-        error "Failed to load Elasticsearch image into cluster"
-        return 1
-    fi
-    
-    # Also tag in the cluster as the original name so pods can find it
-    progress "Tagging image in cluster nodes..."
-    for node in $(kind get nodes --name "${cluster_name}"); do
-        docker exec "${node}" ctr -n k8s.io images tag "${local_tag}" "${es_image}" || true
-    done
-    
+
     # Get Elasticsearch values file from config directory
     local values_flags
     values_flags=$(get_service_helm_flags "elasticsearch") || return 1
-    
+
     progress "Using Elasticsearch configuration from: $(get_service_values_path elasticsearch)"
-    
-    # Deploy using external values file
+
+    # Deploy using external values file. The image/tag come from the values file
+    # and cluster nodes pull directly from the registry; manual kind-load is only
+    # needed for locally built images. Timeout allows for the initial image pull.
     local helm_output
     # shellcheck disable=SC2086
     helm_output=$(helm upgrade --install elasticsearch elastic/elasticsearch \
         --kube-context "${context}" \
         --version 8.5.1 \
         ${values_flags} \
-        --wait --timeout 5m 2>&1)
+        --wait --timeout 10m 2>&1)
     
     local exit_code=$?
     

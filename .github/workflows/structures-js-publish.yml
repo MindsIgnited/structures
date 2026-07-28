@@ -1,0 +1,96 @@
+name: Publish structures-js packages
+
+# Not wired up to automatic triggers yet — run manually from the Actions tab.
+# To enable automatic publishing, replace `on:` with:
+#   on:
+#     push:
+#       branches:
+#         - develop
+#       tags:
+#         - 'v*'
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: structures-js-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish @kinotic/structures-api and @kinotic/structures-cli
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@kinotic'
+          cache: pnpm
+          cache-dependency-path: |
+            structures-js/structures-api/pnpm-lock.yaml
+            structures-js/structures-cli/pnpm-lock.yaml
+
+      - name: Determine version and dist-tag
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            DIST_TAG="latest"
+          else
+            BASE=$(node -p "require('./structures-js/structures-api/package.json').version")
+            BASE=${BASE%%-*}
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            VERSION="${BASE}-dev.${SHORT_SHA}"
+            DIST_TAG="dev"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=${DIST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Publishing version ${VERSION} with dist-tag ${DIST_TAG}"
+
+      - name: Set version in structures-api
+        working-directory: structures-js/structures-api
+        run: npm version --no-git-tag-version --allow-same-version "${{ steps.ver.outputs.version }}"
+
+      - name: Install structures-api deps
+        working-directory: structures-js/structures-api
+        run: pnpm install --frozen-lockfile
+
+      - name: Build structures-api
+        working-directory: structures-js/structures-api
+        run: pnpm build
+
+      - name: Publish structures-api to npm
+        working-directory: structures-js/structures-api
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --no-git-checks --tag "${{ steps.ver.outputs.dist_tag }}"
+
+      - name: Set version and pin api dep in structures-cli
+        working-directory: structures-js/structures-cli
+        run: |
+          npm version --no-git-tag-version --allow-same-version "${{ steps.ver.outputs.version }}"
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.dependencies['@kinotic/structures-api'] = '${{ steps.ver.outputs.version }}';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+      - name: Install structures-cli deps
+        working-directory: structures-js/structures-cli
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Publish structures-cli to npm
+        working-directory: structures-js/structures-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --no-git-checks --tag "${{ steps.ver.outputs.dist_tag }}"
