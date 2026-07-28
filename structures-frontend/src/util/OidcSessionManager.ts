@@ -1,6 +1,6 @@
 import { User, UserManager } from 'oidc-client-ts'
 import { createUserManagerSettings } from '@/pages/login/OidcConfiguration'
-import Cookies from 'js-cookie'
+import { writeTokenCookie } from '@/util/tokenCookie'
 
 /**
  * OidcSessionManager maintains a persistent UserManager instance with event listeners
@@ -40,7 +40,7 @@ class OidcSessionManager {
         // Create bound handlers so we can properly remove them later
         this.boundHandlers.userLoaded = (user: User) => {
             console.log('Token refreshed automatically')
-            this.updateCookies(user)
+            writeTokenCookie(user)
         }
         
         this.boundHandlers.silentRenewError = (error: Error) => {
@@ -96,60 +96,6 @@ class OidcSessionManager {
         return this.userManager
     }
     
-    /**
-     * Update cookies with fresh tokens from the refreshed user
-     */
-    private updateCookies(user: User): void {
-        let tokenToUse = user.access_token
-        
-        // Some providers (like Microsoft) return opaque access tokens
-        // In that case, use the ID token instead
-        if (!this.isValidJWT(user.access_token) && user.id_token) {
-            console.log('Access token is not a valid JWT, using ID token')
-            tokenToUse = user.id_token
-        }
-        
-        Cookies.set('token', tokenToUse, {
-            sameSite: 'strict',
-            secure: true,
-            expires: new Date(user.expires_at! * 1000)
-        })
-        
-        if (user.refresh_token) {
-            const refreshExpiry = this.parseJwtExpiry(user.refresh_token)
-            Cookies.set('oidc_refresh_token', user.refresh_token, {
-                sameSite: 'strict',
-                secure: true,
-                expires: refreshExpiry ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-            })
-        }
-    }
-    
-    /**
-     * Check if a token is a valid JWT (has 3 parts separated by dots)
-     */
-    private isValidJWT(token: string): boolean {
-        try {
-            const parts = token.split('.')
-            return parts.length === 3
-        } catch {
-            return false
-        }
-    }
-    
-    /**
-     * Parse the expiry date from a JWT token
-     */
-    private parseJwtExpiry(token: string): Date | null {
-        try {
-            const parts = token.split('.')
-            if (parts.length !== 3) return null
-            const payload = JSON.parse(atob(parts[1]))
-            return payload.exp ? new Date(payload.exp * 1000) : null
-        } catch {
-            return null
-        }
-    }
 }
 
 export const oidcSessionManager = new OidcSessionManager()
