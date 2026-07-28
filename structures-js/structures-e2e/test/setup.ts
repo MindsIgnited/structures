@@ -2,8 +2,39 @@
 import path from 'node:path'
 // @ts-ignore
 import os from 'node:os'
+// @ts-ignore
+import fs from 'node:fs'
 import {StartedDockerComposeEnvironment, DockerComposeEnvironment, Wait} from 'testcontainers'
 import {TestProject} from 'vitest/node.js'
+
+/**
+ * Load gradle.properties as the docker-compose environment, with
+ * structuresVersion resolved to the effective image tag: an explicit
+ * env override wins (CI exports a PR tag); otherwise a plain version is a
+ * development build and gets -SNAPSHOT appended to mirror
+ * org.kinotic.java-common-conventions.gradle. Passing everything through a
+ * single withEnvironment call avoids depending on compose env-file precedence.
+ */
+function composeEnvironment(): Record<string, string> {
+    const env: Record<string, string> = {}
+    try {
+        const content = fs.readFileSync(path.resolve('../../', 'gradle.properties'), 'utf8')
+        for (const line of content.split('\n')) {
+            const match = line.match(/^([\w.]+)=(.*)$/)
+            if (match) {
+                env[match[1]] = match[2].trim()
+            }
+        }
+    } catch {
+        // fall through to compose defaults
+    }
+    if (process.env.structuresVersion) {
+        env.structuresVersion = process.env.structuresVersion
+    } else if (env.structuresVersion && !env.structuresVersion.includes('-')) {
+        env.structuresVersion += '-SNAPSHOT'
+    }
+    return env
+}
 
 
 let environment: StartedDockerComposeEnvironment
@@ -28,7 +59,7 @@ export async function setup(project: TestProject) {
         environment = await new DockerComposeEnvironment(resolvedPath, files)
             .withWaitStrategy('structures-elasticsearch', Wait.forHttp('/_cluster/health', 9200))
             .withWaitStrategy('structures-server', Wait.forHttp('/health', 9090))
-            .withEnvironmentFile(path.resolve('../../', 'gradle.properties'))
+            .withEnvironment(composeEnvironment())
             .up(['structures-elasticsearch', 'structures-server'])
 
         const container = environment.getContainer('structures-server')

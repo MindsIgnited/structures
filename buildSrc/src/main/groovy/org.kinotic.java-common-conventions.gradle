@@ -5,7 +5,18 @@ plugins {
 }
 
 group 'org.kinotic'
-version "${structuresVersion}"
+
+// gradle.properties holds the plain version (e.g. 3.5.8). Development builds get
+// -SNAPSHOT appended automatically; CI passes -Prelease on main to publish the
+// version as-is (stripping a leftover -SNAPSHOT so the guard and the build agree),
+// and PR builds pass an explicit -PstructuresVersion override.
+def effectiveVersion = "${structuresVersion}"
+if (hasProperty('release')) {
+    effectiveVersion = effectiveVersion - '-SNAPSHOT'
+} else if (!effectiveVersion.contains('-')) {
+    effectiveVersion += '-SNAPSHOT'
+}
+version effectiveVersion
 sourceCompatibility = '21'
 
 repositories {

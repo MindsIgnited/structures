@@ -246,21 +246,35 @@ get_coredns_template_path() {
 #   version=$(get_structures_version)
 #
 get_structures_version() {
+    # Explicit override wins, e.g. deploying the released image from a release
+    # checkout: structuresVersion=3.5.8 ./kind-cluster.sh deploy
+    if [[ -n "${structuresVersion:-}" ]]; then
+        echo "${structuresVersion}"
+        return 0
+    fi
+
     local gradle_props="./gradle.properties"
-    
+
     if [[ ! -f "${gradle_props}" ]]; then
         error "gradle.properties not found"
         return 1
     fi
-    
+
     local version
     version=$(grep '^structuresVersion=' "${gradle_props}" | cut -d'=' -f2)
-    
+
     if [[ -z "${version}" ]]; then
         error "structuresVersion not found in gradle.properties"
         return 1
     fi
-    
+
+    # Mirror the build convention: plain versions are development builds and get
+    # -SNAPSHOT appended (see org.kinotic.java-common-conventions.gradle); this
+    # matches what a local ./gradlew build on the same checkout produces
+    if [[ "${version}" != *-* ]]; then
+        version="${version}-SNAPSHOT"
+    fi
+
     echo "${version}"
 }
 
