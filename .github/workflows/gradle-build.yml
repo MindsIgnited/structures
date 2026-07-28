@@ -121,6 +121,10 @@ jobs:
       - name: Run E2E Tests
         id: run_e2e_tests
         continue-on-error: true
+        env:
+          # Shell env overrides the gradle.properties env-file in compose
+          # interpolation, so e2e pulls the image this run just published
+          structuresVersion: ${{ steps.ver.outputs.version }}
         run: |
           cd structures-js/structures-e2e
           gradle pnpmInstall
@@ -180,5 +184,3 @@ jobs:
 
           # Optionally mark the job as failed
           exit 1
-
-          https://mindsignited.github.io/structures/webdocs/guide/overview.html
