@@ -294,6 +294,8 @@ cmd_deploy() {
     local helm_values_override=""
     local helm_sets=()
     local wait_timeout_override=""
+    local build_local="0"
+    local image_tag=""
     
     # Parse subcommand options
     while [[ $# -gt 0 ]]; do
@@ -334,6 +336,14 @@ cmd_deploy() {
                 DEPLOY_LOAD_GENERATOR="1"
                 shift
                 ;;
+            --build-local)
+                build_local="1"
+                shift
+                ;;
+            --tag)
+                image_tag="$2"
+                shift 2
+                ;;
             --wait-timeout)
                 wait_timeout_override="$2"
                 shift 2
@@ -354,6 +364,10 @@ Options:
   --with-keycloak, -k      Deploy Keycloak + PostgreSQL and enable OIDC authentication
   --with-observability     Deploy observability stack (OTEL, Prometheus, Grafana)
   --with-load-generator    Run load generator after deployment (generates schemas/test data)
+  --build-local            Build structures-server/migration images from source and load
+                           them into the cluster (default: pull published images from Docker Hub)
+  --tag <tag>              Image tag to pull from Docker Hub (default: tag from values file;
+                           ignored with --build-local, which uses the gradle.properties version)
   --wait-timeout <duration> Deployment timeout (default: 5m)
   --help, -h               Show this help message
 
@@ -382,6 +396,12 @@ Examples:
 
   # Deploy with inline override
   $(basename "$0") deploy --set replicaCount=3
+
+  # Deploy a specific published tag (e.g. a PR image)
+  $(basename "$0") deploy --tag 3.5.8-pr7.023aa91
+
+  # Build from source and load into the cluster instead of pulling
+  $(basename "$0") deploy --build-local
 
 EOF
                 return "${EXIT_SUCCESS}"
@@ -498,54 +518,77 @@ EOF
     
     # Deploy structures-server
     section "Deploying structures-server"
-    
-    # Build additional sets string
-    local additional_sets=""
-    
+
     # Add OIDC configuration if Keycloak is deployed
     if [[ "${DEPLOY_KEYCLOAK}" == "1" ]]; then
         progress "Enabling OIDC authentication (oidc.enabled=true)"
         helm_sets+=("--set" "oidc.enabled=true")
     fi
-    
+
+    if [[ "${build_local}" == "1" ]]; then
+        # Opt-in: build the images from source and load them into the cluster
+        local built_version
+        built_version=$(get_structures_version) || return "${EXIT_DEPLOYMENT_FAILED}"
+        progress "Building images locally (version ${built_version})"
+        helm_sets+=("--set" "image.tag=${built_version}")
+        helm_sets+=("--set" "image.pullPolicy=Never")
+        helm_sets+=("--set" "migration.image.tag=${built_version}")
+        helm_sets+=("--set" "migration.image.pullPolicy=Never")
+
+        # Build and load structures-server
+        if ! cmd_build "--load"; then
+            return "${EXIT_DEPLOYMENT_FAILED}"
+        fi
+
+        # Build and load structures-migration (used by Helm pre-upgrade hook)
+        section "Building structures-migration"
+        progress "Running: ./gradlew :structures-migration:bootBuildImage"
+        progress "This may take a few minutes..."
+        blank_line
+
+        export RUNNING_KIND_CLUSTER="true"
+        if ! execute ./gradlew ":structures-migration:bootBuildImage" 2>&1 | while IFS= read -r line; do
+            if [[ "${line}" == *"BUILD"* ]] || \
+               [[ "${line}" == *"Successfully built"* ]] || \
+               [[ "${line}" == *"Paketo"* ]] || \
+               [[ "${line}" == *"Error"* ]] || \
+               [[ "${line}" == *"FAIL"* ]] || \
+               [[ "${VERBOSE}" == "1" ]]; then
+                echo "  ${line}"
+            fi
+        done; then
+            error "Failed to build structures-migration image"
+            return "${EXIT_DEPLOYMENT_FAILED}"
+        fi
+
+        local migration_image
+        migration_image=$(get_migration_image_name) || return "${EXIT_DEPLOYMENT_FAILED}"
+
+        section "Loading Migration Image into Cluster"
+        if ! load_image_into_cluster "${CLUSTER_NAME}" "${migration_image}"; then
+            error "Failed to load migration image into cluster"
+            return "${EXIT_DEPLOYMENT_FAILED}"
+        fi
+        blank_line
+    else
+        # Default: cluster nodes pull the published images from Docker Hub
+        progress "Using published images from Docker Hub (use --build-local to build from source)"
+        helm_sets+=("--set" "image.pullPolicy=IfNotPresent")
+        helm_sets+=("--set" "migration.image.pullPolicy=IfNotPresent")
+        if [[ -n "${image_tag}" ]]; then
+            progress "Image tag: ${image_tag}"
+            helm_sets+=("--set" "image.tag=${image_tag}")
+            helm_sets+=("--set" "migration.image.tag=${image_tag}")
+        fi
+    fi
+
+    # Build additional sets string
+    local additional_sets=""
     if [[ ${#helm_sets[@]} -gt 0 ]]; then
         additional_sets="${helm_sets[*]}"
     fi
 
-    # Build and load structures-server 
-    cmd_build "--load"
-    
-    # Build and load structures-migration (used by Helm pre-upgrade hook)
-    section "Building structures-migration"
-    progress "Running: ./gradlew :structures-migration:bootBuildImage"
-    progress "This may take a few minutes..."
-    blank_line
-    
-    export RUNNING_KIND_CLUSTER="true"
-    if ! execute ./gradlew ":structures-migration:bootBuildImage" 2>&1 | while IFS= read -r line; do
-        if [[ "${line}" == *"BUILD"* ]] || \
-           [[ "${line}" == *"Successfully built"* ]] || \
-           [[ "${line}" == *"Paketo"* ]] || \
-           [[ "${line}" == *"Error"* ]] || \
-           [[ "${line}" == *"FAIL"* ]] || \
-           [[ "${VERBOSE}" == "1" ]]; then
-            echo "  ${line}"
-        fi
-    done; then
-        error "Failed to build structures-migration image"
-        return "${EXIT_DEPLOYMENT_FAILED}"
-    fi
-    
-    local migration_image
-    migration_image=$(get_migration_image_name) || return "${EXIT_DEPLOYMENT_FAILED}"
-    
-    section "Loading Migration Image into Cluster"
-    if ! load_image_into_cluster "${CLUSTER_NAME}" "${migration_image}"; then
-        error "Failed to load migration image into cluster"
-        return "${EXIT_DEPLOYMENT_FAILED}"
-    fi
-    blank_line
-    
+
     if ! deploy_structures_server "${CLUSTER_NAME}" "${additional_sets}"; then
         error "Deployment failed"
         echo ""

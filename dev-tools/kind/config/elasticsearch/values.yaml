@@ -9,7 +9,7 @@ replicas: 2
 minimumMasterNodes: 1
 
 image: "docker.elastic.co/elasticsearch/elasticsearch"
-imageTag: "8.18.1"
+imageTag: "8.19.13"
 imagePullPolicy: IfNotPresent
 
 # Disable all security for local dev (matching docker-compose)
