@@ -6,15 +6,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.binary.BinaryObject;
+import org.apache.ignite.cache.query.QueryCursor;
+import org.apache.ignite.cache.query.ScanQuery;
 import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.events.Event;
 import org.apache.ignite.events.EventType;
 import org.apache.ignite.lang.IgnitePredicate;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import javax.cache.Cache;
@@ -26,96 +25,81 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Observes Ignite cluster membership from the structures side and diagnoses the
- * orphaned-node / split-brain failure modes, logging evidence of each:
+ * Purely diagnostic observer of Ignite cluster membership. It never changes behavior:
+ * it does not shut anything down, does not gate readiness, and takes no action of any
+ * kind - it only logs what it sees, so it is safe to run everywhere clustering is on.
+ * <p>
+ * What it records:
  * <ul>
- *   <li>membership changes (join/left/failed) with topology context</li>
- *   <li>segmentation events (a segmented server node can never rejoin without a restart)</li>
- *   <li>stale vertx routing state after a node departs. vertx-ignite cleans up a
- *   departed node's subscriptions only on the single survivor whose
- *   nodeInfoMap.remove(id) returns true; if that entry is already gone, no node runs
- *   cleanSubs and stale __vertx.subs entries remain, which is what produces
- *   "Not a member of the cluster" event bus send failures. Whether that is what
- *   happens here is UNCONFIRMED - continuum contributes a "*" cache template
- *   (PARTITIONED, backups=1, PRIMARY_SYNC) covering the __vertx.* caches, so entries
- *   are not lost outright on a single node failure. This observer exists to capture
- *   the evidence rather than assume a mechanism.</li>
- *   <li>server topology staying below structures.cluster.observer.minimumClusterSize -
- *   the split-brain condition Ignite cannot detect by design (group splits keep a healthy
- *   ring on each side; a restart into a partition forms a fresh singleton topology)</li>
+ *   <li>membership changes (join/left/failed) with topology version and server count</li>
+ *   <li>segmentation events - a segmented server node can never rejoin without a restart,
+ *   so this is the highest value line it produces. Note continuum's non-development
+ *   FailureHandler halts the JVM on the same thread right after listeners are notified,
+ *   so this log may be the last thing the process writes.</li>
+ *   <li>stale vertx routing state after a node departs. vertx-ignite cleans up a departed
+ *   node's subscriptions only on the single survivor whose nodeInfoMap.remove(id) returns
+ *   true; if that entry is already gone, no node runs cleanSubs and stale __vertx.subs
+ *   entries remain, which is what produces "Not a member of the cluster" event bus send
+ *   failures. Whether that is what happens here is UNCONFIRMED - continuum contributes a
+ *   "*" cache template (PARTITIONED, backups=1, PRIMARY_SYNC) covering the __vertx.*
+ *   caches, so entries are not lost outright on a single node failure. This observer
+ *   exists to capture evidence rather than assume a mechanism. Because vertx-ignite's
+ *   cleanup removes entries one at a time and can legitimately take a while, the check is
+ *   sampled several times after a departure so an in-progress cleanup is distinguishable
+ *   from a leak; only the final sample warns.</li>
+ *   <li>server topology below structures.cluster.observer.minimumClusterSize (the only
+ *   configuration this class has, default 1 = topology watchdog off). That is the
+ *   split-brain condition Ignite cannot detect by design: group splits keep a healthy ring
+ *   on each side, and a restart into a partition forms a fresh singleton topology. Set it
+ *   to a majority of the replica count (floor(n/2)+1) to have those episodes logged.</li>
  * </ul>
- *
- * By default this component only observes and logs. Set
- * structures.cluster.observer.shutdownEnabled=true to also shut the process down (non-zero
- * exit, so the orchestrator starts a fresh instance) when this node is segmented or stays
- * below the minimum cluster size beyond the grace period. minimumClusterSize should be a
- * majority of the replica count (floor(n/2)+1). This is a diagnostic port of continuum 3.x's
- * IgniteOrphanedNodeGuard for use while structures is on continuum 2.6.x.
+ * Inspections run on their own thread, are bounded, and read only node-local cache
+ * partitions, so they add no cluster-wide query load during a failure.
  */
 @Slf4j
 @Component
 @ConditionalOnProperty(value = "continuum.disableClustering", havingValue = "false", matchIfMissing = true)
 public class IgniteClusterObserver {
 
-    private static final int EXIT_CODE = 1;
     private static final long TOPOLOGY_POLL_MS = 10_000L;
-    private static final long STALE_ROUTE_CHECK_DELAY_MS = 15_000L;
+    private static final long ORPHAN_REPORT_AFTER_MS = 60_000L;
     private static final int MAX_STALE_ADDRESSES_LOGGED = 10;
+    private static final int MAX_ENTRIES_SCANNED = 50_000;
+    /** Sampled repeatedly so a slow cleanup is not reported as a leak; only the last warns */
+    private static final long[] STALE_ROUTE_SAMPLE_DELAYS_MS = {5_000L, 20_000L, 60_000L};
 
     private final Ignite ignite;
-    private final ConfigurableApplicationContext applicationContext;
-    private final Environment environment;
 
+    /**
+     * Minimum number of server nodes expected in the topology. When above 1, episodes
+     * below it are logged (with duration). Purely informational - nothing is ever shut
+     * down. Set it to a majority of the replica count, e.g. 2 for 3 replicas.
+     */
     @Value("${structures.cluster.observer.minimumClusterSize:${structures.cluster.observer.minimum-cluster-size:1}}")
     private int minimumClusterSize;
 
-    @Value("${structures.cluster.observer.orphanGracePeriodMs:${structures.cluster.observer.orphan-grace-period-ms:60000}}")
-    private long orphanGracePeriodMs;
-
-    @Value("${structures.cluster.observer.startupQuorumTimeoutMs:${structures.cluster.observer.startup-quorum-timeout-ms:300000}}")
-    private long startupQuorumTimeoutMs;
-
-    /**
-     * Master switch for taking action. False (default) = observe and log only, no outward
-     * behavior change. True = shut the process down on segmentation or sustained loss of
-     * the minimum cluster size, so the orchestrator can start a fresh instance.
-     */
-    @Value("${structures.cluster.observer.shutdownEnabled:${structures.cluster.observer.shutdown-enabled:false}}")
-    private boolean shutdownEnabled;
-
-    @Value("${structures.cluster.observer.shutdownWatchdogTimeoutMs:${structures.cluster.observer.shutdown-watchdog-timeout-ms:30000}}")
-    private long shutdownWatchdogTimeoutMs;
-
-    private final AtomicBoolean shutdownInitiated = new AtomicBoolean(false);
     private volatile boolean closed = false;
     private volatile boolean armed = false;
-    private volatile boolean observeOnlyReported = false;
+    private volatile boolean belowMinimumReported = false;
     private volatile long belowMinimumSinceNanos = -1;
-    private volatile long startedAtNanos = -1;
-    private volatile boolean topologyUnavailableLogged = false;
+    private final AtomicBoolean inspectionInProgress = new AtomicBoolean(false);
 
     private IgnitePredicate<Event> membershipListener;
     private IgnitePredicate<Event> segmentationListener;
     private ScheduledExecutorService scheduler;
+    private ScheduledExecutorService inspector;
 
-    public IgniteClusterObserver(Ignite ignite,
-                                 ConfigurableApplicationContext applicationContext,
-                                 Environment environment) {
+    public IgniteClusterObserver(Ignite ignite) {
         this.ignite = ignite;
-        this.applicationContext = applicationContext;
-        this.environment = environment;
     }
 
     @PostConstruct
     public void start() {
-        scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "structures-cluster-observer");
-            thread.setDaemon(true);
-            return thread;
-        });
+        scheduler = newDaemonScheduler("structures-cluster-observer");
+        // Inspections get their own thread: a cache read during a partition can block for
+        // a long time, and it must never stall topology polling
+        inspector = newDaemonScheduler("structures-cluster-inspector");
 
-        // Membership diagnostics: log joins/departures with topology context and, after a
-        // departure, verify the vertx routing caches were actually cleaned up
         membershipListener = event -> {
             DiscoveryEvent discoveryEvent = (DiscoveryEvent) event;
             String eventNodeId = discoveryEvent.eventNode().id().toString();
@@ -134,9 +118,7 @@ public class IgniteClusterObserver {
                 default -> { /* not registered for others */ }
             }
             if (event.type() == EventType.EVT_NODE_LEFT || event.type() == EventType.EVT_NODE_FAILED) {
-                // Check after vertx-ignite's cleanup listener has had ample time to run
-                scheduler.schedule(() -> reportStaleRoutingState(eventNodeId),
-                                   STALE_ROUTE_CHECK_DELAY_MS, TimeUnit.MILLISECONDS);
+                scheduleStaleRouteSamples(eventNodeId);
             }
             return true;
         };
@@ -145,44 +127,36 @@ public class IgniteClusterObserver {
                                     EventType.EVT_NODE_LEFT,
                                     EventType.EVT_NODE_FAILED);
 
-        // Segmentation is ALWAYS logged (never suppressed by the below-minimum report
-        // flag - it is the single most important diagnostic this component produces).
-        // Shutdown is skipped under the development profile, matching the NoOpFailureHandler
-        // continuum installs there so a sleeping laptop does not kill the local server.
-        boolean development = environment.matchesProfiles("development");
+        // Logged, never acted on. Continuum's FailureHandler decides what happens to the
+        // process; this line is the evidence that segmentation is what happened.
         segmentationListener = event -> {
-            String reason = "Ignite node was segmented from the cluster. "
-                            + "Segmented server nodes cannot rejoin without a restart.";
-            log.error("Node segmentation detected: {} (shutdownEnabled={}, development={})",
-                      reason, shutdownEnabled, development);
-            if (!development) {
-                actOn(reason);
-            }
+            log.error("Node segmentation detected: this Ignite node was segmented from the cluster. "
+                      + "Segmented server nodes cannot rejoin without a restart (serverNodes={})",
+                      safeServerTopologySize());
             return false; // one shot
         };
         ignite.events().localListen(segmentationListener, EventType.EVT_NODE_SEGMENTED);
 
-        log.info("Ignite cluster observer started: minimumClusterSize={}, orphanGracePeriodMs={}, "
-                 + "startupQuorumTimeoutMs={}, shutdownEnabled={}",
-                 minimumClusterSize, orphanGracePeriodMs, startupQuorumTimeoutMs, shutdownEnabled);
-
         if (minimumClusterSize > 1) {
-            startedAtNanos = System.nanoTime();
             scheduler.scheduleWithFixedDelay(this::checkTopologySafely,
                                              0,
                                              TOPOLOGY_POLL_MS,
                                              TimeUnit.MILLISECONDS);
+            log.info("Ignite cluster observer started (diagnostic only): minimumClusterSize={}",
+                     minimumClusterSize);
+        } else {
+            log.info("Ignite cluster observer started (diagnostic only): membership and routing "
+                     + "diagnostics active, topology watchdog off "
+                     + "(set structures.cluster.observer.minimumClusterSize above 1 to enable it)");
         }
     }
 
     @PreDestroy
     public void stop() {
         closed = true;
-        // A normal context shutdown must never be escalated to a JVM halt by an in-flight poll
-        shutdownInitiated.set(true);
-        if (scheduler != null) {
-            scheduler.shutdownNow();
-        }
+        // Deregister listeners BEFORE stopping the executors, otherwise a departure arriving
+        // in between would schedule onto a terminated executor and throw
+        // RejectedExecutionException back into Ignite's discovery notification thread
         if (membershipListener != null) {
             try {
                 ignite.events().stopLocalListen(membershipListener,
@@ -200,15 +174,47 @@ public class IgniteClusterObserver {
                 log.debug("Could not remove segmentation listener during shutdown", e);
             }
         }
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+        }
+        if (inspector != null) {
+            inspector.shutdownNow();
+        }
+    }
+
+    private void scheduleStaleRouteSamples(String departedNodeId) {
+        if (closed) {
+            return;
+        }
+        for (int i = 0; i < STALE_ROUTE_SAMPLE_DELAYS_MS.length; i++) {
+            boolean finalSample = i == STALE_ROUTE_SAMPLE_DELAYS_MS.length - 1;
+            long delay = STALE_ROUTE_SAMPLE_DELAYS_MS[i];
+            try {
+                inspector.schedule(() -> reportStaleRoutingState(departedNodeId, delay, finalSample),
+                                   delay, TimeUnit.MILLISECONDS);
+            } catch (Exception e) {
+                // Executor already stopping; nothing to diagnose
+                log.debug("Could not schedule routing state inspection", e);
+                return;
+            }
+        }
     }
 
     /**
-     * Inspect the vertx-ignite routing caches after a node departed and log any stale
-     * state left behind - the direct evidence of the cleanup-election failure that
-     * produces "Not a member of the cluster" event bus send errors.
+     * Inspect this node's LOCAL partitions of the vertx routing caches for entries that
+     * still reference a departed node. Local-only by design: it costs nothing beyond a
+     * node-local iteration, adds no distributed query load while the cluster is already
+     * rebalancing, and every surviving node logs its own view, which together cover the
+     * cluster.
      */
-    private void reportStaleRoutingState(String departedNodeId) {
+    private void reportStaleRoutingState(String departedNodeId, long afterMs, boolean finalSample) {
         if (closed) {
+            return;
+        }
+        // Never let overlapping departures stack up inspections
+        if (!inspectionInProgress.compareAndSet(false, true)) {
+            log.debug("Skipping routing state inspection for {}, another inspection is running",
+                      departedNodeId);
             return;
         }
         try {
@@ -216,32 +222,57 @@ public class IgniteClusterObserver {
             boolean nodeInfoPresent = nodeInfoCache != null && nodeInfoCache.containsKey(departedNodeId);
 
             int staleSubs = 0;
+            int scanned = 0;
+            boolean truncated = false;
             List<String> staleAddresses = new ArrayList<>();
-            // Read the subs cache in binary form to avoid a compile-time dependency on
-            // vertx-ignite's IgniteRegistrationInfo (field names match its writeBinary)
             IgniteCache<Object, Object> subsCache = ignite.cache("__vertx.subs");
             if (subsCache != null) {
-                for (Cache.Entry<Object, Object> entry : subsCache.withKeepBinary()) {
-                    if (entry.getKey() instanceof BinaryObject key
-                            && departedNodeId.equals(key.field("nodeId"))) {
-                        staleSubs++;
-                        if (staleAddresses.size() < MAX_STALE_ADDRESSES_LOGGED) {
-                            staleAddresses.add(key.field("address"));
+                // Local scan, binary form: no cluster-wide query, and no compile-time
+                // dependency on vertx-ignite's IgniteRegistrationInfo (the binary field
+                // names match its writeBinary implementation)
+                ScanQuery<Object, Object> query = new ScanQuery<>();
+                query.setLocal(true);
+                try (QueryCursor<Cache.Entry<Object, Object>> cursor
+                             = subsCache.withKeepBinary().query(query)) {
+                    for (Cache.Entry<Object, Object> entry : cursor) {
+                        if (++scanned > MAX_ENTRIES_SCANNED) {
+                            truncated = true;
+                            break;
+                        }
+                        if (entry.getKey() instanceof BinaryObject key
+                                && departedNodeId.equals(key.field("nodeId"))) {
+                            staleSubs++;
+                            if (staleAddresses.size() < MAX_STALE_ADDRESSES_LOGGED) {
+                                staleAddresses.add(key.field("address"));
+                            }
                         }
                     }
                 }
             }
 
-            if (nodeInfoPresent || staleSubs > 0) {
-                log.warn("Stale routing state remains for departed node {}: nodeInfoStillPresent={}, "
-                         + "staleSubscriptionEntries={}, sampleAddresses={}. Event bus sends to these "
-                         + "addresses can fail with 'Not a member of the cluster' until handlers re-register.",
-                         departedNodeId, nodeInfoPresent, staleSubs, staleAddresses);
+            if (!nodeInfoPresent && staleSubs == 0) {
+                log.info("Routing caches are clean (local view) {} ms after departure of node {}: "
+                         + "scannedLocalSubs={}", afterMs, departedNodeId, scanned);
+            } else if (finalSample) {
+                log.warn("Stale routing state remains {} ms after departure of node {}: "
+                         + "nodeInfoStillPresent={}, staleLocalSubscriptionEntries={}, "
+                         + "sampleAddresses={}, scannedLocalSubs={}, truncated={}. Event bus sends to "
+                         + "these addresses can fail with 'Not a member of the cluster' until the "
+                         + "handlers re-register.",
+                         afterMs, departedNodeId, nodeInfoPresent, staleSubs, staleAddresses,
+                         scanned, truncated);
             } else {
-                log.debug("Routing caches are clean after departure of node {}", departedNodeId);
+                log.info("Routing cleanup still in progress {} ms after departure of node {}: "
+                         + "nodeInfoStillPresent={}, staleLocalSubscriptionEntries={}",
+                         afterMs, departedNodeId, nodeInfoPresent, staleSubs);
             }
         } catch (Exception e) {
-            log.debug("Could not inspect routing caches after departure of node {}", departedNodeId, e);
+            // WARN, not DEBUG: a failed inspection must never be mistaken for a clean result
+            log.warn("Could not inspect routing caches {} ms after departure of node {}; "
+                     + "no conclusion can be drawn about stale routing state",
+                     afterMs, departedNodeId, e);
+        } finally {
+            inspectionInProgress.set(false);
         }
     }
 
@@ -258,21 +289,15 @@ public class IgniteClusterObserver {
     }
 
     private void checkTopology() {
-        if (closed || shutdownInitiated.get()) {
+        if (closed) {
             return;
         }
 
-        int serverNodes;
-        try {
-            serverNodes = ignite.cluster().forServers().nodes().size();
-        } catch (Exception e) {
-            if (!topologyUnavailableLogged) {
-                topologyUnavailableLogged = true;
-                log.warn("Ignite topology is not queryable", e);
-            }
+        int serverNodes = safeServerTopologySize();
+        if (serverNodes < 0) {
+            log.warn("Ignite topology is not queryable");
             return;
         }
-        topologyUnavailableLogged = false;
 
         if (log.isDebugEnabled()) {
             log.debug("Topology poll: serverNodes={}, minimum={}, armed={}, belowMinimumForMs={}",
@@ -285,87 +310,45 @@ public class IgniteClusterObserver {
                 armed = true;
                 log.info("Cluster observer armed: server topology reached {} nodes", serverNodes);
             } else if (belowMinimumSinceNanos != -1) {
-                log.info("Server topology recovered to {} nodes after {} ms below minimum",
-                         serverNodes, elapsedMs(belowMinimumSinceNanos));
+                log.info("Server topology recovered to {} nodes after {} ms below the minimum of {}",
+                         serverNodes, elapsedMs(belowMinimumSinceNanos), minimumClusterSize);
             }
             belowMinimumSinceNanos = -1;
-            observeOnlyReported = false;
+            belowMinimumReported = false;
             return;
         }
 
-        // Below the minimum. Normal startup never trips this (arm-after-join), but a node
-        // that NEVER reaches the minimum likely started into an ongoing partition; Ignite
-        // topologies never merge once formed.
+        // Below the minimum. Startup (nodes joining one by one) is not interesting, so only
+        // report once the topology has actually reached the minimum at least once.
         if (!armed) {
-            if (startupQuorumTimeoutMs > 0 && elapsedMs(startedAtNanos) >= startupQuorumTimeoutMs) {
-                actOn("Server topology never reached the minimum cluster size of "
-                      + minimumClusterSize + " within " + startupQuorumTimeoutMs
-                      + " ms of startup. This node likely started into an ongoing partition "
-                      + "and would run split-brained.");
-            }
             return;
         }
 
         if (belowMinimumSinceNanos == -1) {
             belowMinimumSinceNanos = System.nanoTime();
-            log.warn("Server topology dropped to {} nodes (minimum {}). Action in {} ms unless it recovers "
-                     + "(shutdownEnabled={})",
-                     serverNodes, minimumClusterSize, orphanGracePeriodMs, shutdownEnabled);
+            log.warn("Server topology dropped to {} nodes, below the minimum of {}. This node may be "
+                     + "orphaned from the cluster; watching",
+                     serverNodes, minimumClusterSize);
             return;
         }
 
         long belowForMs = elapsedMs(belowMinimumSinceNanos);
-        if (belowForMs >= orphanGracePeriodMs) {
-            actOn("Server topology has been below the minimum cluster size of "
-                  + minimumClusterSize + " for " + belowForMs
-                  + " ms. This node is likely orphaned from the cluster.");
+        // One escalation per episode so a long orphan does not flood the log
+        if (!belowMinimumReported && belowForMs >= ORPHAN_REPORT_AFTER_MS) {
+            belowMinimumReported = true;
+            log.error("Server topology has been at {} nodes, below the minimum of {}, for {} ms. "
+                      + "This node is very likely orphaned or split-brained and would need a restart "
+                      + "to rejoin the cluster",
+                      serverNodes, minimumClusterSize, belowForMs);
         }
     }
 
-    private void actOn(String reason) {
-        if (closed) {
-            return;
-        }
-
-        if (!shutdownEnabled) {
-            // Report once per below-minimum episode so the log stays readable
-            if (!observeOnlyReported) {
-                observeOnlyReported = true;
-                log.error("[observe-only] Cluster observer would shut this node down: {}", reason);
-            }
-            return;
-        }
-
-        if (!shutdownInitiated.compareAndSet(false, true)) {
-            return;
-        }
-
-        log.error("Shutting down so the orchestrator can start a fresh instance: {}", reason);
-
-        Thread watchdog = new Thread(() -> {
-            try {
-                Thread.sleep(shutdownWatchdogTimeoutMs);
-            } catch (InterruptedException ignored) {
-                return;
-            }
-            log.error("Graceful shutdown did not complete within {} ms, halting JVM", shutdownWatchdogTimeoutMs);
-            Runtime.getRuntime().halt(EXIT_CODE);
-        }, "structures-cluster-shutdown-watchdog");
-        watchdog.setDaemon(true);
-        watchdog.start();
-
-        // Never shut down on an Ignite thread: closing the context stops Ignite, which
-        // would deadlock waiting on the very thread we are running on
-        Thread shutdown = new Thread(() -> {
-            try {
-                System.exit(SpringApplication.exit(applicationContext, () -> EXIT_CODE));
-            } catch (Throwable t) {
-                log.error("Error during graceful shutdown, halting JVM", t);
-                Runtime.getRuntime().halt(EXIT_CODE);
-            }
-        }, "structures-cluster-shutdown");
-        shutdown.setDaemon(false);
-        shutdown.start();
+    private ScheduledExecutorService newDaemonScheduler(String threadName) {
+        return Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, threadName);
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     private int safeServerTopologySize() {
@@ -377,7 +360,7 @@ public class IgniteClusterObserver {
     }
 
     // Monotonic elapsed time: wall-clock can step forward under NTP corrections or VM
-    // pauses and would count that step against the grace periods
+    // pauses and would misreport how long a node has been below the minimum
     private static long elapsedMs(long sinceNanos) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - sinceNanos);
     }
