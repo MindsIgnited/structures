@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import javax.cache.Cache;
@@ -30,12 +31,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <ul>
  *   <li>membership changes (join/left/failed) with topology context</li>
  *   <li>segmentation events (a segmented server node can never rejoin without a restart)</li>
- *   <li>stale vertx routing state after a node departs: with PARTITIONED 0-backup
- *   __vertx.* caches the departed node's nodeInfo entry can be destroyed with its
- *   partition before vertx-ignite's cleanup listener runs, the cleanup election then
- *   no-ops on every survivor, and stale __vertx.subs entries remain - the source of
- *   "Not a member of the cluster" event bus send failures
- *   (see {@link VertxClusterCacheConfiguration} for the fix)</li>
+ *   <li>stale vertx routing state after a node departs. vertx-ignite cleans up a
+ *   departed node's subscriptions only on the single survivor whose
+ *   nodeInfoMap.remove(id) returns true; if that entry is already gone, no node runs
+ *   cleanSubs and stale __vertx.subs entries remain, which is what produces
+ *   "Not a member of the cluster" event bus send failures. Whether that is what
+ *   happens here is UNCONFIRMED - continuum contributes a "*" cache template
+ *   (PARTITIONED, backups=1, PRIMARY_SYNC) covering the __vertx.* caches, so entries
+ *   are not lost outright on a single node failure. This observer exists to capture
+ *   the evidence rather than assume a mechanism.</li>
  *   <li>server topology staying below structures.cluster.observer.minimumClusterSize -
  *   the split-brain condition Ignite cannot detect by design (group splits keep a healthy
  *   ring on each side; a restart into a partition forms a fresh singleton topology)</li>
@@ -60,14 +64,15 @@ public class IgniteClusterObserver {
 
     private final Ignite ignite;
     private final ConfigurableApplicationContext applicationContext;
+    private final Environment environment;
 
-    @Value("${structures.cluster.observer.minimumClusterSize:1}")
+    @Value("${structures.cluster.observer.minimumClusterSize:${structures.cluster.observer.minimum-cluster-size:1}}")
     private int minimumClusterSize;
 
-    @Value("${structures.cluster.observer.orphanGracePeriodMs:60000}")
+    @Value("${structures.cluster.observer.orphanGracePeriodMs:${structures.cluster.observer.orphan-grace-period-ms:60000}}")
     private long orphanGracePeriodMs;
 
-    @Value("${structures.cluster.observer.startupQuorumTimeoutMs:300000}")
+    @Value("${structures.cluster.observer.startupQuorumTimeoutMs:${structures.cluster.observer.startup-quorum-timeout-ms:300000}}")
     private long startupQuorumTimeoutMs;
 
     /**
@@ -75,10 +80,10 @@ public class IgniteClusterObserver {
      * behavior change. True = shut the process down on segmentation or sustained loss of
      * the minimum cluster size, so the orchestrator can start a fresh instance.
      */
-    @Value("${structures.cluster.observer.shutdownEnabled:false}")
+    @Value("${structures.cluster.observer.shutdownEnabled:${structures.cluster.observer.shutdown-enabled:false}}")
     private boolean shutdownEnabled;
 
-    @Value("${structures.cluster.observer.shutdownWatchdogTimeoutMs:30000}")
+    @Value("${structures.cluster.observer.shutdownWatchdogTimeoutMs:${structures.cluster.observer.shutdown-watchdog-timeout-ms:30000}}")
     private long shutdownWatchdogTimeoutMs;
 
     private final AtomicBoolean shutdownInitiated = new AtomicBoolean(false);
@@ -87,16 +92,18 @@ public class IgniteClusterObserver {
     private volatile boolean observeOnlyReported = false;
     private volatile long belowMinimumSinceNanos = -1;
     private volatile long startedAtNanos = -1;
-    private volatile int lastObservedServerNodes = -1;
     private volatile boolean topologyUnavailableLogged = false;
 
     private IgnitePredicate<Event> membershipListener;
     private IgnitePredicate<Event> segmentationListener;
     private ScheduledExecutorService scheduler;
 
-    public IgniteClusterObserver(Ignite ignite, ConfigurableApplicationContext applicationContext) {
+    public IgniteClusterObserver(Ignite ignite,
+                                 ConfigurableApplicationContext applicationContext,
+                                 Environment environment) {
         this.ignite = ignite;
         this.applicationContext = applicationContext;
+        this.environment = environment;
     }
 
     @PostConstruct
@@ -138,11 +145,19 @@ public class IgniteClusterObserver {
                                     EventType.EVT_NODE_LEFT,
                                     EventType.EVT_NODE_FAILED);
 
-        // Segmentation is always logged; a segmented server node can never rejoin without
-        // a restart, so with shutdownEnabled we exit for a fresh instance
+        // Segmentation is ALWAYS logged (never suppressed by the below-minimum report
+        // flag - it is the single most important diagnostic this component produces).
+        // Shutdown is skipped under the development profile, matching the NoOpFailureHandler
+        // continuum installs there so a sleeping laptop does not kill the local server.
+        boolean development = environment.matchesProfiles("development");
         segmentationListener = event -> {
-            actOn("Ignite node was segmented from the cluster. "
-                  + "Segmented server nodes cannot rejoin without a restart.");
+            String reason = "Ignite node was segmented from the cluster. "
+                            + "Segmented server nodes cannot rejoin without a restart.";
+            log.error("Node segmentation detected: {} (shutdownEnabled={}, development={})",
+                      reason, shutdownEnabled, development);
+            if (!development) {
+                actOn(reason);
+            }
             return false; // one shot
         };
         ignite.events().localListen(segmentationListener, EventType.EVT_NODE_SEGMENTED);
@@ -251,7 +266,6 @@ public class IgniteClusterObserver {
         try {
             serverNodes = ignite.cluster().forServers().nodes().size();
         } catch (Exception e) {
-            lastObservedServerNodes = 0;
             if (!topologyUnavailableLogged) {
                 topologyUnavailableLogged = true;
                 log.warn("Ignite topology is not queryable", e);
@@ -259,8 +273,6 @@ public class IgniteClusterObserver {
             return;
         }
         topologyUnavailableLogged = false;
-
-        lastObservedServerNodes = serverNodes;
 
         if (log.isDebugEnabled()) {
             log.debug("Topology poll: serverNodes={}, minimum={}, armed={}, belowMinimumForMs={}",
