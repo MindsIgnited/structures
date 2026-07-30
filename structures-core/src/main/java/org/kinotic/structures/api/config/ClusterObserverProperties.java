@@ -1,5 +1,7 @@
 package org.kinotic.structures.api.config;
 
+import java.util.List;
+
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -35,6 +37,13 @@ public class ClusterObserverProperties {
     private Long reportBelowMinimumAfterMs = 60_000L;
 
     /**
+     * How often the below-minimum condition is repeated while it persists. Repeating
+     * matters on long-running pods: a node orphaned days ago must still be visible in a
+     * recent log window, not only in a single line from when it happened.
+     */
+    private Long repeatBelowMinimumEveryMs = 3_600_000L;
+
+    /**
      * How long a node may run without the topology ever reaching
      * {@link #getMinimumClusterSize()} before that is reported as a warning. Slow cluster
      * formation is normal, so this only warns; see
@@ -50,6 +59,21 @@ public class ClusterObserverProperties {
      * own topology, which Ignite can never merge.
      */
     private Long escalateNeverReachedMinimumAfterMs = 900_000L;
+
+    /**
+     * How often the never-reached-minimum condition is repeated while it persists, for the
+     * same reason as {@link #getRepeatBelowMinimumEveryMs()}.
+     */
+    private Long repeatNeverReachedEveryMs = 3_600_000L;
+
+    /**
+     * Delays, in milliseconds after a node departs, at which the vertx routing caches are
+     * inspected for entries still referencing it. Sampling repeatedly distinguishes a
+     * cleanup that is merely slow from one that never completes; only the last sample
+     * warns. Widen the final delay if cleanup in your environment legitimately takes
+     * longer than the default window.
+     */
+    private List<Long> staleRouteSampleDelaysMs = List.of(5_000L, 20_000L, 60_000L);
 
     /**
      * Upper bound on any single Ignite read the observer performs. Bounded so a cluster

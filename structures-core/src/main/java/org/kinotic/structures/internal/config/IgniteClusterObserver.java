@@ -79,16 +79,13 @@ public class IgniteClusterObserver {
     private static final long TOPOLOGY_POLL_MS = 10_000L;
     private static final long UNQUERYABLE_REPORT_INTERVAL_MS = 600_000L;
     private static final long UNEXPECTED_ERROR_REPORT_INTERVAL_MS = 600_000L;
-    private static final long NEVER_REACHED_REPORT_INTERVAL_MS = 3_600_000L;
-    private static final long BELOW_MINIMUM_REPORT_INTERVAL_MS = 3_600_000L;
     // A wedged Ignite read must never silence later inspections, so inspections run on a
     // small bounded pool: at worst a hung cluster consumes these threads and subsequent
     // inspections are skipped with a log line, which is itself evidence of the hang
     private static final int INSPECTOR_THREADS = 2;
     private static final int INSPECTOR_QUEUE_DEPTH = 8;
     private static final int MAX_STALE_ADDRESSES_LOGGED = 10;
-    /** Sampled repeatedly so a slow cleanup is not reported as a leak; only the final sample warns */
-    private static final long[] STALE_ROUTE_SAMPLE_DELAYS_MS = {5_000L, 20_000L, 60_000L};
+    private static final List<Long> DEFAULT_STALE_ROUTE_SAMPLE_DELAYS_MS = List.of(5_000L, 20_000L, 60_000L);
 
     private final Ignite ignite;
     private final ClusterObserverProperties properties;
@@ -241,9 +238,10 @@ public class IgniteClusterObserver {
             return;
         }
         long departedAtNanos = System.nanoTime();
-        for (int i = 0; i < STALE_ROUTE_SAMPLE_DELAYS_MS.length; i++) {
-            boolean finalSample = i == STALE_ROUTE_SAMPLE_DELAYS_MS.length - 1;
-            long delay = STALE_ROUTE_SAMPLE_DELAYS_MS[i];
+        List<Long> sampleDelays = staleRouteSampleDelaysMs();
+        for (int i = 0; i < sampleDelays.size(); i++) {
+            boolean finalSample = i == sampleDelays.size() - 1;
+            long delay = sampleDelays.get(i);
             try {
                 scheduler.schedule(() -> {
                     try {
@@ -518,12 +516,12 @@ public class IgniteClusterObserver {
         // Repeated hourly rather than once per episode: a node orphaned days ago must still
         // be visible in a recent log window, not only in one line from when it happened
         if (lastBelowMinimumReportNanos == -1
-                || elapsedMs(lastBelowMinimumReportNanos) >= BELOW_MINIMUM_REPORT_INTERVAL_MS) {
+                || elapsedMs(lastBelowMinimumReportNanos) >= repeatBelowMinimumEveryMs()) {
             lastBelowMinimumReportNanos = System.nanoTime();
             log.error("Server topology has been at {} nodes, below the minimum of {}, for {} ms. "
                       + "This node is very likely orphaned or split-brained and would need a restart "
                       + "to rejoin the cluster (repeated at most every {} ms while it persists)",
-                      serverNodes, minimumClusterSize, belowForMs, BELOW_MINIMUM_REPORT_INTERVAL_MS);
+                      serverNodes, minimumClusterSize, belowForMs, repeatBelowMinimumEveryMs());
         }
     }
 
@@ -543,7 +541,7 @@ public class IgniteClusterObserver {
         boolean firstEscalation = escalate && !neverReachedEscalated;
         if (!firstEscalation
                 && lastNeverReachedReportNanos != -1
-                && elapsedMs(lastNeverReachedReportNanos) < NEVER_REACHED_REPORT_INTERVAL_MS) {
+                && elapsedMs(lastNeverReachedReportNanos) < repeatNeverReachedEveryMs()) {
             return;
         }
         lastNeverReachedReportNanos = System.nanoTime();
@@ -631,6 +629,28 @@ public class IgniteClusterObserver {
     private long escalateNeverReachedMinimumAfterMs() {
         return properties.getEscalateNeverReachedMinimumAfterMs() != null
                 ? properties.getEscalateNeverReachedMinimumAfterMs() : 900_000L;
+    }
+
+    private long repeatBelowMinimumEveryMs() {
+        return properties.getRepeatBelowMinimumEveryMs() != null
+                ? properties.getRepeatBelowMinimumEveryMs() : 3_600_000L;
+    }
+
+    private long repeatNeverReachedEveryMs() {
+        return properties.getRepeatNeverReachedEveryMs() != null
+                ? properties.getRepeatNeverReachedEveryMs() : 3_600_000L;
+    }
+
+    /**
+     * Always returns at least one delay: an empty or missing list would otherwise silently
+     * disable the routing inspection entirely
+     */
+    private List<Long> staleRouteSampleDelaysMs() {
+        List<Long> configured = properties.getStaleRouteSampleDelaysMs();
+        if (configured == null || configured.isEmpty()) {
+            return DEFAULT_STALE_ROUTE_SAMPLE_DELAYS_MS;
+        }
+        return configured;
     }
 
     private long inspectionTimeoutMs() {
