@@ -7,7 +7,6 @@ import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.binary.BinaryObject;
 import org.apache.ignite.cache.CachePeekMode;
-import org.apache.ignite.cache.affinity.Affinity;
 import org.apache.ignite.cluster.ClusterNode;
 import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.events.Event;
@@ -23,9 +22,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -59,13 +60,12 @@ import java.util.concurrent.TimeUnit;
  *   each side and a restart into a partition forms a fresh singleton topology that Ignite
  *   never merges.</li>
  * </ul>
- * Counting rules for the routing inspection, so numbers from different pods can be
- * compared and summed: an entry is counted as stale by the node that currently owns its
- * partition as PRIMARY, verified through the affinity function rather than inferred from
- * local storage. That keeps each entry counted exactly once cluster-wide and excludes
- * partitions in the process of being rebalanced away, which still hold their old contents
- * and would otherwise produce phantom findings during a rolling restart. Entries held
- * only as backups are counted and reported separately, never mixed into the primary total.
+ * Reading the routing inspection output: counts are this node's LOCAL view - primary and
+ * backup copies, including partitions being rebalanced - so the same entry can appear in
+ * more than one pod's log. Correlate the reported addresses across pods rather than
+ * summing the counts. Precision is deliberately traded for robustness: a failed or partial
+ * inspection is reported and retried by the next sample, so transient conditions resolve
+ * themselves and it is a complaint that keeps repeating which indicates a real problem.
  *
  * @see ClusterObserverProperties
  */
@@ -80,6 +80,12 @@ public class IgniteClusterObserver {
     private static final long UNQUERYABLE_REPORT_INTERVAL_MS = 600_000L;
     private static final long UNEXPECTED_ERROR_REPORT_INTERVAL_MS = 600_000L;
     private static final long NEVER_REACHED_REPORT_INTERVAL_MS = 3_600_000L;
+    private static final long BELOW_MINIMUM_REPORT_INTERVAL_MS = 3_600_000L;
+    // A wedged Ignite read must never silence later inspections, so inspections run on a
+    // small bounded pool: at worst a hung cluster consumes these threads and subsequent
+    // inspections are skipped with a log line, which is itself evidence of the hang
+    private static final int INSPECTOR_THREADS = 2;
+    private static final int INSPECTOR_QUEUE_DEPTH = 8;
     private static final int MAX_STALE_ADDRESSES_LOGGED = 10;
     /** Sampled repeatedly so a slow cleanup is not reported as a leak; only the final sample warns */
     private static final long[] STALE_ROUTE_SAMPLE_DELAYS_MS = {5_000L, 20_000L, 60_000L};
@@ -89,7 +95,7 @@ public class IgniteClusterObserver {
 
     private volatile boolean closed = false;
     private volatile boolean armed = false;
-    private volatile boolean belowMinimumReported = false;
+    private volatile long lastBelowMinimumReportNanos = -1;
     private volatile long belowMinimumSinceNanos = -1;
     private volatile long startedAtNanos = -1;
     private volatile long lastUnqueryableReportNanos = -1;
@@ -100,7 +106,7 @@ public class IgniteClusterObserver {
     private IgnitePredicate<Event> membershipListener;
     private IgnitePredicate<Event> segmentationListener;
     private ScheduledExecutorService scheduler;
-    private ScheduledExecutorService inspector;
+    private ThreadPoolExecutor inspector;
 
     public IgniteClusterObserver(Ignite ignite, StructuresProperties structuresProperties) {
         this.ignite = ignite;
@@ -111,8 +117,23 @@ public class IgniteClusterObserver {
     public void start() {
         startedAtNanos = System.nanoTime();
         scheduler = newDaemonScheduler("structures-cluster-observer");
-        // Inspections get their own thread so a slow cache read can never delay topology polling
-        inspector = newDaemonScheduler("structures-cluster-inspector");
+        // Inspections run on their own bounded pool so a slow or wedged cache read can
+        // neither delay topology polling nor prevent later inspections from running. If
+        // every thread is stuck, further inspections are skipped and logged - a skipped
+        // inspection is itself a signal that cluster reads are hanging.
+        inspector = new ThreadPoolExecutor(INSPECTOR_THREADS, INSPECTOR_THREADS,
+                                           0L, TimeUnit.MILLISECONDS,
+                                           new ArrayBlockingQueue<>(INSPECTOR_QUEUE_DEPTH),
+                                           runnable -> {
+                                               Thread thread = new Thread(runnable, "structures-cluster-inspector");
+                                               thread.setDaemon(true);
+                                               return thread;
+                                           },
+                                           (runnable, executor) -> log.warn(
+                                                   "Skipping a routing inspection: previous inspections are "
+                                                   + "still running, which usually means Ignite reads are "
+                                                   + "blocked (activeInspections={})",
+                                                   ((ThreadPoolExecutor) executor).getActiveCount()));
 
         // Logged inline, from data carried on the event itself. No cluster calls here: Ignite
         // notifies listeners on its monitored discovery worker, and this line must be on disk
@@ -224,8 +245,13 @@ public class IgniteClusterObserver {
             boolean finalSample = i == STALE_ROUTE_SAMPLE_DELAYS_MS.length - 1;
             long delay = STALE_ROUTE_SAMPLE_DELAYS_MS[i];
             try {
-                inspector.schedule(() -> reportStaleRoutingState(departedNodeId, departedAtNanos, finalSample),
-                                   delay, TimeUnit.MILLISECONDS);
+                scheduler.schedule(() -> {
+                    try {
+                        inspector.execute(() -> reportStaleRoutingState(departedNodeId, departedAtNanos, finalSample));
+                    } catch (RejectedExecutionException e) {
+                        log.debug("Routing inspection not dispatched, observer is shutting down");
+                    }
+                }, delay, TimeUnit.MILLISECONDS);
             } catch (RejectedExecutionException e) {
                 log.debug("Routing inspection not scheduled, observer is shutting down");
                 return;
@@ -235,9 +261,16 @@ public class IgniteClusterObserver {
 
     /**
      * Inspect this node's local view of the vertx routing caches for entries that still
-     * reference a departed node. Local reads only, so this adds no distributed query load
-     * while the cluster is already rebalancing, and every Ignite call is time-bounded so a
-     * cluster hang cannot silence the observer.
+     * reference a departed node.
+     * <p>
+     * Deliberately tolerant rather than precise. Reads are local and time-bounded, and any
+     * failure - a timeout, a cursor invalidated by the rebalance a departure triggers, a
+     * cache handle that is not ready - is reported and then simply retried by the next
+     * sample or the next departure. Transient problems resolve themselves that way;
+     * a genuinely stuck cluster shows up as the same complaint repeating, which is the
+     * signal worth acting on. Counts are this node's local view only (primary and backup
+     * copies, and entries in partitions being rebalanced), so the same entry can appear in
+     * more than one pod's log - correlate across pods rather than summing.
      */
     private void reportStaleRoutingState(String departedNodeId, long departedAtNanos, boolean finalSample) {
         if (closed) {
@@ -247,108 +280,125 @@ public class IgniteClusterObserver {
         // cluster is unhealthy, which is exactly when the timestamp matters
         long afterMs = elapsedMs(departedAtNanos);
         try {
-            // cacheNames() is a local metadata read; ignite.cache() on an unknown name can
-            // otherwise trigger a blocking cluster-wide dynamic cache start
+            // cacheNames() is a local metadata read; it also keeps us from asking for a
+            // cache this node has never seen
             Collection<String> cacheNames = ignite.cacheNames();
             boolean nodeInfoAvailable = cacheNames.contains(NODE_INFO_CACHE);
             boolean subsAvailable = cacheNames.contains(SUBS_CACHE);
 
             if (!nodeInfoAvailable && !subsAvailable) {
-                log.warn("Inconclusive routing inspection {} ms after departure of node {}: neither "
-                         + "{} nor {} exists on this node, so no conclusion can be drawn about stale "
-                         + "routing state", afterMs, departedNodeId, NODE_INFO_CACHE, SUBS_CACHE);
+                logInspectionIncomplete(finalSample, afterMs, departedNodeId,
+                                        "neither " + NODE_INFO_CACHE + " nor " + SUBS_CACHE
+                                        + " exists on this node", null);
                 return;
             }
 
-            // Each half is independent: a missing subs cache must not cost us the nodeInfo
-            // verdict, which is the direct evidence of a failed cleanup election
-            Boolean nodeInfoPresent = nodeInfoAvailable ? checkNodeInfoPresent(departedNodeId) : null;
-            SubsScanResult subs = subsAvailable ? scanSubs(departedNodeId) : null;
+            // Each half is independent: a failure in one must not cost the other. The
+            // nodeInfo verdict in particular is the direct evidence of a failed cleanup
+            // election, so it is reported whenever it can be obtained.
+            InspectionOutcome<Boolean> nodeInfo = nodeInfoAvailable
+                    ? checkNodeInfoPresent(departedNodeId)
+                    : InspectionOutcome.unavailable("cache not present on this node");
+            InspectionOutcome<SubsScanResult> subs = subsAvailable
+                    ? scanSubs(departedNodeId)
+                    : InspectionOutcome.unavailable("cache not present on this node");
 
-            String coverage = String.format(
-                    "nodeInfoChecked=%s, subsScanned=%s",
-                    nodeInfoPresent != null ? "yes" : "no (unavailable or timed out)",
-                    subs != null ? subs.describe() : "no (cache unavailable)");
+            boolean nodeInfoStale = Boolean.TRUE.equals(nodeInfo.value);
+            SubsScanResult scan = subs.value;
+            int staleSubs = scan != null ? scan.staleEntries : 0;
 
-            boolean sawStale = Boolean.TRUE.equals(nodeInfoPresent)
-                               || (subs != null && (subs.primaryStale > 0 || subs.backupStale > 0));
-            boolean conclusive = nodeInfoPresent != null && subs != null && subs.conclusive();
+            String coverage = String.format("nodeInfoCheck=%s, subsScan=%s",
+                                            nodeInfo.describe(),
+                                            scan != null ? scan.describe() : subs.describe());
 
-            if (sawStale) {
+            if (nodeInfoStale || staleSubs > 0) {
                 String detail = String.format(
-                        "nodeInfoStillPresent=%s, staleSubsOwnedHere=%d, staleSubsBackupCopiesHere=%d, "
-                        + "sampleAddresses=%s, %s",
-                        nodeInfoPresent, subs != null ? subs.primaryStale : -1,
-                        subs != null ? subs.backupStale : -1,
-                        subs != null ? subs.addresses : List.of(), coverage);
+                        "nodeInfoStillPresent=%s, staleSubscriptionEntriesHere=%d, sampleAddresses=%s, %s",
+                        nodeInfoStale, staleSubs, scan != null ? scan.addresses : List.of(), coverage);
                 if (finalSample) {
-                    log.warn("Stale routing state remains {} ms after departure of node {}: {}. "
-                             + "staleSubsOwnedHere counts only partitions this node currently owns as "
-                             + "primary, so it is safe to sum across pods; backup copies are reported "
-                             + "separately and duplicate another pod's primary count. Event bus sends "
-                             + "to these addresses can fail with 'Not a member of the cluster' until "
-                             + "the handlers re-register.",
+                    log.warn("Stale routing state remains {} ms after departure of node {}: {}. Counts are "
+                             + "this node's local view and can overlap other pods, so correlate rather "
+                             + "than sum. Event bus sends to these addresses can fail with 'Not a member "
+                             + "of the cluster' until the handlers re-register.",
                              afterMs, departedNodeId, detail);
                 } else {
                     log.info("Routing cleanup still in progress {} ms after departure of node {}: {}",
                              afterMs, departedNodeId, detail);
                 }
-            } else if (conclusive) {
+            } else if (nodeInfo.complete() && subs.complete()) {
                 log.info("Routing caches are clean (local view) {} ms after departure of node {}: {}",
                          afterMs, departedNodeId, coverage);
             } else {
-                log.warn("Inconclusive routing inspection {} ms after departure of node {}: no stale "
-                         + "entries seen, but the inspection did not complete fully so this is NOT an "
-                         + "all-clear ({})", afterMs, departedNodeId, coverage);
+                logInspectionIncomplete(finalSample, afterMs, departedNodeId,
+                                        "no stale entries seen, but the inspection did not complete "
+                                        + "fully so this is NOT an all-clear (" + coverage + ")",
+                                        null);
             }
-        } catch (Exception e) {
+        } catch (Throwable t) {
+            // Throwable, not Exception: an Error from Ignite internals (an iterator over a
+            // partition being evicted, for instance) must not vanish into the executor,
+            // leaving a silence that reads like a clean result
             if (closed) {
-                log.debug("Routing inspection for node {} abandoned during shutdown", departedNodeId, e);
+                log.debug("Routing inspection for node {} abandoned during shutdown", departedNodeId, t);
             } else {
-                // WARN, not DEBUG: a failed inspection must never be mistaken for a clean result
-                log.warn("Could not inspect routing caches {} ms after departure of node {}; "
-                         + "no conclusion can be drawn about stale routing state",
-                         afterMs, departedNodeId, e);
+                logInspectionIncomplete(finalSample, afterMs, departedNodeId,
+                                        "the inspection failed", t);
             }
         }
     }
 
     /**
-     * @return TRUE/FALSE if the check completed, or null if it could not be completed
-     * within the configured timeout - never guess, the caller reports it as inconclusive
+     * Incomplete inspections are expected while a cluster is rebalancing, so early samples
+     * report at INFO and only the final sample warns. Either way the reason is always
+     * visible at production log levels: the whole point is that a failed check is never
+     * mistaken for a clean one.
      */
-    private Boolean checkNodeInfoPresent(String departedNodeId) {
+    private void logInspectionIncomplete(boolean finalSample, long afterMs, String departedNodeId,
+                                         String reason, Throwable cause) {
+        if (finalSample) {
+            log.warn("Inconclusive routing inspection {} ms after departure of node {}: {}",
+                     afterMs, departedNodeId, reason, cause);
+        } else {
+            log.info("Routing inspection incomplete {} ms after departure of node {}: {} "
+                     + "(will retry on the next sample)",
+                     afterMs, departedNodeId, reason, cause);
+        }
+    }
+
+    private InspectionOutcome<Boolean> checkNodeInfoPresent(String departedNodeId) {
         try {
             IgniteCache<String, Object> cache = ignite.cache(NODE_INFO_CACHE);
             if (cache == null) {
-                return null;
+                return InspectionOutcome.unavailable("cache handle not available");
             }
             // Async with an explicit timeout: containsKey on a PARTITIONED cache is a
             // distributed read that can block on partition map exchange indefinitely,
             // which is precisely the condition being diagnosed
-            return cache.containsKeyAsync(departedNodeId)
-                        .get(inspectionTimeoutMs(), TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            log.debug("nodeInfo lookup for departed node {} did not complete", departedNodeId, e);
-            return null;
+            Boolean present = cache.containsKeyAsync(departedNodeId)
+                                   .get(inspectionTimeoutMs(), TimeUnit.MILLISECONDS);
+            return InspectionOutcome.complete(present);
+        } catch (Throwable t) {
+            return InspectionOutcome.failed(describeFailure(t));
         }
     }
 
-    private SubsScanResult scanSubs(String departedNodeId) {
+    private InspectionOutcome<SubsScanResult> scanSubs(String departedNodeId) {
         SubsScanResult result = new SubsScanResult();
-        IgniteCache<Object, Object> cache = ignite.cache(SUBS_CACHE);
-        if (cache == null) {
-            return null;
-        }
-        Affinity<Object> affinity = ignite.affinity(SUBS_CACHE);
-        ClusterNode localNode = ignite.cluster().localNode();
-        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(inspectionTimeoutMs());
-        int maxEntries = maxEntriesScanned();
-
-        Iterable<Cache.Entry<Object, Object>> entries =
-                cache.withKeepBinary().localEntries(CachePeekMode.PRIMARY, CachePeekMode.BACKUP);
-        Iterator<Cache.Entry<Object, Object>> iterator = entries.iterator();
+        Iterator<Cache.Entry<Object, Object>> iterator = null;
         try {
+            IgniteCache<Object, Object> cache = ignite.cache(SUBS_CACHE);
+            if (cache == null) {
+                return InspectionOutcome.unavailable("cache handle not available");
+            }
+            long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(inspectionTimeoutMs());
+            int maxEntries = maxEntriesScanned();
+
+            // Local reads only: no distributed query while the cluster is rebalancing.
+            // Both peek modes are used deliberately - a departure's stale entries can sit
+            // in either, and over-reporting on one pod is preferable to missing them.
+            iterator = cache.withKeepBinary()
+                            .localEntries(CachePeekMode.PRIMARY, CachePeekMode.BACKUP)
+                            .iterator();
             while (iterator.hasNext()) {
                 if (result.scanned >= maxEntries) {
                     result.truncated = true;
@@ -364,26 +414,27 @@ public class IgniteClusterObserver {
                     result.unreadableKeys++;
                     continue;
                 }
-                if (!departedNodeId.equals(key.field("nodeId"))) {
-                    continue;
-                }
-                // Ownership from the affinity function, not from the fact the data is here:
-                // partitions being rebalanced away still hold their old contents, and counting
-                // those would produce phantom findings during every rolling restart
-                if (affinity.isPrimary(localNode, key)) {
-                    result.primaryStale++;
+                if (departedNodeId.equals(key.field("nodeId"))) {
+                    result.staleEntries++;
                     if (result.addresses.size() < MAX_STALE_ADDRESSES_LOGGED) {
                         result.addresses.add(String.valueOf(key.field("address")));
                     }
-                } else if (affinity.isBackup(localNode, key)) {
-                    result.backupStale++;
                 }
-                // Entries in partitions this node no longer owns are deliberately ignored
             }
+            return InspectionOutcome.complete(result);
+        } catch (Throwable t) {
+            // A cursor invalidated by partition eviction is normal during the rebalance a
+            // departure triggers; report what was gathered and let the next sample retry
+            result.failure = describeFailure(t);
+            return InspectionOutcome.partial(result, result.failure);
         } finally {
             closeQuietly(iterator);
         }
-        return result;
+    }
+
+    private static String describeFailure(Throwable t) {
+        return t.getClass().getSimpleName()
+               + (t.getMessage() != null ? ": " + t.getMessage() : "");
     }
 
     /**
@@ -415,8 +466,6 @@ public class IgniteClusterObserver {
             reportUnqueryableTopology(e);
             return;
         }
-        lastUnqueryableReportNanos = -1;
-
         int minimumClusterSize = minimumClusterSize();
 
         if (log.isDebugEnabled()) {
@@ -446,7 +495,7 @@ public class IgniteClusterObserver {
                          serverNodes, elapsedMs(belowMinimumSinceNanos), minimumClusterSize);
             }
             belowMinimumSinceNanos = -1;
-            belowMinimumReported = false;
+            lastBelowMinimumReportNanos = -1;
             return;
         }
 
@@ -463,12 +512,18 @@ public class IgniteClusterObserver {
         }
 
         long belowForMs = elapsedMs(belowMinimumSinceNanos);
-        // One escalation per episode so a long orphan does not flood the log
-        if (!belowMinimumReported && belowForMs >= reportBelowMinimumAfterMs()) {
-            belowMinimumReported = true;
+        if (belowForMs < reportBelowMinimumAfterMs()) {
+            return;
+        }
+        // Repeated hourly rather than once per episode: a node orphaned days ago must still
+        // be visible in a recent log window, not only in one line from when it happened
+        if (lastBelowMinimumReportNanos == -1
+                || elapsedMs(lastBelowMinimumReportNanos) >= BELOW_MINIMUM_REPORT_INTERVAL_MS) {
+            lastBelowMinimumReportNanos = System.nanoTime();
             log.error("Server topology has been at {} nodes, below the minimum of {}, for {} ms. "
                       + "This node is very likely orphaned or split-brained and would need a restart "
-                      + "to rejoin the cluster", serverNodes, minimumClusterSize, belowForMs);
+                      + "to rejoin the cluster (repeated at most every {} ms while it persists)",
+                      serverNodes, minimumClusterSize, belowForMs, BELOW_MINIMUM_REPORT_INTERVAL_MS);
         }
     }
 
@@ -587,25 +642,61 @@ public class IgniteClusterObserver {
     }
 
     /**
-     * Result of a local __vertx.subs scan. primaryStale is the cluster-summable count;
-     * backupStale duplicates another node's primary count and is kept separate.
+     * Outcome of one half of an inspection: whether it completed, and if not, why. Nothing
+     * is ever inferred from a failure - an incomplete half simply prevents an all-clear.
      */
-    private static final class SubsScanResult {
-        private int scanned;
-        private int primaryStale;
-        private int backupStale;
-        private int unreadableKeys;
-        private boolean truncated;
-        private boolean timedOut;
-        private final List<String> addresses = new ArrayList<>();
+    private record InspectionOutcome<T>(T value, boolean complete, String detail) {
 
-        private boolean conclusive() {
-            return !truncated && !timedOut && unreadableKeys == 0;
+        private static <T> InspectionOutcome<T> complete(T value) {
+            return new InspectionOutcome<>(value, true, "ok");
+        }
+
+        private static <T> InspectionOutcome<T> partial(T value, String detail) {
+            return new InspectionOutcome<>(value, false, detail);
+        }
+
+        private static <T> InspectionOutcome<T> unavailable(String detail) {
+            return new InspectionOutcome<>(null, false, detail);
+        }
+
+        private static <T> InspectionOutcome<T> failed(String detail) {
+            return new InspectionOutcome<>(null, false, detail);
         }
 
         private String describe() {
-            return String.format("localEntriesScanned=%d, truncated=%b, timedOut=%b, unreadableKeys=%d",
-                                 scanned, truncated, timedOut, unreadableKeys);
+            return detail;
+        }
+    }
+
+    /**
+     * What a local __vertx.subs scan saw. Counts are this node's local view (primary and
+     * backup copies, and partitions mid-rebalance), so they can overlap other pods.
+     */
+    private static final class SubsScanResult {
+        private int scanned;
+        private int staleEntries;
+        private int unreadableKeys;
+        private boolean truncated;
+        private boolean timedOut;
+        private String failure;
+        private final List<String> addresses = new ArrayList<>();
+
+        private String describe() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("localEntriesScanned=").append(scanned);
+            if (truncated) {
+                sb.append(", truncated=true");
+            }
+            if (timedOut) {
+                sb.append(", timedOut=true");
+            }
+            if (unreadableKeys > 0) {
+                sb.append(", unreadableKeys=").append(unreadableKeys);
+            }
+            if (failure != null) {
+                sb.append(", failed=").append(failure);
+            }
+            return sb.toString();
         }
     }
 }
