@@ -83,12 +83,15 @@ continuum:
     kubernetesIncludeNotReadyAddresses: false
     kubernetesMasterUrl: ""
     kubernetesAccountToken: ""
-    # Diagnostic cluster observer: logging only, it never shuts anything down.
-    # 1 (default) logs membership changes, segmentation and post-departure vertx routing
-    # state. Above 1 it additionally logs episodes where the server topology is below this
-    # count - the split-brain condition Ignite cannot detect on its own. Set it to a
-    # majority of replicaCount (floor(n/2)+1), e.g. 2 for 3 replicas.
-    observerMinimumClusterSize: 1
+
+# Diagnostic Ignite cluster observer (logging only - it never shuts anything down).
+# Binds to structures.cluster-observer.* in StructuresProperties.
+clusterObserver:
+  # 1 (default): membership, segmentation and post-departure vertx routing diagnostics.
+  # Above 1: additionally logs episodes where the server topology is below this count,
+  # the split-brain condition Ignite cannot detect on its own. Set it to a majority of
+  # replicaCount (floor(n/2)+1), e.g. 2 for 3 replicas.
+  minimumClusterSize: 1
 
 # TODO: adjust for this later
 # OIDC security service configuration

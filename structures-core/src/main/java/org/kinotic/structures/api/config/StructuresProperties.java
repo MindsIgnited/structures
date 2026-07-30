@@ -126,6 +126,11 @@ public class StructuresProperties {
      */
     private ClusterEvictionProperties clusterEviction = new ClusterEvictionProperties();
 
+    /**
+     * Diagnostic cluster observer configuration (logging only)
+     */
+    private ClusterObserverProperties clusterObserver = new ClusterObserverProperties();
+
 
     public boolean hasElasticUsernameAndPassword(){
         return elasticUsername != null && !elasticUsername.isBlank() && elasticPassword != null && !elasticPassword.isBlank();

@@ -39,6 +39,10 @@ data:
   STRUCTURES_ENABLE_STATIC_FILE_SERVER: "{{ .Values.properties.structures.enableStaticFileServer }}"
   STRUCTURES_INITIALIZE_WITH_SAMPLE_DATA: "{{ .Values.properties.structures.initializeWithSampleData }}"
   STRUCTURES_TENANT_ID_FIELD_NAME: "{{ .Values.properties.structures.tenantIdFieldName }}"
+  # Diagnostic cluster observer (logging only, never shuts anything down). Above 1 it also
+  # logs episodes where the server topology is below this count, which is the split-brain
+  # condition Ignite cannot detect. Set to a majority of replicaCount, e.g. 2 for 3.
+  STRUCTURES_CLUSTER_OBSERVER_MINIMUM_CLUSTER_SIZE: "{{ .Values.clusterObserver.minimumClusterSize | default "1" }}"
   {{- if .Values.evictionTracking.enabled }}
   # Eviction tracking - path includes ${POD_NAME} which Spring resolves from the POD_NAME env var
   STRUCTURES_CACHE_EVICTION_CSV_PATH: "{{ .Values.evictionTracking.mountPath | default "/eviction-data" }}/evictions-${POD_NAME}.csv"
@@ -50,10 +54,6 @@ data:
   # Reference: structures-core/src/test/resources/docker-compose/cluster-test-compose.yml
 
   CONTINUUM_CLUSTER_DISABLE_CLUSTERING: "{{ .Values.continuum.disableClustering | default "false" }}"
-  # Diagnostic cluster observer (logging only, never shuts anything down). Above 1 it also
-  # logs episodes where the server topology is below this count, which is the split-brain
-  # condition Ignite cannot detect. Set to a majority of replicaCount, e.g. 2 for 3.
-  STRUCTURES_CLUSTER_OBSERVER_MINIMUMCLUSTERSIZE: "{{ .Values.continuum.cluster.observerMinimumClusterSize | default "1" }}"
   CONTINUUM_CLUSTER_DISCOVERY_TYPE: "{{ .Values.continuum.cluster.discoveryType | default "LOCAL" | upper }}"
   CONTINUUM_CLUSTER_JOIN_TIMEOUT_MS: "{{ .Values.continuum.cluster.joinTimeoutMs | default "0" }}"
   CONTINUUM_CLUSTER_DISCOVERY_PORT: "{{ .Values.continuum.cluster.discoveryPort | default "47500" }}"
