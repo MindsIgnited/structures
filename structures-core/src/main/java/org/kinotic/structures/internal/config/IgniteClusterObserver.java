@@ -6,8 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCache;
 import org.apache.ignite.binary.BinaryObject;
-import org.apache.ignite.cache.query.QueryCursor;
-import org.apache.ignite.cache.query.ScanQuery;
+import org.apache.ignite.cache.CachePeekMode;
 import org.apache.ignite.events.DiscoveryEvent;
 import org.apache.ignite.events.Event;
 import org.apache.ignite.events.EventType;
@@ -20,22 +19,25 @@ import javax.cache.Cache;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Purely diagnostic observer of Ignite cluster membership. It never changes behavior:
  * it does not shut anything down, does not gate readiness, and takes no action of any
  * kind - it only logs what it sees, so it is safe to run everywhere clustering is on.
  * <p>
+ * All work is handed to its own daemon threads; nothing but the handoff runs on Ignite's
+ * discovery worker, because stalling that worker would trip Ignite's own failure handler.
+ * <p>
  * What it records:
  * <ul>
  *   <li>membership changes (join/left/failed) with topology version and server count</li>
  *   <li>segmentation events - a segmented server node can never rejoin without a restart,
  *   so this is the highest value line it produces. Note continuum's non-development
- *   FailureHandler halts the JVM on the same thread right after listeners are notified,
- *   so this log may be the last thing the process writes.</li>
+ *   FailureHandler halts the JVM shortly after listeners are notified, so this log may be
+ *   the last thing the process writes.</li>
  *   <li>stale vertx routing state after a node departs. vertx-ignite cleans up a departed
  *   node's subscriptions only on the single survivor whose nodeInfoMap.remove(id) returns
  *   true; if that entry is already gone, no node runs cleanSubs and stale __vertx.subs
@@ -43,18 +45,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   failures. Whether that is what happens here is UNCONFIRMED - continuum contributes a
  *   "*" cache template (PARTITIONED, backups=1, PRIMARY_SYNC) covering the __vertx.*
  *   caches, so entries are not lost outright on a single node failure. This observer
- *   exists to capture evidence rather than assume a mechanism. Because vertx-ignite's
- *   cleanup removes entries one at a time and can legitimately take a while, the check is
- *   sampled several times after a departure so an in-progress cleanup is distinguishable
- *   from a leak; only the final sample warns.</li>
+ *   exists to capture evidence rather than assume a mechanism. Cleanup removes entries one
+ *   at a time and can legitimately take a while, so the check is sampled several times
+ *   after a departure; only the final sample warns. Every result states the coverage it
+ *   achieved, and a scan that could not cover the data never reports "clean" - an
+ *   inconclusive result must never be mistaken for an all-clear.</li>
  *   <li>server topology below structures.cluster.observer.minimumClusterSize (the only
- *   configuration this class has, default 1 = topology watchdog off). That is the
+ *   configuration this class has, default 1 = topology reporting off). That is the
  *   split-brain condition Ignite cannot detect by design: group splits keep a healthy ring
- *   on each side, and a restart into a partition forms a fresh singleton topology. Set it
- *   to a majority of the replica count (floor(n/2)+1) to have those episodes logged.</li>
+ *   on each side, and a restart into a partition forms a fresh singleton topology that
+ *   Ignite never merges. Set it to a majority of the replica count (floor(n/2)+1) to have
+ *   those episodes logged, including a node that never reaches the minimum at all.</li>
  * </ul>
- * Inspections run on their own thread, are bounded, and read only node-local cache
- * partitions, so they add no cluster-wide query load during a failure.
  */
 @Slf4j
 @Component
@@ -62,7 +64,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class IgniteClusterObserver {
 
     private static final long TOPOLOGY_POLL_MS = 10_000L;
-    private static final long ORPHAN_REPORT_AFTER_MS = 60_000L;
+    private static final long REPORT_AFTER_BELOW_MINIMUM_MS = 60_000L;
+    private static final long REPORT_NEVER_REACHED_MINIMUM_MS = 300_000L;
+    private static final long UNQUERYABLE_REPORT_INTERVAL_MS = 600_000L;
     private static final int MAX_STALE_ADDRESSES_LOGGED = 10;
     private static final int MAX_ENTRIES_SCANNED = 50_000;
     /** Sampled repeatedly so a slow cleanup is not reported as a leak; only the last warns */
@@ -81,8 +85,10 @@ public class IgniteClusterObserver {
     private volatile boolean closed = false;
     private volatile boolean armed = false;
     private volatile boolean belowMinimumReported = false;
+    private volatile boolean neverReachedMinimumReported = false;
     private volatile long belowMinimumSinceNanos = -1;
-    private final AtomicBoolean inspectionInProgress = new AtomicBoolean(false);
+    private volatile long startedAtNanos = -1;
+    private volatile long lastUnqueryableReportNanos = -1;
 
     private IgnitePredicate<Event> membershipListener;
     private IgnitePredicate<Event> segmentationListener;
@@ -95,29 +101,22 @@ public class IgniteClusterObserver {
 
     @PostConstruct
     public void start() {
+        startedAtNanos = System.nanoTime();
         scheduler = newDaemonScheduler("structures-cluster-observer");
         // Inspections get their own thread: a cache read during a partition can block for
         // a long time, and it must never stall topology polling
         inspector = newDaemonScheduler("structures-cluster-inspector");
 
+        // The listener captures the event and hands off immediately. Ignite notifies local
+        // listeners inline on the discovery worker, which is a monitored critical worker:
+        // logging (and any cluster call) there risks tripping SYSTEM_WORKER_BLOCKED.
         membershipListener = event -> {
             DiscoveryEvent discoveryEvent = (DiscoveryEvent) event;
             String eventNodeId = discoveryEvent.eventNode().id().toString();
             long topologyVersion = discoveryEvent.topologyVersion();
-            int serverNodes = safeServerTopologySize();
-            switch (event.type()) {
-                case EventType.EVT_NODE_JOINED ->
-                        log.info("Cluster node joined: {} (topologyVersion={}, serverNodes={})",
-                                 eventNodeId, topologyVersion, serverNodes);
-                case EventType.EVT_NODE_LEFT ->
-                        log.info("Cluster node left: {} (topologyVersion={}, serverNodes={})",
-                                 eventNodeId, topologyVersion, serverNodes);
-                case EventType.EVT_NODE_FAILED ->
-                        log.warn("Cluster node FAILED: {} (topologyVersion={}, serverNodes={})",
-                                 eventNodeId, topologyVersion, serverNodes);
-                default -> { /* not registered for others */ }
-            }
-            if (event.type() == EventType.EVT_NODE_LEFT || event.type() == EventType.EVT_NODE_FAILED) {
+            int eventType = event.type();
+            submit(scheduler, () -> logMembershipChange(eventType, eventNodeId, topologyVersion));
+            if (eventType == EventType.EVT_NODE_LEFT || eventType == EventType.EVT_NODE_FAILED) {
                 scheduleStaleRouteSamples(eventNodeId);
             }
             return true;
@@ -128,11 +127,12 @@ public class IgniteClusterObserver {
                                     EventType.EVT_NODE_FAILED);
 
         // Logged, never acted on. Continuum's FailureHandler decides what happens to the
-        // process; this line is the evidence that segmentation is what happened.
+        // process. Logged inline rather than handed off: the JVM is likely to be halted
+        // moments from now, and an off-thread log would never be written.
         segmentationListener = event -> {
             log.error("Node segmentation detected: this Ignite node was segmented from the cluster. "
-                      + "Segmented server nodes cannot rejoin without a restart (serverNodes={})",
-                      safeServerTopologySize());
+                      + "Segmented server nodes cannot rejoin without a restart. {}",
+                      describeServerTopology());
             return false; // one shot
         };
         ignite.events().localListen(segmentationListener, EventType.EVT_NODE_SEGMENTED);
@@ -146,7 +146,7 @@ public class IgniteClusterObserver {
                      minimumClusterSize);
         } else {
             log.info("Ignite cluster observer started (diagnostic only): membership and routing "
-                     + "diagnostics active, topology watchdog off "
+                     + "diagnostics active, topology reporting off "
                      + "(set structures.cluster.observer.minimumClusterSize above 1 to enable it)");
         }
     }
@@ -182,97 +182,135 @@ public class IgniteClusterObserver {
         }
     }
 
+    private void logMembershipChange(int eventType, String eventNodeId, long topologyVersion) {
+        switch (eventType) {
+            case EventType.EVT_NODE_JOINED ->
+                    log.info("Cluster node joined: {} (topologyVersion={}, {})",
+                             eventNodeId, topologyVersion, describeServerTopology());
+            case EventType.EVT_NODE_LEFT ->
+                    log.info("Cluster node left: {} (topologyVersion={}, {})",
+                             eventNodeId, topologyVersion, describeServerTopology());
+            case EventType.EVT_NODE_FAILED ->
+                    log.warn("Cluster node FAILED: {} (topologyVersion={}, {})",
+                             eventNodeId, topologyVersion, describeServerTopology());
+            default -> { /* not registered for others */ }
+        }
+    }
+
     private void scheduleStaleRouteSamples(String departedNodeId) {
         if (closed) {
             return;
         }
+        long departedAtNanos = System.nanoTime();
         for (int i = 0; i < STALE_ROUTE_SAMPLE_DELAYS_MS.length; i++) {
             boolean finalSample = i == STALE_ROUTE_SAMPLE_DELAYS_MS.length - 1;
             long delay = STALE_ROUTE_SAMPLE_DELAYS_MS[i];
-            try {
-                inspector.schedule(() -> reportStaleRoutingState(departedNodeId, delay, finalSample),
-                                   delay, TimeUnit.MILLISECONDS);
-            } catch (Exception e) {
-                // Executor already stopping; nothing to diagnose
-                log.debug("Could not schedule routing state inspection", e);
-                return;
-            }
+            submit(inspector,
+                   () -> reportStaleRoutingState(departedNodeId, departedAtNanos, finalSample),
+                   delay);
         }
     }
 
     /**
-     * Inspect this node's LOCAL partitions of the vertx routing caches for entries that
-     * still reference a departed node. Local-only by design: it costs nothing beyond a
-     * node-local iteration, adds no distributed query load while the cluster is already
-     * rebalancing, and every surviving node logs its own view, which together cover the
-     * cluster.
+     * Inspect this node's local partitions of the vertx routing caches for entries that
+     * still reference a departed node. Local by design: it costs nothing beyond a
+     * node-local iteration and adds no distributed query load while the cluster is already
+     * rebalancing. Primary AND backup partitions are read, because a departure triggers
+     * rebalancing and an entry this node holds only as a backup is exactly the kind a
+     * primary-only scan would miss. Every log line states the coverage achieved so an
+     * inconclusive scan can never be read as an all-clear.
      */
-    private void reportStaleRoutingState(String departedNodeId, long afterMs, boolean finalSample) {
+    private void reportStaleRoutingState(String departedNodeId, long departedAtNanos, boolean finalSample) {
         if (closed) {
             return;
         }
-        // Never let overlapping departures stack up inspections
-        if (!inspectionInProgress.compareAndSet(false, true)) {
-            log.debug("Skipping routing state inspection for {}, another inspection is running",
-                      departedNodeId);
-            return;
-        }
+        // Real elapsed time, not the nominal schedule: a sample can run late when the
+        // cluster is unhealthy, which is exactly when the timestamp matters
+        long afterMs = elapsedMs(departedAtNanos);
         try {
             IgniteCache<String, ?> nodeInfoCache = ignite.cache("__vertx.nodeInfo");
-            boolean nodeInfoPresent = nodeInfoCache != null && nodeInfoCache.containsKey(departedNodeId);
+            IgniteCache<Object, Object> subsCache = ignite.cache("__vertx.subs");
+
+            if (nodeInfoCache == null || subsCache == null) {
+                log.warn("Inconclusive routing inspection {} ms after departure of node {}: "
+                         + "vertx caches are not available on this node "
+                         + "(nodeInfoCachePresent={}, subsCachePresent={}). No conclusion can be "
+                         + "drawn about stale routing state.",
+                         afterMs, departedNodeId, nodeInfoCache != null, subsCache != null);
+                return;
+            }
+
+            boolean nodeInfoPresent = nodeInfoCache.containsKey(departedNodeId);
 
             int staleSubs = 0;
             int scanned = 0;
+            int nonBinaryKeys = 0;
             boolean truncated = false;
             List<String> staleAddresses = new ArrayList<>();
-            IgniteCache<Object, Object> subsCache = ignite.cache("__vertx.subs");
-            if (subsCache != null) {
-                // Local scan, binary form: no cluster-wide query, and no compile-time
-                // dependency on vertx-ignite's IgniteRegistrationInfo (the binary field
-                // names match its writeBinary implementation)
-                ScanQuery<Object, Object> query = new ScanQuery<>();
-                query.setLocal(true);
-                try (QueryCursor<Cache.Entry<Object, Object>> cursor
-                             = subsCache.withKeepBinary().query(query)) {
-                    for (Cache.Entry<Object, Object> entry : cursor) {
-                        if (++scanned > MAX_ENTRIES_SCANNED) {
-                            truncated = true;
-                            break;
-                        }
-                        if (entry.getKey() instanceof BinaryObject key
-                                && departedNodeId.equals(key.field("nodeId"))) {
-                            staleSubs++;
-                            if (staleAddresses.size() < MAX_STALE_ADDRESSES_LOGGED) {
-                                staleAddresses.add(key.field("address"));
-                            }
+            // localEntries with explicit peek modes rather than a ScanQuery: it is
+            // node-local (no distributed query while the cluster is rebalancing) AND it
+            // includes backup partitions. A plain scan query only covers partitions this
+            // node is primary for, which is exactly where a departure's stale entries can
+            // hide during rebalancing. Binary form avoids a compile-time dependency on
+            // vertx-ignite's IgniteRegistrationInfo (the field names match its writeBinary).
+            for (Cache.Entry<Object, Object> entry : subsCache.withKeepBinary()
+                                                              .localEntries(CachePeekMode.PRIMARY,
+                                                                            CachePeekMode.BACKUP)) {
+                if (scanned >= MAX_ENTRIES_SCANNED) {
+                    truncated = true;
+                    break;
+                }
+                scanned++;
+                if (entry.getKey() instanceof BinaryObject key) {
+                    if (departedNodeId.equals(key.field("nodeId"))) {
+                        staleSubs++;
+                        if (staleAddresses.size() < MAX_STALE_ADDRESSES_LOGGED) {
+                            staleAddresses.add(key.field("address"));
                         }
                     }
+                } else {
+                    nonBinaryKeys++;
                 }
             }
 
-            if (!nodeInfoPresent && staleSubs == 0) {
-                log.info("Routing caches are clean (local view) {} ms after departure of node {}: "
-                         + "scannedLocalSubs={}", afterMs, departedNodeId, scanned);
-            } else if (finalSample) {
-                log.warn("Stale routing state remains {} ms after departure of node {}: "
-                         + "nodeInfoStillPresent={}, staleLocalSubscriptionEntries={}, "
-                         + "sampleAddresses={}, scannedLocalSubs={}, truncated={}. Event bus sends to "
-                         + "these addresses can fail with 'Not a member of the cluster' until the "
-                         + "handlers re-register.",
-                         afterMs, departedNodeId, nodeInfoPresent, staleSubs, staleAddresses,
-                         scanned, truncated);
+            // An unexamined remainder or unreadable keys mean the scan cannot support an
+            // all-clear, so say so rather than implying the caches are clean
+            boolean conclusive = !truncated && nonBinaryKeys == 0;
+            String coverage = String.format(
+                    "localEntriesScanned=%d (primary+backup), truncated=%b, unreadableKeys=%d",
+                    scanned, truncated, nonBinaryKeys);
+
+            if (nodeInfoPresent || staleSubs > 0) {
+                if (finalSample) {
+                    log.warn("Stale routing state remains {} ms after departure of node {}: "
+                             + "nodeInfoStillPresent={}, staleLocalSubscriptionEntries={}, "
+                             + "sampleAddresses={}, {}. Event bus sends to these addresses can fail "
+                             + "with 'Not a member of the cluster' until the handlers re-register.",
+                             afterMs, departedNodeId, nodeInfoPresent, staleSubs, staleAddresses, coverage);
+                } else {
+                    log.info("Routing cleanup still in progress {} ms after departure of node {}: "
+                             + "nodeInfoStillPresent={}, staleLocalSubscriptionEntries={}, {}",
+                             afterMs, departedNodeId, nodeInfoPresent, staleSubs, coverage);
+                }
+            } else if (conclusive) {
+                log.info("Routing caches are clean (local view) {} ms after departure of node {}: {}",
+                         afterMs, departedNodeId, coverage);
             } else {
-                log.info("Routing cleanup still in progress {} ms after departure of node {}: "
-                         + "nodeInfoStillPresent={}, staleLocalSubscriptionEntries={}",
-                         afterMs, departedNodeId, nodeInfoPresent, staleSubs);
+                log.warn("Inconclusive routing inspection {} ms after departure of node {}: no stale "
+                         + "entries seen, but the scan did not cover all local entries so this is NOT "
+                         + "an all-clear ({})",
+                         afterMs, departedNodeId, coverage);
             }
         } catch (Exception e) {
-            // WARN, not DEBUG: a failed inspection must never be mistaken for a clean result
-            log.warn("Could not inspect routing caches {} ms after departure of node {}; "
-                     + "no conclusion can be drawn about stale routing state",
-                     afterMs, departedNodeId, e);
-        } finally {
-            inspectionInProgress.set(false);
+            if (closed || Thread.currentThread().isInterrupted()) {
+                // Ordinary shutdown interrupted the read; not a cluster problem
+                log.debug("Routing inspection for node {} aborted during shutdown", departedNodeId, e);
+            } else {
+                // WARN, not DEBUG: a failed inspection must never be mistaken for a clean result
+                log.warn("Could not inspect routing caches {} ms after departure of node {}; "
+                         + "no conclusion can be drawn about stale routing state",
+                         afterMs, departedNodeId, e);
+            }
         }
     }
 
@@ -293,11 +331,14 @@ public class IgniteClusterObserver {
             return;
         }
 
-        int serverNodes = safeServerTopologySize();
-        if (serverNodes < 0) {
-            log.warn("Ignite topology is not queryable");
+        int serverNodes;
+        try {
+            serverNodes = ignite.cluster().forServers().nodes().size();
+        } catch (Exception e) {
+            reportUnqueryableTopology(e);
             return;
         }
+        lastUnqueryableReportNanos = -1;
 
         if (log.isDebugEnabled()) {
             log.debug("Topology poll: serverNodes={}, minimum={}, armed={}, belowMinimumForMs={}",
@@ -318,9 +359,20 @@ public class IgniteClusterObserver {
             return;
         }
 
-        // Below the minimum. Startup (nodes joining one by one) is not interesting, so only
-        // report once the topology has actually reached the minimum at least once.
+        // Never reached the minimum. Normal startup climbs to it within seconds; a node
+        // that stays here has very likely started into an ongoing partition and formed its
+        // own singleton topology, which Ignite never merges back. Report it once - this is
+        // the split-brain case that produces no segmentation event at all.
         if (!armed) {
+            if (!neverReachedMinimumReported
+                    && elapsedMs(startedAtNanos) >= REPORT_NEVER_REACHED_MINIMUM_MS) {
+                neverReachedMinimumReported = true;
+                log.error("Server topology has never reached the minimum of {} since startup {} ms ago "
+                          + "(currently {} nodes). This node may have started into an ongoing partition "
+                          + "and formed its own topology, which Ignite cannot merge; it would need a "
+                          + "restart to join the real cluster",
+                          minimumClusterSize, elapsedMs(startedAtNanos), serverNodes);
+            }
             return;
         }
 
@@ -334,12 +386,58 @@ public class IgniteClusterObserver {
 
         long belowForMs = elapsedMs(belowMinimumSinceNanos);
         // One escalation per episode so a long orphan does not flood the log
-        if (!belowMinimumReported && belowForMs >= ORPHAN_REPORT_AFTER_MS) {
+        if (!belowMinimumReported && belowForMs >= REPORT_AFTER_BELOW_MINIMUM_MS) {
             belowMinimumReported = true;
             log.error("Server topology has been at {} nodes, below the minimum of {}, for {} ms. "
                       + "This node is very likely orphaned or split-brained and would need a restart "
                       + "to rejoin the cluster",
                       serverNodes, minimumClusterSize, belowForMs);
+        }
+    }
+
+    /**
+     * The topology can stay unqueryable indefinitely (a stopped Ignite node in a live JVM),
+     * so this is throttled: an unbounded repeat would bury the evidence this class exists
+     * to produce.
+     */
+    private void reportUnqueryableTopology(Exception cause) {
+        if (lastUnqueryableReportNanos == -1
+                || elapsedMs(lastUnqueryableReportNanos) >= UNQUERYABLE_REPORT_INTERVAL_MS) {
+            lastUnqueryableReportNanos = System.nanoTime();
+            log.warn("Ignite topology is not queryable; cluster observations are unavailable "
+                     + "(further occurrences logged at most every {} ms)",
+                     UNQUERYABLE_REPORT_INTERVAL_MS, cause);
+        }
+    }
+
+    /**
+     * Server topology description for log context. Includes the failure reason rather than
+     * a bare sentinel, so a line that could not read the topology says why.
+     */
+    private String describeServerTopology() {
+        try {
+            return "serverNodes=" + ignite.cluster().forServers().nodes().size();
+        } catch (Exception e) {
+            return "serverNodes=unknown (" + e.getClass().getSimpleName() + ": " + e.getMessage() + ")";
+        }
+    }
+
+    private void submit(ScheduledExecutorService executor, Runnable task) {
+        submit(executor, task, 0);
+    }
+
+    private void submit(ScheduledExecutorService executor, Runnable task, long delayMs) {
+        try {
+            executor.schedule(() -> {
+                try {
+                    task.run();
+                } catch (Throwable t) {
+                    log.error("Unexpected error in cluster observer task", t);
+                }
+            }, delayMs, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            // Executor already stopping; nothing to diagnose
+            log.debug("Cluster observer task not scheduled, observer is shutting down");
         }
     }
 
@@ -349,14 +447,6 @@ public class IgniteClusterObserver {
             thread.setDaemon(true);
             return thread;
         });
-    }
-
-    private int safeServerTopologySize() {
-        try {
-            return ignite.cluster().forServers().nodes().size();
-        } catch (Exception e) {
-            return -1;
-        }
     }
 
     // Monotonic elapsed time: wall-clock can step forward under NTP corrections or VM
