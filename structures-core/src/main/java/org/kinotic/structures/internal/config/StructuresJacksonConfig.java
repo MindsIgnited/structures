@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.module.SimpleAbstractTypeResolver;
 import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.util.TokenBuffer;
 import org.apache.commons.lang3.tuple.Pair;
 import org.kinotic.continuum.idl.api.schema.C3Type;
 import org.kinotic.continuum.idl.api.schema.decorators.C3Decorator;
@@ -20,6 +21,8 @@ import org.kinotic.structures.api.domain.idl.QueryOptionsC3Type;
 import org.kinotic.structures.api.domain.idl.TenantSelectionC3Type;
 import org.kinotic.structures.api.domain.DefaultTenantSpecificId;
 import org.kinotic.structures.internal.serializer.*;
+import org.kinotic.structures.internal.serializer.jackson3.Jackson2BridgeDeserializer;
+import org.kinotic.structures.internal.serializer.jackson3.Jackson2BridgeSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
@@ -88,7 +91,8 @@ public class StructuresJacksonConfig {
      * decorator fails to deserialize with "Could not resolve type id ... known type ids = [NotNull]".
      */
     @Bean
-    public JacksonModule structuresJackson3Module(ApplicationContext applicationContext){
+    public JacksonModule structuresJackson3Module(ApplicationContext applicationContext,
+                                                  ObjectMapper objectMapper){
         tools.jackson.databind.module.SimpleModule ret =
                 new tools.jackson.databind.module.SimpleModule("StructuresModule",
                                                                tools.jackson.core.Version.unknownVersion());
@@ -98,12 +102,25 @@ public class StructuresJacksonConfig {
                                                                               subtype.getRight()));
         }
 
+        // These travel on published service signatures but are Jackson 2 shaped, so continuum's Jackson 3
+        // mapper delegates them to the Jackson 2 mapper that has always produced them. See Jackson2BridgeSerializer.
+        bridge(ret, objectMapper, TokenBuffer.class);
+        bridge(ret, objectMapper, RawJson.class);
+        bridge(ret, objectMapper, FastestType.class);
+
         tools.jackson.databind.module.SimpleAbstractTypeResolver resolver =
                 new tools.jackson.databind.module.SimpleAbstractTypeResolver();
         resolver.addMapping(TenantSpecificId.class, DefaultTenantSpecificId.class);
         ret.setAbstractTypes(resolver);
 
         return ret;
+    }
+
+    private <T> void bridge(tools.jackson.databind.module.SimpleModule module,
+                            ObjectMapper objectMapper,
+                            Class<T> type){
+        module.addSerializer(type, new Jackson2BridgeSerializer<>(objectMapper));
+        module.addDeserializer(type, new Jackson2BridgeDeserializer<>(objectMapper, type));
     }
 
     /**
