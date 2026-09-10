@@ -33,12 +33,16 @@ export interface PodPlacement {
     name: string
     ip: string
     node: string
+    /** Pod CIDR of the hosting node. Rules are written against this rather than the pod IP,
+     *  because a restarted pod comes back with a new IP and IP based rules would silently miss it. */
+    podCidr: string
 }
 
 /**
  * Pod name, pod IP and hosting KinD node for every structures pod, in the order kubectl returns them.
  */
 export function getPodPlacements(context: string, namespace: string, labelSelector: string): PodPlacement[] {
+    const cidrByNode = getNodePodCidrs(context)
     const output = kubectl(
         context,
         `get pods -n ${namespace} -l ${labelSelector} ` +
@@ -50,22 +54,47 @@ export function getPodPlacements(context: string, namespace: string, labelSelect
         .filter(line => line.length > 0)
         .map(line => {
             const [name, ip, node] = line.split(/\s+/)
-            return { name, ip, node }
+            return { name, ip, node, podCidr: cidrByNode.get(node) ?? '' }
         })
 }
 
+/** Pod CIDR for each node, which is what segmentation rules are written against. */
+export function getNodePodCidrs(context: string): Map<string, string> {
+    const output = kubectl(
+        context,
+        `get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.podCIDR}{"\\n"}{end}'`
+    )
+    const result = new Map<string, string>()
+    for (const line of output.split('\n')) {
+        const [node, cidr] = line.trim().split(/\s+/)
+        if (node && cidr) {
+            result.set(node, cidr)
+        }
+    }
+    return result
+}
+
 /**
- * Drop Ignite discovery and communication traffic between one pod and its peers, in both directions.
+ * Drop Ignite discovery and communication traffic between one pod's node and its peers' nodes, in
+ * both directions.
+ *
+ * Rules match on node pod CIDRs rather than pod IPs on purpose: the pod under test is restarted while
+ * segmented and comes back with a different IP, so IP based rules would stop matching exactly when
+ * they are needed and the pod would quietly rejoin.
  *
  * Rules are tagged with a comment so {@link healPod} can remove exactly what was added and nothing
  * else, which matters because a failed test must not leave a KinD node quietly firewalled.
  */
 export function segmentPod(target: PodPlacement, peers: PodPlacement[]): void {
-    for (const peer of peers) {
+    const peerCidrs = [...new Set(peers.map(peer => peer.podCidr).filter(cidr => cidr.length > 0))]
+    if (!target.podCidr || peerCidrs.length === 0) {
+        throw new Error('Cannot segment without pod CIDRs; getPodPlacements did not resolve them')
+    }
+    for (const peerCidr of peerCidrs) {
         for (const port of IGNITE_PORTS) {
             for (const rule of [
-                `-s ${target.ip} -d ${peer.ip} -p tcp --dport ${port}`,
-                `-s ${peer.ip} -d ${target.ip} -p tcp --dport ${port}`
+                `-s ${target.podCidr} -d ${peerCidr} -p tcp --dport ${port}`,
+                `-s ${peerCidr} -d ${target.podCidr} -p tcp --dport ${port}`
             ]) {
                 dockerExec(
                     target.node,
