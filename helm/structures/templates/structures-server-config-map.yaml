@@ -43,6 +43,25 @@ data:
   # logs episodes where the server topology is below this count, which is the split-brain
   # condition Ignite cannot detect. Set to a majority of replicaCount, e.g. 2 for 3.
   STRUCTURES_CLUSTER_OBSERVER_MINIMUM_CLUSTER_SIZE: "{{ .Values.properties.structures.clusterObserver.minimumClusterSize | default "1" }}"
+  {{- with .Values.properties.structures.clusterObserver }}
+  {{- /* Reporting thresholds are deliberately slow in production so a slow start is never reported
+         as a split. Only emitted when set, so omitting them keeps the application defaults. */}}
+  {{- if .reportBelowMinimumAfterMs }}
+  STRUCTURES_CLUSTER_OBSERVER_REPORT_BELOW_MINIMUM_AFTER_MS: "{{ .reportBelowMinimumAfterMs }}"
+  {{- end }}
+  {{- if .repeatBelowMinimumEveryMs }}
+  STRUCTURES_CLUSTER_OBSERVER_REPEAT_BELOW_MINIMUM_EVERY_MS: "{{ .repeatBelowMinimumEveryMs }}"
+  {{- end }}
+  {{- if .reportNeverReachedMinimumAfterMs }}
+  STRUCTURES_CLUSTER_OBSERVER_REPORT_NEVER_REACHED_MINIMUM_AFTER_MS: "{{ .reportNeverReachedMinimumAfterMs }}"
+  {{- end }}
+  {{- if .escalateNeverReachedMinimumAfterMs }}
+  STRUCTURES_CLUSTER_OBSERVER_ESCALATE_NEVER_REACHED_MINIMUM_AFTER_MS: "{{ .escalateNeverReachedMinimumAfterMs }}"
+  {{- end }}
+  {{- if .repeatNeverReachedEveryMs }}
+  STRUCTURES_CLUSTER_OBSERVER_REPEAT_NEVER_REACHED_EVERY_MS: "{{ .repeatNeverReachedEveryMs }}"
+  {{- end }}
+  {{- end }}
   {{- if .Values.evictionTracking.enabled }}
   # Eviction tracking - path includes ${POD_NAME} which Spring resolves from the POD_NAME env var
   STRUCTURES_CACHE_EVICTION_CSV_PATH: "{{ .Values.evictionTracking.mountPath | default "/eviction-data" }}/evictions-${POD_NAME}.csv"

@@ -27,6 +27,40 @@ cd structures-js/structures-e2e
 K8S_TEST_ENABLED=true VITE_USE_STRUCTURES_DOCKER=false npm test -- k8s-cache-eviction.test.ts
 ```
 
+## Cluster segmentation test
+
+`k8s-segmentation.test.ts` validates what happens when one pod ends up isolated in its own
+single node cluster - the split brain Ignite cannot detect, so no segmentation event fires and
+the failure handler never halts the JVM.
+
+It asserts, in the order that matters operationally:
+
+1. **the isolated pod still serves real requests.** This is what continuum's local delivery
+   preference buys: service RPC that would otherwise round robin onto unreachable peers stays
+   local instead.
+2. **the observer reports the condition**, so there is something to alert on. Auto restart is
+   deliberately off, so reporting is the whole value of the situation.
+3. **restarting the pod rejoins the running cluster**, so the manual remediation works.
+
+Isolation is produced by dropping Ignite discovery (47500) and communication (47100) traffic with
+`iptables` on the KinD node hosting the pod, then restarting it. That is done on the node container
+rather than in the pod because the pod has no `NET_ADMIN`, and with iptables rather than a
+NetworkPolicy because KinD's default CNI does not enforce them. Rules are tagged with a comment and
+removed in `afterAll`, so a failed run does not leave a node firewalled.
+
+The trigger differs from production, where the pod most likely came up when the Ignite headless
+service reported no other endpoints. The resulting state is the same, and that state is what is
+asserted on.
+
+**This test needs `minimumClusterSize` above 1 to mean anything.** The topology poll does not even
+start at the default of 1, so the condition goes unreported. `dev-tools/kind/config/structures-server/values.yaml`
+sets it to 2 for the 3 replica cluster and shortens the reporting thresholds, since production
+deliberately waits 5 minutes to warn and 15 to escalate so that a slow start is never called a split.
+
+```bash
+K8S_TEST_ENABLED=true VITE_USE_STRUCTURES_DOCKER=false npm test -- k8s-segmentation.test.ts
+```
+
 ## Configuration
 
 Set these environment variables to configure the tests:

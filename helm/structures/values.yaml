@@ -61,6 +61,16 @@ properties:
       # the split-brain condition Ignite cannot detect on its own. Set it to a majority of
       # replicaCount (floor(n/2)+1), e.g. 2 for 3 replicas.
       minimumClusterSize: 1
+      # Reporting thresholds, in milliseconds. Omitted here so the application defaults apply:
+      # a node below the minimum is reported after 60s, a node that never reached it warns at
+      # 5m and escalates to error at 15m, and both repeat hourly while they persist. They are
+      # deliberately slow so a slow Kubernetes start is never reported as a split; override them
+      # only where a test needs the signal sooner.
+      # reportBelowMinimumAfterMs: 60000
+      # repeatBelowMinimumEveryMs: 3600000
+      # reportNeverReachedMinimumAfterMs: 300000
+      # escalateNeverReachedMinimumAfterMs: 900000
+      # repeatNeverReachedEveryMs: 3600000
 
 continuum_gateway:
   stomp:

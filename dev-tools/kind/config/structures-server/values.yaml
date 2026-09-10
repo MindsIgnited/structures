@@ -87,6 +87,19 @@ properties:
       apiKey: "noop"
       baseUrl: "https://api.x.ai"
       model: "grok-4"
+    # Split-brain reporting. This is 3 replicas, so a majority is 2: a node seeing fewer than 2
+    # servers is either orphaned or came up into its own singleton cluster, which is the condition
+    # Ignite cannot detect on its own and never fires a segmentation event for.
+    # Left at the default 1 the topology poll never starts and the condition goes unreported.
+    clusterObserver:
+      minimumClusterSize: 2
+      # Production waits 5m to warn and 15m to escalate so a slow start is never called a split.
+      # A KinD pod is up in seconds, so the test shortens these; production keeps the defaults.
+      reportNeverReachedMinimumAfterMs: 20000
+      escalateNeverReachedMinimumAfterMs: 45000
+      repeatNeverReachedEveryMs: 30000
+      reportBelowMinimumAfterMs: 15000
+      repeatBelowMinimumEveryMs: 30000
 
 continuum_gateway:
   stomp:
