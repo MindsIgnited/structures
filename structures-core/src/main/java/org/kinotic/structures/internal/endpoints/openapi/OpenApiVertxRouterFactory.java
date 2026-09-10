@@ -102,7 +102,7 @@ public class OpenApiVertxRouterFactory {
           }
 
         CorsHandler corsHandler = CorsHandler.create()
-                                             .addRelativeOrigin(allowedOriginPattern)
+                                             .addOriginWithRegex(allowedOriginPattern)
                                              .allowedHeaders(properties.getCorsAllowedHeaders());
                                              
         if(properties.getCorsAllowCredentials() != null){

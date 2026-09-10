@@ -12,6 +12,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.PoolOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.tracing.TracingPolicy;
@@ -75,12 +76,11 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
 
         WebClientOptions options = new WebClientOptions()
                 .setConnectTimeout((int) structuresProperties.getElasticConnectionTimeout().toMillis())
-                .setMaxPoolSize(500)
                 .setTcpNoDelay(true)
                 .setTcpKeepAlive(true)
                 .setTracingPolicy(TracingPolicy.IGNORE);
 
-        this.webClient = WebClient.create(vertx, options);
+        this.webClient = WebClient.create(vertx, options, new PoolOptions().setHttp1MaxSize(500));
 
         Validate.notEmpty(structuresProperties.getElasticConnections(), "No Elastic connections defined");
 
@@ -159,40 +159,41 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         }
 
         VertxCompletableFuture<Page<T>> fut = new VertxCompletableFuture<>(vertx);
-        sqlQueryRequest.sendJsonObject(json, ar -> {
-            if(ar.succeeded()){
-                if(ar.result().statusCode() == 200) {
-                    Buffer buffer = ar.result().body();
-                    if (RawJson.class.isAssignableFrom(type)) {
-                        try {
-                            @SuppressWarnings("unchecked")
-                            Page<T> page = (Page<T>) processBufferToRawJson(buffer, cursorProvided.getValue());
-                            fut.complete(page);
-                        } catch (Exception e) {
-                            fut.completeExceptionally(e);
-                        }
-                    } else if (Map.class.isAssignableFrom(type)) {
-                        try {
-                            @SuppressWarnings("unchecked")
-                            Page<T> page = (Page<T>) processBufferToMap(buffer, cursorProvided.getValue());
-                            fut.complete(page);
-                        } catch (Exception e) {
-                            fut.completeExceptionally(e);
-                        }
-                    } else {
-                        fut.completeExceptionally(new IllegalArgumentException("Type: " + type.getName() + " is not supported at this time"));
-                    }
-                }else{
-                    try {
-                        fut.completeExceptionally(convertErrorResponse(new ByteArrayInputStream(ar.result().body().getBytes())));
-                    } catch (Exception e) {
-                        fut.completeExceptionally(new IllegalStateException("Could not convert error response " + e.getMessage(), e));
-                    }
-                }
-            }else{
-                fut.completeExceptionally(ar.cause());
-            }
-        });
+        sqlQueryRequest.sendJsonObject(json)
+                       .onComplete(ar -> {
+                           if(ar.succeeded()){
+                               if(ar.result().statusCode() == 200) {
+                                   Buffer buffer = ar.result().body();
+                                   if (RawJson.class.isAssignableFrom(type)) {
+                                       try {
+                                           @SuppressWarnings("unchecked")
+                                           Page<T> page = (Page<T>) processBufferToRawJson(buffer, cursorProvided.getValue());
+                                           fut.complete(page);
+                                       } catch (Exception e) {
+                                           fut.completeExceptionally(e);
+                                       }
+                                   } else if (Map.class.isAssignableFrom(type)) {
+                                       try {
+                                           @SuppressWarnings("unchecked")
+                                           Page<T> page = (Page<T>) processBufferToMap(buffer, cursorProvided.getValue());
+                                           fut.complete(page);
+                                       } catch (Exception e) {
+                                           fut.completeExceptionally(e);
+                                       }
+                                   } else {
+                                       fut.completeExceptionally(new IllegalArgumentException("Type: " + type.getName() + " is not supported at this time"));
+                                   }
+                               }else{
+                                   try {
+                                       fut.completeExceptionally(convertErrorResponse(new ByteArrayInputStream(ar.result().body().getBytes())));
+                                   } catch (Exception e) {
+                                       fut.completeExceptionally(new IllegalStateException("Could not convert error response " + e.getMessage(), e));
+                                   }
+                               }
+                           }else{
+                               fut.completeExceptionally(ar.cause());
+                           }
+                       });
         return fut;
     }
 
@@ -209,18 +210,19 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
             }
             json.put("params", paramsJson);
         }
-        sqlTranslateRequest.sendJsonObject(json, ar -> {
-            if(ar.succeeded()){
-                InputStream input = new ByteArrayInputStream(ar.result()
-                                                               .body()
-                                                               .getBytes());
-                if(ar.result().statusCode() == 200) {
-                    try {
-                        TranslateResponse translateResponse = TranslateResponse.of(builder -> {
-                            JsonpMapper mapper = SimpleJsonpMapper.INSTANCE; // We don't want to fail on unknown fields
-                            builder.withJson(mapper.jsonProvider().createParser(input), mapper);
-                            return builder;
-                        });
+        sqlTranslateRequest.sendJsonObject(json)
+                           .onComplete(ar -> {
+                               if(ar.succeeded()){
+                                   InputStream input = new ByteArrayInputStream(ar.result()
+                                                                                  .body()
+                                                                                  .getBytes());
+                                   if(ar.result().statusCode() == 200) {
+                                       try {
+                                           TranslateResponse translateResponse = TranslateResponse.of(builder -> {
+                                               JsonpMapper mapper = SimpleJsonpMapper.INSTANCE; // We don't want to fail on unknown fields
+                                               builder.withJson(mapper.jsonProvider().createParser(input), mapper);
+                                               return builder;
+                           });
                         responseFuture.complete(translateResponse);
                     } catch (Exception e) {
                         responseFuture.completeExceptionally(e);

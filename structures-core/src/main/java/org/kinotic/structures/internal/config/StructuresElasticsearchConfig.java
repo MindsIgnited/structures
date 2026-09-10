@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.json.JsonpMapper;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
@@ -65,6 +66,17 @@ public class StructuresElasticsearchConfig {
         ElasticsearchTransport transport = new RestClientTransport(restClient, jsonpMapper);
 
         return new ElasticsearchAsyncClient(transport);
+    }
+
+    /**
+     * Spring Boot used to auto-configure this client from {@code spring.elasticsearch.uris}. Boot 4 moved that
+     * auto-configuration into a module that requires the Elasticsearch 9 client, so it is declared here instead,
+     * sharing the transport of {@link #elasticsearchAsyncClient(JsonpMapper)} so both clients always talk to the
+     * cluster described by {@code structures.elastic-connections}.
+     */
+    @Bean
+    public ElasticsearchClient elasticsearchClient(ElasticsearchAsyncClient elasticsearchAsyncClient){
+        return new ElasticsearchClient(elasticsearchAsyncClient._transport());
     }
 
     @Bean

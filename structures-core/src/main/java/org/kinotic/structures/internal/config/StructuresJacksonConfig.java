@@ -2,6 +2,7 @@ package org.kinotic.structures.internal.config;
 
 import co.elastic.clients.elasticsearch._types.FieldValue;
 import com.fasterxml.jackson.core.Version;
+import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.module.SimpleAbstractTypeResolver;
@@ -24,6 +25,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.type.classreading.MetadataReader;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 
 import java.lang.reflect.Field;
 import java.util.List;
@@ -36,6 +38,19 @@ import java.util.Set;
 public class StructuresJacksonConfig {
 
     private static final Logger log = LoggerFactory.getLogger(StructuresJacksonConfig.class);
+
+    /**
+     * Spring Boot 4 auto-configures a Jackson 3 mapper only, so the Jackson 2 {@link ObjectMapper} that
+     * Structures and the Elasticsearch client are built on has to be declared here. The defaults mirror
+     * what Boot 3's JacksonAutoConfiguration applied, and every Jackson 2 module bean is registered so
+     * {@link #structuresJacksonModule(ApplicationContext)} still takes effect.
+     */
+    @Bean
+    public ObjectMapper objectMapper(List<Module> modules){
+        return Jackson2ObjectMapperBuilder.json()
+                                          .modulesToInstall(modules.toArray(new Module[0]))
+                                          .build();
+    }
 
     @Bean
     public SimpleModule structuresJacksonModule(ApplicationContext applicationContext){

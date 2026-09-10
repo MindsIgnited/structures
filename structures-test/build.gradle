@@ -21,7 +21,7 @@ dependencies {
 	implementation "com.github.ben-manes.caffeine:caffeine"
 
     // using api directly 
-    implementation "javax.annotation:javax.annotation-api"
+    implementation "jakarta.annotation:jakarta.annotation-api"
 
 	annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 
@@ -35,7 +35,7 @@ dependencies {
 
 	// Fix runtime linkage error in Testcontainers tar/copy (commons-compress expects newer commons-io).
 	// Without this you can see: NoSuchMethodError FileTimes.toUnixTime(FileTime)
-	testImplementation 'commons-io:commons-io:2.21.0'
+	testImplementation 'commons-io:commons-io'
 }
 
 test {
