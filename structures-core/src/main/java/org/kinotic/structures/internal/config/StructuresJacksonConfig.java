@@ -55,7 +55,14 @@ public class StructuresJacksonConfig {
      * The two date features are what Boot 3 applied on top of the builder's own defaults. Without them
      * Jackson writes dates as epoch numbers rather than ISO-8601, which silently changes both API
      * responses and what the Elasticsearch client stores. The builder only disables DEFAULT_VIEW_INCLUSION
-     * and FAIL_ON_UNKNOWN_PROPERTIES by itself, so leaving these out is not a no-op.
+     * and FAIL_ON_UNKNOWN_PROPERTIES by itself, so leaving these out is not a no-op. Those four are the
+     * whole of what Boot 3 configured by default, so the feature set here matches what we had.
+     * <p>
+     * What is not carried over is {@code spring.jackson.*}. Boot's customizer also applied
+     * default-property-inclusion, time-zone, locale, date-format, visibility and the per-feature maps
+     * from those properties, and none of that reaches this mapper. Nothing sets them today, so nothing
+     * is lost, but setting one in future will appear to do nothing at all. Bind them here if that
+     * changes rather than wondering why the property is ignored.
      */
     @Bean
     public ObjectMapper objectMapper(List<Module> modules){
