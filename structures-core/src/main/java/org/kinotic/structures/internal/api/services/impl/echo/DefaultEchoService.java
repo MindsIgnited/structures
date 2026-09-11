@@ -1,5 +1,6 @@
 package org.kinotic.structures.internal.api.services.impl.echo;
 
+import java.time.Duration;
 import java.util.UUID;
 
 import org.kinotic.structures.api.domain.echo.EchoResponse;
@@ -30,5 +31,13 @@ public class DefaultEchoService implements EchoService {
     public Mono<EchoResponse> echo(String message) {
         log.trace("Echo handled by instance {}", instanceId);
         return Mono.just(new EchoResponse(message, instanceId));
+    }
+
+    @Override
+    public Mono<EchoResponse> echoAfter(String message, long delayMs) {
+        long delay = Math.max(0, Math.min(delayMs, MAX_ECHO_DELAY_MS));
+        log.trace("Delayed echo of {} ms accepted by instance {}", delay, instanceId);
+        return Mono.delay(Duration.ofMillis(delay))
+                   .map(ignored -> new EchoResponse(message, instanceId));
     }
 }

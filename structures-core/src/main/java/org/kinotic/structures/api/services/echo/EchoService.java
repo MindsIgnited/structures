@@ -28,4 +28,20 @@ public interface EchoService {
      * @return the message and the id of the instance that handled the call
      */
     Mono<EchoResponse> echo(String message);
+
+    /**
+     * Echoes the supplied message back after a delay.
+     * <p>
+     * Exists so a test can hold a request open on a specific server instance long enough to take that
+     * instance down underneath it, which is how the client's behaviour on node loss is exercised. The
+     * delay is capped server side so the endpoint cannot be used to tie up an instance for long.
+     *
+     * @param message to return unchanged
+     * @param delayMs to wait before replying, capped at {@value #MAX_ECHO_DELAY_MS}
+     * @return the message and the id of the instance that handled the call
+     */
+    Mono<EchoResponse> echoAfter(String message, long delayMs);
+
+    /** Upper bound on {@link #echoAfter}'s delay. */
+    long MAX_ECHO_DELAY_MS = 60_000L;
 }

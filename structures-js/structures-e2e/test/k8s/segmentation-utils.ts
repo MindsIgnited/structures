@@ -249,3 +249,35 @@ export function countInPodLogs(context: string, namespace: string, podName: stri
     }
     return logs.split('\n').filter(line => line.includes(marker)).length
 }
+
+/**
+ * Scale the structures deployment and wait until exactly that many pods are Running and Ready and
+ * none are terminating. Used to reproduce the single node case on the three replica KinD cluster.
+ */
+export function scaleDeployment(context: string,
+                                namespace: string,
+                                labelSelector: string,
+                                deployment: string,
+                                replicas: number,
+                                timeoutSeconds = 300): void {
+    kubectl(context, `scale deployment/${deployment} -n ${namespace} --replicas=${replicas}`)
+    const deadline = Date.now() + timeoutSeconds * 1000
+    while (Date.now() < deadline) {
+        const ready = getPodPlacements(context, namespace, labelSelector).length
+        const total = kubectl(context, `get pods -n ${namespace} -l ${labelSelector} --no-headers`)
+            .split('\n').filter(l => l.trim().length > 0).length
+        if (ready === replicas && total === replicas) {
+            return
+        }
+        execSync('sleep 3')
+    }
+    throw new Error(`Deployment ${deployment} did not settle at ${replicas} ready replica(s) within ${timeoutSeconds}s`)
+}
+
+/**
+ * Delete a pod without waiting for the replacement. The caller decides what to observe while the
+ * node is down, which is the whole point of the restart tests.
+ */
+export function deletePod(context: string, namespace: string, podName: string): void {
+    kubectl(context, `delete pod ${podName} -n ${namespace} --wait=false`)
+}
