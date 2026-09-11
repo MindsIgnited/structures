@@ -38,8 +38,6 @@ describe('OpenApi Tests', () => {
         'OpenApi Schema loads',
         async () => {
             // @ts-ignore
-            const host = inject('STRUCTURES_HOST')
-            // @ts-ignore
             const schemaUrl = `${inject('STRUCTURES_OPENAPI_BASE_URL')}/api-docs/openapi/openapi.json`
 
             const schema = await loadOpenAPISchema(schemaUrl)

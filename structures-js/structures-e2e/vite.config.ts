@@ -19,8 +19,10 @@ export default defineConfig(
         },
         test: {
             // The k8s tests drive one shared cluster and mutate it: the segmentation test isolates and
-            // restarts a pod while the local delivery test asserts the cluster is whole. Run their files
-            // one at a time so they cannot interfere; the docker backed tests are unaffected.
+            // restarts a pod while the local delivery test asserts the cluster is whole. This is run
+            // wide rather than per file, so enabling the k8s tests serialises every file in the run,
+            // docker backed ones included. That is the point - they would otherwise overlap - but it
+            // does make a full run slower.
             fileParallelism: process.env.K8S_TEST_ENABLED !== 'true',
             globalSetup: './test/setup.ts',
             setupFiles: ["allure-vitest/setup"],

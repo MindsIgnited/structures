@@ -40,8 +40,9 @@ export interface PodPlacement {
 
 /**
  * Pod name, pod IP and hosting KinD node for every structures pod that is Running and Ready, in the
- * order kubectl returns them. Pending, terminating and crash looping pods are excluded, so callers
- * counting these are counting replicas that can actually serve.
+ * order kubectl returns them. Pending, crash looping and terminating pods are excluded - the last of
+ * those by deletionTimestamp, since a pod keeps phase Running and ready true until its container
+ * actually stops - so callers counting these are counting replicas that can actually serve.
  */
 export function getPodPlacements(context: string, namespace: string, labelSelector: string): PodPlacement[] {
     const cidrByNode = getNodePodCidrs(context)
@@ -50,16 +51,18 @@ export function getPodPlacements(context: string, namespace: string, labelSelect
         `get pods -n ${namespace} -l ${labelSelector} ` +
         `--field-selector=status.phase=Running ` +
         `-o jsonpath='{range .items[?(@.status.containerStatuses[0].ready==true)]}` +
-        `{.metadata.name}{" "}{.status.podIP}{" "}{.spec.nodeName}{"\\n"}{end}'`
+        `{.metadata.name}{" "}{.status.podIP}{" "}{.spec.nodeName}{" "}` +
+        `{.metadata.deletionTimestamp}{"\\n"}{end}'`
     )
     return output
         .split('\n')
         .map(line => line.trim())
         .filter(line => line.length > 0)
-        .map(line => {
-            const [name, ip, node] = line.split(/\s+/)
-            return { name, ip, node, podCidr: cidrByNode.get(node) ?? '' }
-        })
+        .map(line => line.split(/\s+/))
+        // A terminating pod keeps phase Running and ready true for the whole grace period, so it has
+        // to be excluded explicitly or a replica on its way out still counts as serving
+        .filter(parts => parts.length < 4 || !parts[3])
+        .map(([name, ip, node]) => ({ name, ip, node, podCidr: cidrByNode.get(node) ?? '' }))
 }
 
 /** Pod CIDR for each node, which is what segmentation rules are written against. */
@@ -120,6 +123,24 @@ export function segmentPod(target: PodPlacement, peers: PodPlacement[]): void {
  * belongs in an unconditional afterEach/afterAll.
  */
 export function healPod(node: string): void {
+    healPodInternal(node)
+}
+
+/**
+ * Heal and confirm it worked. Step 6 of the segmentation test depends on the rules actually being
+ * gone; without this a failed delete surfaces 180 seconds later as "the pod never rejoined", pointing
+ * at the observer rather than at the firewall that is still up.
+ */
+export function healPodOrThrow(node: string): void {
+    healPodInternal(node)
+    const stuck = listSegmentationRules(node)
+    if (stuck.length > 0) {
+        throw new Error(`Failed to remove ${stuck.length} segmentation rule(s) from ${node}; `
+                        + 'the pod cannot rejoin while they are in place')
+    }
+}
+
+function healPodInternal(node: string): void {
     // Delete by rule text rather than by index: indexes shift as rules are removed.
     // Nothing here may throw: this runs in an unconditional afterAll, and an exception escaping it
     // would leave the node firewalled for every later run, which is the state it exists to prevent.
@@ -161,6 +182,7 @@ function listSegmentationRules(node: string): string[] {
  */
 export function restartPod(context: string,
                            namespace: string,
+                           labelSelector: string,
                            podName: string,
                            expectedReplicas: number,
                            timeoutSeconds = 300): void {
@@ -170,7 +192,7 @@ export function restartPod(context: string,
     // ReplicaSet has created the replacement would wait on the survivors and return success
     const deadline = Date.now() + timeoutSeconds * 1000
     while (Date.now() < deadline) {
-        const count = kubectl(context, `get pods -n ${namespace} -l app=structures --no-headers`)
+        const count = kubectl(context, `get pods -n ${namespace} -l ${labelSelector} --no-headers`)
             .split('\n')
             .filter(line => line.trim().length > 0)
             .length
@@ -182,7 +204,7 @@ export function restartPod(context: string,
 
     kubectl(
         context,
-        `wait --for=condition=Ready pod -n ${namespace} -l app=structures --timeout=${timeoutSeconds}s`
+        `wait --for=condition=Ready pod -n ${namespace} -l ${labelSelector} --timeout=${timeoutSeconds}s`
     )
 }
 

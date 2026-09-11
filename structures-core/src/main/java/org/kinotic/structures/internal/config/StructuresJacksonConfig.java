@@ -58,15 +58,23 @@ public class StructuresJacksonConfig {
      * and FAIL_ON_UNKNOWN_PROPERTIES by itself, so leaving these out is not a no-op. Those four are the
      * whole of what Boot 3 configured by default, so the feature set here matches what we had.
      * <p>
+     * {@code applicationContext} is what installs Spring's handler instantiator, so a serializer or
+     * deserializer named in a {@code @JsonSerialize} style annotation gets autowired rather than built
+     * through its no-arg constructor. Nothing here needs that today, but losing it fails quietly at the
+     * point someone writes the first handler with a dependency.
+     * <p>
      * What is not carried over is {@code spring.jackson.*}. Boot's customizer also applied
      * default-property-inclusion, time-zone, locale, date-format, visibility and the per-feature maps
-     * from those properties, and none of that reaches this mapper. Nothing sets them today, so nothing
-     * is lost, but setting one in future will appear to do nothing at all. Bind them here if that
-     * changes rather than wondering why the property is ignored.
+     * from those properties, and none of that reaches this mapper. Boot also contributed
+     * {@code JsonComponentModule} and {@code JsonMixinModule} as module beans, which Boot 4 no longer
+     * registers, so {@code @JsonComponent} and {@code @JsonMixin} are not picked up either. Nothing uses
+     * any of it today, so nothing is lost, but each will appear to do nothing rather than fail. Wire
+     * them here if that changes rather than wondering why the annotation is ignored.
      */
     @Bean
-    public ObjectMapper objectMapper(List<Module> modules){
+    public ObjectMapper objectMapper(ApplicationContext applicationContext, List<Module> modules){
         return Jackson2ObjectMapperBuilder.json()
+                                          .applicationContext(applicationContext)
                                           .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS,
                                                              SerializationFeature.WRITE_DURATIONS_AS_TIMESTAMPS)
                                           .modulesToInstall(modules.toArray(new Module[0]))
@@ -120,9 +128,12 @@ public class StructuresJacksonConfig {
         // mapper delegates them to the Jackson 2 mapper that has always produced them. See Jackson2BridgeSerializer.
         bridge(ret, objectMapper, TokenBuffer.class);
         bridge(ret, objectMapper, RawJson.class);
-        // FastestType is a return type only and its serializer writes the unwrapped inner value, so
-        // there is nothing to read back. Registering a deserializer would quietly yield FastestType(null)
-        // instead of failing, since unknown properties are ignored.
+        // FastestType is a return type only, and its serializer writes the unwrapped inner value, so the
+        // wire form does not round trip: nothing names the record's single component. Reading one back
+        // yields FastestType(null) either way, through the bridge or through Jackson 3's default record
+        // deserializer, since unknown properties are ignored - so only the serializer is registered, and
+        // a Java client that tries to read one gets null rather than an error. Register a deserializer
+        // that rewraps if that ever needs to work.
         ret.addSerializer(FastestType.class, new Jackson2BridgeSerializer<>(objectMapper));
 
         tools.jackson.databind.module.SimpleAbstractTypeResolver resolver =

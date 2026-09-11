@@ -69,8 +69,6 @@ export async function setup(project: TestProject) {
         // @ts-ignore
         project.provide('STRUCTURES_PORT', container.getMappedPort(58503))
         // @ts-ignore
-        project.provide('STRUCTURES_OPENAPI_PORT', container.getMappedPort(8080))
-        // @ts-ignore
         project.provide('STRUCTURES_USE_SSL', false)
         // @ts-ignore
         project.provide('STRUCTURES_OPENAPI_BASE_URL',
@@ -81,7 +79,9 @@ export async function setup(project: TestProject) {
         // Point the suite at an already running deployment. Defaults keep the previous behaviour of
         // assuming a local server on the standard ports; STRUCTURES_E2E_* target something else, such
         // as the KinD cluster through its ingress:
-        //   STRUCTURES_E2E_HOST=structures.local STRUCTURES_E2E_PORT=443 STRUCTURES_E2E_USE_SSL=true
+        //   STRUCTURES_E2E_HOST=structures.local STRUCTURES_E2E_PORT=443 STRUCTURES_E2E_USE_SSL=true \
+        //   STRUCTURES_E2E_OPENAPI_BASE_URL=http://127.0.0.1:18080
+        // The OpenAPI override is required for that case, not optional: see the note below.
         // For the KinD ingress the certificate is issued by the local mkcert CA, so node needs
         //   NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
         const host = process.env.STRUCTURES_E2E_HOST || '127.0.0.1'
@@ -93,8 +93,6 @@ export async function setup(project: TestProject) {
         project.provide('STRUCTURES_HOST', host)
         // @ts-ignore
         project.provide('STRUCTURES_PORT', port)
-        // @ts-ignore
-        project.provide('STRUCTURES_OPENAPI_PORT', openApiPort)
         // @ts-ignore
         project.provide('STRUCTURES_USE_SSL', useSSL)
         // STRUCTURES_E2E_OPENAPI_BASE_URL is separate from the STOMP target on purpose: the KinD

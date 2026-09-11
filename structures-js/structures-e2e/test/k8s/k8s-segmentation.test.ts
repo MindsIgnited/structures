@@ -8,6 +8,7 @@ import {
     getPodPlacements,
     segmentPod,
     healPod,
+    healPodOrThrow,
     restartPod,
     getPodLogs,
     type PodPlacement
@@ -93,7 +94,7 @@ describe('K8s Cluster Segmentation Tests', () => {
         const peers = placements.filter(p => p.name !== target!.name)
         console.log(`Step 2 - isolating ${target.name} on node ${target.node} from ${peers.map(p => p.name).join(', ')}`)
         segmentPod(target, peers)
-        restartPod(context, namespace, target.name, placements.length)
+        restartPod(context, namespace, labelSelector, target.name, placements.length)
 
         // The pod name changes on restart, so re-read placements and re-point the helper
         placements = getPodPlacements(context, namespace, labelSelector)
@@ -162,8 +163,9 @@ describe('K8s Cluster Segmentation Tests', () => {
 
         // Step 6: the documented remediation is a restart. It has to actually rejoin.
         console.log('Step 6 - healing the network and restarting to rejoin')
-        healPod(target.node)
-        restartPod(context, namespace, target.name, placements.length)
+        // Load bearing here, unlike the afterAll cleanup: the pod cannot rejoin while the rules stand
+        healPodOrThrow(target.node)
+        restartPod(context, namespace, labelSelector, target.name, placements.length)
 
         placements = getPodPlacements(context, namespace, labelSelector)
         const rejoined = placements.find(p => p.node === target!.node && !peers.some(peer => peer.name === p.name))

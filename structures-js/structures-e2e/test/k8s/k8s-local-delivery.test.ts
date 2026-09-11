@@ -65,16 +65,14 @@ describe('K8s Local Delivery Tests', () => {
             return
         }
 
-        const podNames = k8s.getPodNames()
-        expect(podNames.length).toBeGreaterThanOrEqual(3)
-
         // Whole cluster, so a local result is a real preference rather than the only option left.
-        // Asked of Kubernetes because the echo service deliberately knows nothing about the cluster,
-        // and getPodPlacements counts only Running and Ready pods, so a degraded replica does not
-        // quietly satisfy this.
+        // Asked of Kubernetes because the echo service deliberately knows nothing about the cluster.
+        // Driven off the ready pods rather than the helper's list, which is unfiltered: a pod still
+        // inside its termination grace period would otherwise be called, or inflate the expected count.
         const ready = getPodPlacements(context, namespace, labelSelector)
-        expect(ready.length, 'every replica should be ready for this assertion to mean anything')
-            .toBe(podNames.length)
+        const podNames = ready.map(pod => pod.name)
+        expect(podNames.length, 'need the full replica set ready for this assertion to mean anything')
+            .toBeGreaterThanOrEqual(3)
 
         const servingNodeByPod = new Map<string, string>()
 
