@@ -32,6 +32,11 @@ replicaCount: 3
 extraEnv:
   - name: LOGGING_LEVEL_ORG_KINOTIC_STRUCTURES_INTERNAL_API_SERVICES_IMPL_CLUSTER
     value: TRACE
+  # ClusterInfoService reports node ids and topology to any authenticated caller with no
+  # authorization check of its own, so it is off by default and must never be enabled on a
+  # production deployment. The test needs it to attribute a call to the node that ran it.
+  - name: STRUCTURES_CLUSTER_INFO_ENABLED
+    value: "true"
 nameOverride: ""
 
 # Image configuration
