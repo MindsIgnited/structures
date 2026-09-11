@@ -104,18 +104,19 @@ describe('K8s Single Node Restart Tests', () => {
         await Promise.race([inFlight, sleep(SETTLE_BUDGET_MS)])
         const settleMs = Date.now() - deletedAt
 
-        expect(settledAs,
+        expect.soft(settledAs,
                `an in-flight request must settle within ${SETTLE_BUDGET_MS}ms of its instance dying; `
                + 'still pending means the client is waiting forever for a reply nothing can send '
                + '(no request timeout, and pending requests are not failed on reconnect)')
             .not.toBeNull()
         // A resolution here would mean the reply outran the pod deletion; report it rather than pass
-        expect(settledAs,
+        if (settledAs !== null) expect.soft(settledAs,
                `the in-flight request resolved with ${JSON.stringify(settledWith)} - the pod was not gone `
                + 'before it replied, so the scenario was not exercised; raise IN_FLIGHT_DELAY_MS or check '
                + 'the delete took effect')
             .toBe('rejected')
-        console.log(`In-flight request rejected after ${settleMs}ms: ${(settledWith as Error)?.message}`)
+        if (settledAs === 'rejected') console.log(`In-flight request rejected after ${settleMs}ms: ${(settledWith as Error)?.message}`)
+        else console.log(`In-flight request still pending ${settleMs}ms after the instance died`)
 
         // Stage 2: the instance comes back. The client must come back with it, unprompted.
         console.log('Waiting for the replacement pod, then for the client to reconnect on its own')
@@ -124,17 +125,30 @@ describe('K8s Single Node Restart Tests', () => {
         expect(replacement?.name, 'a replacement pod should be running').not.toBe(only.name)
 
         const recoveredAt = await waitUntil(() => Continuum.eventBus.isConnected(), RECOVERY_BUDGET_MS)
-        expect(recoveredAt,
+        expect.soft(recoveredAt,
                `client should be connected again within ${RECOVERY_BUDGET_MS}ms of the instance returning; `
                + 'still disconnected means the reconnect presented a session id the new instance had never '
                + 'seen, was refused, and the client deactivated itself instead of re-authenticating')
             .not.toBeNull()
 
-        // Stage 3: and it must actually work
-        const after = await echo.invoke('echo', ['after-restart'])
-        expect(after.message).toBe('after-restart')
-        expect(after.instanceId, 'the call should be served by the new instance').not.toBe(before.instanceId)
-        console.log(`Recovered: served by new instance ${after.instanceId}`)
+        // Stage 3: and it must actually work. A throw here is itself evidence - "You must call connect"
+        // means the client deactivated itself on the refused reconnect - so it is reported, not thrown.
+        let after: any = null
+        let afterError: unknown = null
+        try {
+            after = await echo.invoke('echo', ['after-restart'])
+        } catch (e) {
+            afterError = e
+        }
+        expect.soft(afterError,
+               'a fresh request after the restart must succeed; an error here is the client refusing '
+               + `to send on a connection it silently tore down: ${(afterError as Error)?.message ?? ''}`)
+            .toBeNull()
+        if (after) {
+            expect(after.message).toBe('after-restart')
+            expect(after.instanceId, 'the call should be served by the new instance').not.toBe(before.instanceId)
+            console.log(`Recovered: served by new instance ${after.instanceId}`)
+        }
     }, 900_000)
 })
 
