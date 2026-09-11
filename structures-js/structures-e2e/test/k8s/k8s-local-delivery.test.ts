@@ -2,7 +2,7 @@ import { Continuum } from '@kinotic/continuum-client'
 import { WebSocket } from 'ws'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { K8sTestHelper } from './k8s-helper'
-import { countInPodLogs } from './segmentation-utils'
+import { countInPodLogs, getPodPlacements } from './segmentation-utils'
 
 Object.assign(global, { WebSocket })
 
@@ -19,18 +19,21 @@ Object.assign(global, { WebSocket })
  * local - but only while its peers are unreachable. This asserts the preference is active during
  * normal operation on a whole, healthy cluster, which is the case that actually runs in production.
  *
- * ClusterInfo.localNodeId reports the Ignite node that executed the call rather than the node the
- * caller connected to, which is what makes the difference observable from a client.
+ * EchoService reports an opaque id for the instance that ran the call, which is what makes the
+ * difference observable from a client. It deliberately carries nothing else - no topology, no node
+ * ids, no data - so proving this property does not require exposing anything worth protecting. The
+ * cluster being whole is checked against Kubernetes rather than asked of the service.
  */
 describe('K8s Local Delivery Tests', () => {
     let k8s: K8sTestHelper
     const CALLS_PER_POD = 25
-    const CLUSTER_INFO_SERVICE = 'org.kinotic.structures.api.services.cluster.ClusterInfoService'
-    // Logged by DefaultClusterInfoService on the node that runs the call. Needs the TRACE level set
+    const ECHO_SERVICE = 'org.kinotic.structures.api.services.echo.EchoService'
+    // Logged by DefaultEchoService on the instance that runs the call. Needs the TRACE level set
     // in dev-tools/kind/config/structures-server/values.yaml
-    const EXECUTION_MARKER = 'Returning cluster info'
+    const EXECUTION_MARKER = 'Echo handled by instance'
     const context = process.env.K8S_CONTEXT || 'kind-structures-cluster'
     const namespace = process.env.K8S_NAMESPACE || 'default'
+    const labelSelector = process.env.K8S_LABEL_SELECTOR || 'app=structures'
 
     beforeAll(async () => {
         k8s = new K8sTestHelper()
@@ -61,6 +64,12 @@ describe('K8s Local Delivery Tests', () => {
         const podNames = k8s.getPodNames()
         expect(podNames.length).toBeGreaterThanOrEqual(3)
 
+        // Whole cluster, so a local result is a real preference rather than the only option left.
+        // Asked of Kubernetes because the echo service deliberately knows nothing about the cluster.
+        const running = getPodPlacements(context, namespace, labelSelector)
+        expect(running.length, 'every replica should be up for this assertion to mean anything')
+            .toBe(podNames.length)
+
         const servingNodeByPod = new Map<string, string>()
 
         for (let podIndex = 0; podIndex < podNames.length; podIndex++) {
@@ -70,21 +79,16 @@ describe('K8s Local Delivery Tests', () => {
             )
 
             await k8s.connectToPod(podIndex)
-            const proxy = Continuum.serviceProxy(CLUSTER_INFO_SERVICE)
+            const proxy = Continuum.serviceProxy(ECHO_SERVICE)
 
             const servingNodes = new Set<string>()
             for (let call = 0; call < CALLS_PER_POD; call++) {
-                const info = await proxy.invoke('getClusterInfo', [])
-                expect(info, 'cluster info should be returned').toBeDefined()
-
-                // Whole cluster, so a local result is a real preference rather than the only option
-                expect(
-                    info.serverNodeCount,
-                    'cluster must be whole for this assertion to mean anything'
-                ).toBe(podNames.length)
-
-                expect(info.localNodeId, 'serving node should be identified').toBeTruthy()
-                servingNodes.add(info.localNodeId)
+                const sent = `call-${podIndex}-${call}`
+                const response = await proxy.invoke('echo', [sent])
+                expect(response, 'echo should return a response').toBeDefined()
+                expect(response.message, 'echo should return what it was sent').toBe(sent)
+                expect(response.instanceId, 'serving instance should be identified').toBeTruthy()
+                servingNodes.add(response.instanceId)
             }
 
             // Round robin across n nodes would scatter these; landing on one node every time is the
@@ -95,7 +99,7 @@ describe('K8s Local Delivery Tests', () => {
             ).toHaveLength(1)
 
             const servingNode = servingNodes.values().next().value as string
-            console.log(`${podNames[podIndex]} served all ${CALLS_PER_POD} calls on node ${servingNode}`)
+            console.log(`${podNames[podIndex]} served all ${CALLS_PER_POD} calls on instance ${servingNode}`)
             servingNodeByPod.set(podNames[podIndex], servingNode)
 
             await k8s.disconnectFromPod()

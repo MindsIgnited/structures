@@ -30,13 +30,15 @@ replicaCount: 3
 # k8s-local-delivery.test.ts reads these trace lines to prove, from the servers rather than from the
 # response payload, that the pod which received a request is the one that ran it.
 extraEnv:
-  - name: LOGGING_LEVEL_ORG_KINOTIC_STRUCTURES_INTERNAL_API_SERVICES_IMPL_CLUSTER
-    value: TRACE
-  # ClusterInfoService reports node ids and topology to any authenticated caller with no
-  # authorization check of its own, so it is off by default and must never be enabled on a
-  # production deployment. The test needs it to attribute a call to the node that ran it.
-  - name: STRUCTURES_CLUSTER_INFO_ENABLED
+  # EchoService returns the caller's own message plus a random per instance id, which is all
+  # k8s-local-delivery.test.ts needs to tell which instance served a request. It is off by default
+  # because an endpoint only tests use does not belong in production, not because it is sensitive.
+  - name: STRUCTURES_ECHO_SERVICE_ENABLED
     value: "true"
+  # The same test reads this trace line to attribute a call from the server's own record rather
+  # than from the response payload
+  - name: LOGGING_LEVEL_ORG_KINOTIC_STRUCTURES_INTERNAL_API_SERVICES_IMPL_ECHO
+    value: TRACE
 nameOverride: ""
 
 # Image configuration

@@ -17,7 +17,6 @@ import org.kinotic.structures.api.domain.cluster.ClusterInfo.ClusterInfoBuilder;
 import org.kinotic.structures.api.domain.cluster.NodeInfo;
 import org.kinotic.structures.api.services.cluster.ClusterInfoService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +36,6 @@ import reactor.core.publisher.Mono;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(prefix = "structures.cluster-info", name = "enabled", havingValue = "true", matchIfMissing = false)
 public class DefaultClusterInfoService implements ClusterInfoService {
 
     @Autowired
