@@ -1,4 +1,11 @@
 replicaCount: 1
+
+# Additional container environment variables, appended as-is to the server container.
+# Useful for settings the chart does not model, such as raising a log level:
+#   extraEnv:
+#     - name: LOGGING_LEVEL_ORG_KINOTIC_STRUCTURES
+#       value: TRACE
+extraEnv: []
 nameOverride: ""
 
 image:

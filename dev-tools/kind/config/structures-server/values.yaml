@@ -26,6 +26,12 @@
 
 # Number of structures-server replicas (3 for testing HA and cluster coordination)
 replicaCount: 3
+
+# k8s-local-delivery.test.ts reads these trace lines to prove, from the servers rather than from the
+# response payload, that the pod which received a request is the one that ran it.
+extraEnv:
+  - name: LOGGING_LEVEL_ORG_KINOTIC_STRUCTURES_INTERNAL_API_SERVICES_IMPL_CLUSTER
+    value: TRACE
 nameOverride: ""
 
 # Image configuration

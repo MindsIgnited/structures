@@ -2,6 +2,7 @@ import { Continuum } from '@kinotic/continuum-client'
 import { WebSocket } from 'ws'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { K8sTestHelper } from './k8s-helper'
+import { countInPodLogs } from './segmentation-utils'
 
 Object.assign(global, { WebSocket })
 
@@ -25,6 +26,11 @@ describe('K8s Local Delivery Tests', () => {
     let k8s: K8sTestHelper
     const CALLS_PER_POD = 25
     const CLUSTER_INFO_SERVICE = 'org.kinotic.structures.api.services.cluster.ClusterInfoService'
+    // Logged by DefaultClusterInfoService on the node that runs the call. Needs the TRACE level set
+    // in dev-tools/kind/config/structures-server/values.yaml
+    const EXECUTION_MARKER = 'Returning cluster info'
+    const context = process.env.K8S_CONTEXT || 'kind-structures-cluster'
+    const namespace = process.env.K8S_NAMESPACE || 'default'
 
     beforeAll(async () => {
         k8s = new K8sTestHelper()
@@ -58,6 +64,11 @@ describe('K8s Local Delivery Tests', () => {
         const servingNodeByPod = new Map<string, string>()
 
         for (let podIndex = 0; podIndex < podNames.length; podIndex++) {
+            // Attribute the work from the servers themselves, not just from what the response says
+            const executionsBefore = new Map(
+                podNames.map(name => [name, countInPodLogs(context, namespace, name, EXECUTION_MARKER)])
+            )
+
             await k8s.connectToPod(podIndex)
             const proxy = Continuum.serviceProxy(CLUSTER_INFO_SERVICE)
 
@@ -88,6 +99,21 @@ describe('K8s Local Delivery Tests', () => {
             servingNodeByPod.set(podNames[podIndex], servingNode)
 
             await k8s.disconnectFromPod()
+
+            // Same claim, independently evidenced: the pod that was called logs every execution and
+            // no other pod logs any. A payload can only report where it was built; this is the record
+            // of who did the work.
+            for (const name of podNames) {
+                const executed = countInPodLogs(context, namespace, name, EXECUTION_MARKER)
+                                 - (executionsBefore.get(name) ?? 0)
+                if (name === podNames[podIndex]) {
+                    expect(executed, `${name} should have executed all ${CALLS_PER_POD} of its own calls`)
+                        .toBeGreaterThanOrEqual(CALLS_PER_POD)
+                } else {
+                    expect(executed, `${name} should not have executed any of ${podNames[podIndex]}'s calls`)
+                        .toBe(0)
+                }
+            }
         }
 
         // Each pod pinning to a different node is what distinguishes "served locally" from

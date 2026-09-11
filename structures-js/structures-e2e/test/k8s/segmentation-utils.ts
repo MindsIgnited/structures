@@ -168,3 +168,15 @@ export function getObservedServerNodes(logs: string): number | null {
     const value = last[1] ?? last[2] ?? last[3]
     return value ? parseInt(value) : null
 }
+
+/**
+ * How many times a marker appears in a pod's log. Used to attribute work to the node that actually
+ * performed it, from the server's own record rather than from whatever the response claims.
+ */
+export function countInPodLogs(context: string, namespace: string, podName: string, marker: string): number {
+    const logs = getPodLogs(context, namespace, podName)
+    if (logs.length === 0) {
+        return 0
+    }
+    return logs.split('\n').filter(line => line.includes(marker)).length
+}
