@@ -71,6 +71,7 @@ public class MigrationElasticsearchConfig {
                          .disable(MapperFeature.DEFAULT_VIEW_INCLUSION)
                          .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                          .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                         .disable(SerializationFeature.WRITE_DURATIONS_AS_TIMESTAMPS)
                          .findAndAddModules()
                          .addModules(modules)
                          .build();

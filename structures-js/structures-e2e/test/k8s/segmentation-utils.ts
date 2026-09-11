@@ -39,14 +39,18 @@ export interface PodPlacement {
 }
 
 /**
- * Pod name, pod IP and hosting KinD node for every structures pod, in the order kubectl returns them.
+ * Pod name, pod IP and hosting KinD node for every structures pod that is Running and Ready, in the
+ * order kubectl returns them. Pending, terminating and crash looping pods are excluded, so callers
+ * counting these are counting replicas that can actually serve.
  */
 export function getPodPlacements(context: string, namespace: string, labelSelector: string): PodPlacement[] {
     const cidrByNode = getNodePodCidrs(context)
     const output = kubectl(
         context,
         `get pods -n ${namespace} -l ${labelSelector} ` +
-        `-o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.podIP}{" "}{.spec.nodeName}{"\\n"}{end}'`
+        `--field-selector=status.phase=Running ` +
+        `-o jsonpath='{range .items[?(@.status.containerStatuses[0].ready==true)]}` +
+        `{.metadata.name}{" "}{.status.podIP}{" "}{.spec.nodeName}{"\\n"}{end}'`
     )
     return output
         .split('\n')
@@ -90,6 +94,12 @@ export function segmentPod(target: PodPlacement, peers: PodPlacement[]): void {
     if (!target.podCidr || peerCidrs.length === 0) {
         throw new Error('Cannot segment without pod CIDRs; getPodPlacements did not resolve them')
     }
+    // Rules are per node, so a peer sharing the target's node would be cut off by the same rules and
+    // the test would be measuring two isolated pods rather than one
+    if (peerCidrs.includes(target.podCidr)) {
+        throw new Error(`Cannot isolate ${target.name}: a peer shares node ${target.node}, `
+                        + 'so segmenting by node CIDR would isolate that peer too')
+    }
     for (const peerCidr of peerCidrs) {
         for (const port of IGNITE_PORTS) {
             for (const rule of [
@@ -110,18 +120,36 @@ export function segmentPod(target: PodPlacement, peers: PodPlacement[]): void {
  * belongs in an unconditional afterEach/afterAll.
  */
 export function healPod(node: string): void {
-    // Delete by rule text rather than by index: indexes shift as rules are removed
-    let remaining = listSegmentationRules(node)
-    while (remaining.length > 0) {
-        for (const rule of remaining) {
-            dockerExec(node, `iptables -D ${rule.replace(/^-A /, '')}`)
+    // Delete by rule text rather than by index: indexes shift as rules are removed.
+    // Nothing here may throw: this runs in an unconditional afterAll, and an exception escaping it
+    // would leave the node firewalled for every later run, which is the state it exists to prevent.
+    for (let pass = 0; pass < 10; pass++) {
+        const remaining = listSegmentationRules(node)
+        if (remaining.length === 0) {
+            return
         }
-        remaining = listSegmentationRules(node)
+        for (const rule of remaining) {
+            try {
+                dockerExec(node, `iptables -D ${rule.replace(/^-A /, '')}`)
+            } catch (error) {
+                console.error(`[heal] could not delete rule on ${node}: ${rule}`, error)
+            }
+        }
+    }
+    const stuck = listSegmentationRules(node)
+    if (stuck.length > 0) {
+        console.error(`[heal] ${stuck.length} rule(s) left on ${node}; remove them with `
+                      + `"docker exec ${node} iptables -D FORWARD <rule>" before running again`)
     }
 }
 
 function listSegmentationRules(node: string): string[] {
-    const output = dockerExec(node, `iptables -S FORWARD`)
+    let output: string
+    try {
+        output = dockerExec(node, `iptables -S FORWARD`)
+    } catch {
+        return []
+    }
     return output
         .split('\n')
         .map(line => line.trim())
@@ -131,8 +159,27 @@ function listSegmentationRules(node: string): string[] {
 /**
  * Restart a pod and wait for its replacement to report Ready.
  */
-export function restartPod(context: string, namespace: string, podName: string, timeoutSeconds = 300): void {
+export function restartPod(context: string,
+                           namespace: string,
+                           podName: string,
+                           expectedReplicas: number,
+                           timeoutSeconds = 300): void {
     kubectl(context, `delete pod ${podName} -n ${namespace} --wait=true --timeout=${timeoutSeconds}s`)
+
+    // "kubectl wait" only waits on pods matching at the moment it runs, so calling it before the
+    // ReplicaSet has created the replacement would wait on the survivors and return success
+    const deadline = Date.now() + timeoutSeconds * 1000
+    while (Date.now() < deadline) {
+        const count = kubectl(context, `get pods -n ${namespace} -l app=structures --no-headers`)
+            .split('\n')
+            .filter(line => line.trim().length > 0)
+            .length
+        if (count >= expectedReplicas) {
+            break
+        }
+        execSync('sleep 2')
+    }
+
     kubectl(
         context,
         `wait --for=condition=Ready pod -n ${namespace} -l app=structures --timeout=${timeoutSeconds}s`

@@ -18,6 +18,10 @@ export default defineConfig(
             ],
         },
         test: {
+            // The k8s tests drive one shared cluster and mutate it: the segmentation test isolates and
+            // restarts a pod while the local delivery test asserts the cluster is whole. Run their files
+            // one at a time so they cannot interfere; the docker backed tests are unaffected.
+            fileParallelism: process.env.K8S_TEST_ENABLED !== 'true',
             globalSetup: './test/setup.ts',
             setupFiles: ["allure-vitest/setup"],
             reporters: [

@@ -44,6 +44,10 @@ describe('K8s Cluster Segmentation Tests', () => {
     const labelSelector = process.env.K8S_LABEL_SELECTOR || 'app=structures'
 
     beforeAll(async () => {
+        // vitest runs test files in parallel processes and K8sTestHelper port forwards to a fixed
+        // local range, so each k8s file needs its own base or two runs fight over the same ports and
+        // the connection drops mid test
+        process.env.K8S_STARTING_LOCAL_PORT = process.env.K8S_STARTING_LOCAL_PORT || '58531'
         k8s = new K8sTestHelper()
         if (!k8s.isEnabled()) {
             console.log('K8s tests disabled. Set K8S_TEST_ENABLED=true to run these tests.')
@@ -89,12 +93,18 @@ describe('K8s Cluster Segmentation Tests', () => {
         const peers = placements.filter(p => p.name !== target!.name)
         console.log(`Step 2 - isolating ${target.name} on node ${target.node} from ${peers.map(p => p.name).join(', ')}`)
         segmentPod(target, peers)
-        restartPod(context, namespace, target.name)
+        restartPod(context, namespace, target.name, placements.length)
 
         // The pod name changes on restart, so re-read placements and re-point the helper
         placements = getPodPlacements(context, namespace, labelSelector)
         const restarted = placements.find(p => p.node === target!.node && !peers.some(peer => peer.name === p.name))
-        expect(restarted, 'restarted pod should be discoverable').toBeDefined()
+        // The rules are tied to the node they were written on, so a replacement scheduled elsewhere is
+        // not isolated at all. Nothing in the Deployment pins it there, so this is checked rather than
+        // assumed: a rejoined pod must not be mistaken for an isolated one.
+        expect(restarted,
+               `replacement should be scheduled on ${target!.node}; anywhere else and the isolation `
+               + 'rules do not apply to it')
+            .toBeDefined()
         target = restarted!
         await k8s.discoverPods()
         const targetIndex = k8s.getPodNames().indexOf(target.name)
@@ -122,9 +132,8 @@ describe('K8s Cluster Segmentation Tests', () => {
         const report = await waitFor(
             () => {
                 const logs = getPodLogs(context, namespace, target!.name)
-                return /below the minimum|never reached the minimum|has not reached the minimum/i.test(logs)
-                    ? logs
-                    : null
+                // "not yet reached" is the still-forming warning and must not satisfy this
+                return /below the minimum|never reached the minimum/i.test(logs) ? logs : null
             },
             180000,
             5000
@@ -154,7 +163,7 @@ describe('K8s Cluster Segmentation Tests', () => {
         // Step 6: the documented remediation is a restart. It has to actually rejoin.
         console.log('Step 6 - healing the network and restarting to rejoin')
         healPod(target.node)
-        restartPod(context, namespace, target.name)
+        restartPod(context, namespace, target.name, placements.length)
 
         placements = getPodPlacements(context, namespace, labelSelector)
         const rejoined = placements.find(p => p.node === target!.node && !peers.some(peer => peer.name === p.name))
@@ -164,7 +173,9 @@ describe('K8s Cluster Segmentation Tests', () => {
         const armed = await waitFor(
             () => {
                 const logs = getPodLogs(context, namespace, target!.name)
-                return /Cluster observer armed|reached the minimum/i.test(logs) ? logs : null
+                // Anchored: "reached the minimum" on its own also matches the warning a pod logs
+                // while it is still isolated, which would pass this on a pod that never rejoined
+                return /Cluster observer armed|topology reached the minimum/i.test(logs) ? logs : null
             },
             180000,
             5000

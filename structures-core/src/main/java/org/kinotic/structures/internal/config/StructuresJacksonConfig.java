@@ -4,6 +4,7 @@ import co.elastic.clients.elasticsearch._types.FieldValue;
 import com.fasterxml.jackson.core.Version;
 import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.module.SimpleAbstractTypeResolver;
 import com.fasterxml.jackson.databind.module.SimpleModule;
@@ -48,13 +49,19 @@ public class StructuresJacksonConfig {
 
     /**
      * Spring Boot 4 auto-configures a Jackson 3 mapper only, so the Jackson 2 {@link ObjectMapper} that
-     * Structures and the Elasticsearch client are built on has to be declared here. The defaults mirror
-     * what Boot 3's JacksonAutoConfiguration applied, and every Jackson 2 module bean is registered so
-     * {@link #structuresJacksonModule(ApplicationContext)} still takes effect.
+     * Structures and the Elasticsearch client are built on has to be declared here, and every Jackson 2
+     * module bean is registered so {@link #structuresJacksonModule(ApplicationContext)} still takes effect.
+     * <p>
+     * The two date features are what Boot 3 applied on top of the builder's own defaults. Without them
+     * Jackson writes dates as epoch numbers rather than ISO-8601, which silently changes both API
+     * responses and what the Elasticsearch client stores. The builder only disables DEFAULT_VIEW_INCLUSION
+     * and FAIL_ON_UNKNOWN_PROPERTIES by itself, so leaving these out is not a no-op.
      */
     @Bean
     public ObjectMapper objectMapper(List<Module> modules){
         return Jackson2ObjectMapperBuilder.json()
+                                          .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS,
+                                                             SerializationFeature.WRITE_DURATIONS_AS_TIMESTAMPS)
                                           .modulesToInstall(modules.toArray(new Module[0]))
                                           .build();
     }
@@ -106,7 +113,10 @@ public class StructuresJacksonConfig {
         // mapper delegates them to the Jackson 2 mapper that has always produced them. See Jackson2BridgeSerializer.
         bridge(ret, objectMapper, TokenBuffer.class);
         bridge(ret, objectMapper, RawJson.class);
-        bridge(ret, objectMapper, FastestType.class);
+        // FastestType is a return type only and its serializer writes the unwrapped inner value, so
+        // there is nothing to read back. Registering a deserializer would quietly yield FastestType(null)
+        // instead of failing, since unknown properties are ignored.
+        ret.addSerializer(FastestType.class, new Jackson2BridgeSerializer<>(objectMapper));
 
         tools.jackson.databind.module.SimpleAbstractTypeResolver resolver =
                 new tools.jackson.databind.module.SimpleAbstractTypeResolver();

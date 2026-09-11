@@ -36,6 +36,10 @@ describe('K8s Local Delivery Tests', () => {
     const labelSelector = process.env.K8S_LABEL_SELECTOR || 'app=structures'
 
     beforeAll(async () => {
+        // vitest runs test files in parallel processes and K8sTestHelper port forwards to a fixed
+        // local range, so each k8s file needs its own base or two runs fight over the same ports and
+        // the connection drops mid test
+        process.env.K8S_STARTING_LOCAL_PORT = process.env.K8S_STARTING_LOCAL_PORT || '58521'
         k8s = new K8sTestHelper()
         if (!k8s.isEnabled()) {
             console.log('K8s tests disabled. Set K8S_TEST_ENABLED=true to run these tests.')
@@ -65,9 +69,11 @@ describe('K8s Local Delivery Tests', () => {
         expect(podNames.length).toBeGreaterThanOrEqual(3)
 
         // Whole cluster, so a local result is a real preference rather than the only option left.
-        // Asked of Kubernetes because the echo service deliberately knows nothing about the cluster.
-        const running = getPodPlacements(context, namespace, labelSelector)
-        expect(running.length, 'every replica should be up for this assertion to mean anything')
+        // Asked of Kubernetes because the echo service deliberately knows nothing about the cluster,
+        // and getPodPlacements counts only Running and Ready pods, so a degraded replica does not
+        // quietly satisfy this.
+        const ready = getPodPlacements(context, namespace, labelSelector)
+        expect(ready.length, 'every replica should be ready for this assertion to mean anything')
             .toBe(podNames.length)
 
         const servingNodeByPod = new Map<string, string>()

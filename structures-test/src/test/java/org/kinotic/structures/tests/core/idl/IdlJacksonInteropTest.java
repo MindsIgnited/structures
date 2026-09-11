@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -100,5 +103,24 @@ class IdlJacksonInteropTest extends ElasticTestBase {
 
         assertEquals(objectMapper.readTree(json),
                      objectMapper.readTree(objectMapper.writeValueAsString(result)));
+    }
+
+    /**
+     * Boot 3 disabled WRITE_DATES_AS_TIMESTAMPS and WRITE_DURATIONS_AS_TIMESTAMPS on the mapper it
+     * auto-configured. Declaring the mapper by hand dropped that, and since Jackson then writes epoch
+     * numbers instead of ISO-8601 it changes both API responses and what the Elasticsearch client
+     * stores, symmetrically enough that reading our own data back still works.
+     * <p>
+     * Structure.created, updated and publishedTimestamp are {@link Date}, so this is not hypothetical.
+     */
+    @Test
+    void datesSerializeAsTextRatherThanEpochNumbers() throws Exception {
+        assertEquals("\"2023-11-14T22:13:20.000+00:00\"",
+                     objectMapper.writeValueAsString(new Date(1700000000000L)));
+
+        assertEquals("\"2023-11-14T22:13:20Z\"",
+                     objectMapper.writeValueAsString(Instant.ofEpochMilli(1700000000000L)));
+
+        assertEquals("\"PT1H\"", objectMapper.writeValueAsString(Duration.ofHours(1)));
     }
 }
