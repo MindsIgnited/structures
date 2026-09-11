@@ -222,18 +222,26 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                                                JsonpMapper mapper = SimpleJsonpMapper.INSTANCE; // We don't want to fail on unknown fields
                                                builder.withJson(mapper.jsonProvider().createParser(input), mapper);
                                                return builder;
+                                           });
+                                           responseFuture.complete(translateResponse);
+                                       } catch (Exception e) {
+                                           responseFuture.completeExceptionally(e);
+                                       }
+                                   }else{
+                                       // Parsing the error body can itself throw; without this the future is
+                                       // never completed and the caller waits on it forever
+                                       try {
+                                           responseFuture.completeExceptionally(convertErrorResponse(input));
+                                       } catch (Exception e) {
+                                           responseFuture.completeExceptionally(
+                                                   new IllegalStateException("Could not convert error response "
+                                                                             + e.getMessage(), e));
+                                       }
+                                   }
+                               }else{
+                                   responseFuture.completeExceptionally(ar.cause());
+                               }
                            });
-                        responseFuture.complete(translateResponse);
-                    } catch (Exception e) {
-                        responseFuture.completeExceptionally(e);
-                    }
-                }else{
-                    responseFuture.completeExceptionally(convertErrorResponse(input));
-                }
-            }else{
-                responseFuture.completeExceptionally(ar.cause());
-            }
-        });
         return responseFuture;
     }
 

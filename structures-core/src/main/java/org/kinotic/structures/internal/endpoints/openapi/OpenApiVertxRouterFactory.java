@@ -133,6 +133,10 @@ public class OpenApiVertxRouterFactory {
                                                 VertxWebUtil.writeException(ctx, e);
                                             }
                                             return null;
+                                        })
+                                        .exceptionally(throwable -> {
+                                            VertxWebUtil.writeException(ctx, throwable);
+                                            return null;
                                         });
               });
 
