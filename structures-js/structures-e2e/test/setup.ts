@@ -70,16 +70,45 @@ export async function setup(project: TestProject) {
         project.provide('STRUCTURES_PORT', container.getMappedPort(58503))
         // @ts-ignore
         project.provide('STRUCTURES_OPENAPI_PORT', container.getMappedPort(8080))
+        // @ts-ignore
+        project.provide('STRUCTURES_USE_SSL', false)
+        // @ts-ignore
+        project.provide('STRUCTURES_OPENAPI_BASE_URL',
+                        `http://${container.getHost()}:${container.getMappedPort(8080)}`)
 
         console.log('Structures started.')
     }else{
+        // Point the suite at an already running deployment. Defaults keep the previous behaviour of
+        // assuming a local server on the standard ports; STRUCTURES_E2E_* target something else, such
+        // as the KinD cluster through its ingress:
+        //   STRUCTURES_E2E_HOST=structures.local STRUCTURES_E2E_PORT=443 STRUCTURES_E2E_USE_SSL=true
+        // For the KinD ingress the certificate is issued by the local mkcert CA, so node needs
+        //   NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"
+        const host = process.env.STRUCTURES_E2E_HOST || '127.0.0.1'
+        const port = parseInt(process.env.STRUCTURES_E2E_PORT || '58503')
+        const openApiPort = parseInt(process.env.STRUCTURES_E2E_OPENAPI_PORT || '8080')
+        const useSSL = process.env.STRUCTURES_E2E_USE_SSL === 'true'
+
         // @ts-ignore
-        project.provide('STRUCTURES_HOST', '127.0.0.1')
+        project.provide('STRUCTURES_HOST', host)
         // @ts-ignore
-        project.provide('STRUCTURES_PORT', 58503)
+        project.provide('STRUCTURES_PORT', port)
         // @ts-ignore
-        project.provide('STRUCTURES_OPENAPI_PORT', 8080)
-        console.log('Skipping Structures setup because VITE_USE_STRUCTURES_DOCKER is false')
+        project.provide('STRUCTURES_OPENAPI_PORT', openApiPort)
+        // @ts-ignore
+        project.provide('STRUCTURES_USE_SSL', useSSL)
+        // STRUCTURES_E2E_OPENAPI_BASE_URL is separate from the STOMP target on purpose: the KinD
+        // ingress routes /api and /graphql but not /api-docs, which falls through to the UI's catch
+        // all and answers 200 with index.html, so the OpenAPI tests have to be pointed straight at a
+        // pod even while the rest of the suite goes through nginx
+        const openApiBaseUrl = process.env.STRUCTURES_E2E_OPENAPI_BASE_URL
+            || `${useSSL ? 'https' : 'http'}://${host}`
+               + `${(useSSL && openApiPort === 443) || (!useSSL && openApiPort === 80)
+                    ? '' : ':' + openApiPort}`
+        // @ts-ignore
+        project.provide('STRUCTURES_OPENAPI_BASE_URL', openApiBaseUrl)
+        console.log(`Skipping Structures setup because VITE_USE_STRUCTURES_DOCKER is false; `
+                    + `targeting ${useSSL ? 'https' : 'http'}://${host}:${port}`)
     }
 }
 

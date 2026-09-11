@@ -39,8 +39,7 @@ describe('Versioned OpenApi Tests', () => {
             // @ts-ignore
             const host = inject('STRUCTURES_HOST')
             // @ts-ignore
-            const port = inject('STRUCTURES_OPENAPI_PORT')
-            const schemaUrl = `http://${host}:${port}/api-docs/openapi.versioned/openapi.json`
+            const schemaUrl = `${inject('STRUCTURES_OPENAPI_BASE_URL')}/api-docs/openapi.versioned/openapi.json`
 
             const schema = await loadOpenAPISchema(schemaUrl)
 
