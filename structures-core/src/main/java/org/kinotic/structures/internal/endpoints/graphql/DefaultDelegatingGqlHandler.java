@@ -65,10 +65,11 @@ public class DefaultDelegatingGqlHandler implements DelegatingGqlHandler {
 
         Future.fromCompletionStage(graphQLHandlerCache.get(application),
                 rc.vertx().getOrCreateContext())
-                .map(graphQLHandler -> {
-                    graphQLHandler.handle(rc);
-                    return null;
-                });
+                .onSuccess(graphQLHandler -> graphQLHandler.handle(rc))
+                // Resolving the schema fails for an unknown application among other things. Without
+                // this nothing ever responds and the request hangs until the client gives up; the
+                // route's failure handler turns it into a response
+                .onFailure(rc::fail);
     }
 
 }
