@@ -6,13 +6,13 @@ import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerResponse;
-import io.vertx.ext.healthchecks.HealthCheckHandler;
 import io.vertx.ext.healthchecks.HealthChecks;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.CorsHandler;
 import io.vertx.ext.web.handler.StaticHandler;
+import io.vertx.ext.web.healthchecks.HealthCheckHandler;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.auth.api.config.OidcSecurityServiceProperties;
@@ -47,7 +47,7 @@ public class WebServerNextVerticle extends AbstractVerticle {
         }
 
         CorsHandler corsHandler = CorsHandler.create()
-                                             .addRelativeOrigin(allowedOriginPattern)
+                                             .addOriginWithRegex(allowedOriginPattern)
                                              .allowedHeaders(properties.getCorsAllowedHeaders());
         if(properties.getCorsAllowCredentials() != null){
             corsHandler.allowCredentials(properties.getCorsAllowCredentials());
@@ -81,7 +81,8 @@ public class WebServerNextVerticle extends AbstractVerticle {
 
         // Begin listening for requests
         server.requestHandler(router)
-              .listen(properties.getWebServerPort(), ar -> {
+              .listen(properties.getWebServerPort())
+              .onComplete(ar -> {
                   if (ar.succeeded()) {
                       startPromise.complete();
                   } else {
@@ -122,6 +123,6 @@ public class WebServerNextVerticle extends AbstractVerticle {
 
     @Override
     public void stop(Promise<Void> stopPromise) {
-        server.close(stopPromise);
+        server.close().onComplete(stopPromise);
     }
 }

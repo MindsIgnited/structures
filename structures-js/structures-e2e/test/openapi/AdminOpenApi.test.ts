@@ -47,10 +47,7 @@ describe('End To End Tests', () => {
         await namedQueriesService.save(namedQueriesDefinition)
 
         // @ts-ignore
-        const host = inject('STRUCTURES_HOST') as string
-        // @ts-ignore
-        const port = inject('STRUCTURES_OPENAPI_PORT') as string
-        baseUrl = `http://${host}:${port}`
+        baseUrl = inject('STRUCTURES_OPENAPI_BASE_URL') as string
     }, 300000)
 
     afterAll(async () => {

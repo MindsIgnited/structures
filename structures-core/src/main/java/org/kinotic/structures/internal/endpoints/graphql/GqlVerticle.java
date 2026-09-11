@@ -46,7 +46,7 @@ public class GqlVerticle extends AbstractVerticle {
           }
 
         CorsHandler corsHandler = CorsHandler.create()
-                                             .addRelativeOrigin(allowedOriginPattern)
+                                             .addOriginWithRegex(allowedOriginPattern)
                                              .allowedHeaders(properties.getCorsAllowedHeaders());
 
         if(properties.getCorsAllowCredentials() != null){
@@ -69,7 +69,8 @@ public class GqlVerticle extends AbstractVerticle {
 
         // Begin listening for requests
         server.requestHandler(router)
-              .listen(properties.getGraphqlPort(), ar -> {
+              .listen(properties.getGraphqlPort())
+              .onComplete(ar -> {
                   if (ar.succeeded()) {
                       log.info("GraphQL Started Listener on Thread {}", Thread.currentThread().getName());
                       startPromise.complete();
@@ -81,6 +82,6 @@ public class GqlVerticle extends AbstractVerticle {
 
     @Override
     public void stop(Promise<Void> stopPromise) {
-        server.close(stopPromise);
+        server.close().onComplete(stopPromise);
     }
 }

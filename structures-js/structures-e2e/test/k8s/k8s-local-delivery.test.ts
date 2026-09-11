@@ -1,0 +1,135 @@
+import { Continuum } from '@kinotic/continuum-client'
+import { WebSocket } from 'ws'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { K8sTestHelper } from './k8s-helper'
+import { countInPodLogs, getPodPlacements } from './segmentation-utils'
+
+Object.assign(global, { WebSocket })
+
+/**
+ * Asserts that a pod which receives a request serves it itself rather than dispatching it to another
+ * node in the cluster.
+ *
+ * Service RPC travels over the clustered event bus addressed to the service's base resource, and the
+ * point to point selector round robins across every node registered for that address. On a three node
+ * cluster that sent roughly two thirds of a pod's own calls to a peer for no reason. Continuum now
+ * sets localOnly on service sends whose base resource is hosted locally, so those calls stay put.
+ *
+ * The segmentation test covers this indirectly - an isolated pod keeps working, so its calls must be
+ * local - but only while its peers are unreachable. This asserts the preference is active during
+ * normal operation on a whole, healthy cluster, which is the case that actually runs in production.
+ *
+ * EchoService reports an opaque id for the instance that ran the call, which is what makes the
+ * difference observable from a client. It deliberately carries nothing else - no topology, no node
+ * ids, no data - so proving this property does not require exposing anything worth protecting. The
+ * cluster being whole is checked against Kubernetes rather than asked of the service.
+ */
+describe('K8s Local Delivery Tests', () => {
+    let k8s: K8sTestHelper
+    const CALLS_PER_POD = 25
+    const ECHO_SERVICE = 'org.kinotic.structures.api.services.echo.EchoService'
+    // Logged by DefaultEchoService on the instance that runs the call. Needs the TRACE level set
+    // in dev-tools/kind/config/structures-server/values.yaml
+    const EXECUTION_MARKER = 'Echo handled by instance'
+    const context = process.env.K8S_CONTEXT || 'kind-structures-cluster'
+    const namespace = process.env.K8S_NAMESPACE || 'default'
+    const labelSelector = process.env.K8S_LABEL_SELECTOR || 'app=structures'
+
+    beforeAll(async () => {
+        // vitest runs test files in parallel processes and K8sTestHelper port forwards to a fixed
+        // local range, so each k8s file needs its own base or two runs fight over the same ports and
+        // the connection drops mid test
+        process.env.K8S_STARTING_LOCAL_PORT = process.env.K8S_STARTING_LOCAL_PORT || '58521'
+        k8s = new K8sTestHelper()
+        if (!k8s.isEnabled()) {
+            console.log('K8s tests disabled. Set K8S_TEST_ENABLED=true to run these tests.')
+            return
+        }
+        if (!(await k8s.isClusterAccessible())) {
+            throw new Error('Kubernetes cluster is not accessible')
+        }
+        await k8s.discoverPods()
+    }, 180000)
+
+    afterAll(async () => {
+        if (!k8s.isEnabled()) {
+            return
+        }
+        await k8s.disconnectFromPod()
+        await k8s.stopPortForwards()
+    }, 60000)
+
+    it('serves every request on the pod that received it', async () => {
+        if (!k8s.isEnabled()) {
+            console.log('Test skipped: K8s tests not enabled')
+            return
+        }
+
+        // Whole cluster, so a local result is a real preference rather than the only option left.
+        // Asked of Kubernetes because the echo service deliberately knows nothing about the cluster.
+        // Driven off the ready pods rather than the helper's list, which is unfiltered: a pod still
+        // inside its termination grace period would otherwise be called, or inflate the expected count.
+        const ready = getPodPlacements(context, namespace, labelSelector)
+        const podNames = ready.map(pod => pod.name)
+        expect(podNames.length, 'need the full replica set ready for this assertion to mean anything')
+            .toBeGreaterThanOrEqual(3)
+
+        const servingNodeByPod = new Map<string, string>()
+
+        for (let podIndex = 0; podIndex < podNames.length; podIndex++) {
+            // Attribute the work from the servers themselves, not just from what the response says
+            const executionsBefore = new Map(
+                podNames.map(name => [name, countInPodLogs(context, namespace, name, EXECUTION_MARKER)])
+            )
+
+            await k8s.connectToPod(podIndex)
+            const proxy = Continuum.serviceProxy(ECHO_SERVICE)
+
+            const servingNodes = new Set<string>()
+            for (let call = 0; call < CALLS_PER_POD; call++) {
+                const sent = `call-${podIndex}-${call}`
+                const response = await proxy.invoke('echo', [sent])
+                expect(response, 'echo should return a response').toBeDefined()
+                expect(response.message, 'echo should return what it was sent').toBe(sent)
+                expect(response.instanceId, 'serving instance should be identified').toBeTruthy()
+                servingNodes.add(response.instanceId)
+            }
+
+            // Round robin across n nodes would scatter these; landing on one node every time is the
+            // property under test. At 25 calls across 3 nodes, doing this by chance is about 1 in 10^12.
+            expect(
+                Array.from(servingNodes),
+                `${podNames[podIndex]} should serve all ${CALLS_PER_POD} of its own calls locally`
+            ).toHaveLength(1)
+
+            const servingNode = servingNodes.values().next().value as string
+            console.log(`${podNames[podIndex]} served all ${CALLS_PER_POD} calls on instance ${servingNode}`)
+            servingNodeByPod.set(podNames[podIndex], servingNode)
+
+            await k8s.disconnectFromPod()
+
+            // Same claim, independently evidenced: the pod that was called logs every execution and
+            // no other pod logs any. A payload can only report where it was built; this is the record
+            // of who did the work.
+            for (const name of podNames) {
+                const executed = countInPodLogs(context, namespace, name, EXECUTION_MARKER)
+                                 - (executionsBefore.get(name) ?? 0)
+                if (name === podNames[podIndex]) {
+                    expect(executed, `${name} should have executed all ${CALLS_PER_POD} of its own calls`)
+                        .toBeGreaterThanOrEqual(CALLS_PER_POD)
+                } else {
+                    expect(executed, `${name} should not have executed any of ${podNames[podIndex]}'s calls`)
+                        .toBe(0)
+                }
+            }
+        }
+
+        // Each pod pinning to a different node is what distinguishes "served locally" from
+        // "the whole cluster happens to route everything to one node"
+        const distinctNodes = new Set(servingNodeByPod.values())
+        expect(
+            distinctNodes.size,
+            'each pod should serve on its own node, not share one'
+        ).toBe(podNames.length)
+    }, 600000)
+})

@@ -41,12 +41,15 @@ export async function initContinuumClient(): Promise<void> {
         const host = inject('STRUCTURES_HOST')
         // @ts-ignore
         const port = inject('STRUCTURES_PORT')
+        // @ts-ignore
+        const useSSL: boolean = inject('STRUCTURES_USE_SSL') === true
 
-        console.log('Connecting to continuum at ' + host)
+        console.log(`Connecting to continuum at ${useSSL ? 'wss' : 'ws'}://${host}:${port}`)
 
         await Continuum.connect({
                                     host:host,
                                     port:port,
+                                    useSSL:useSSL,
                                     connectHeaders:{login: 'admin', passcode: 'structures'}
                                 })
 

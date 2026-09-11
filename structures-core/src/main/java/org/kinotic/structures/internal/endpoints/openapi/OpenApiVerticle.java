@@ -31,7 +31,8 @@ public class OpenApiVerticle extends AbstractVerticle {
 
         // Begin listening for requests
         server.requestHandler(router)
-              .listen(properties.getOpenApiPort(), ar -> {
+              .listen(properties.getOpenApiPort())
+              .onComplete(ar -> {
             if (ar.succeeded()) {
                 log.info("OpenApi Started Listener on Thread {}", Thread.currentThread().getName());
                 startPromise.complete();
@@ -43,7 +44,7 @@ public class OpenApiVerticle extends AbstractVerticle {
 
     @Override
     public void stop(Promise<Void> stopPromise) throws Exception {
-        server.close(stopPromise);
+        server.close().onComplete(stopPromise);
     }
 
 }

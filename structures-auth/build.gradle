@@ -18,7 +18,7 @@ dependencies {
 	implementation "com.github.ben-manes.caffeine:caffeine"
 
     // using api directly 
-    implementation "javax.annotation:javax.annotation-api"
+    implementation "jakarta.annotation:jakarta.annotation-api"
 
 	annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 

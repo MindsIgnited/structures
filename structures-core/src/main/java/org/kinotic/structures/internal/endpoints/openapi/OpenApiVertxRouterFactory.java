@@ -102,7 +102,7 @@ public class OpenApiVertxRouterFactory {
           }
 
         CorsHandler corsHandler = CorsHandler.create()
-                                             .addRelativeOrigin(allowedOriginPattern)
+                                             .addOriginWithRegex(allowedOriginPattern)
                                              .allowedHeaders(properties.getCorsAllowedHeaders());
                                              
         if(properties.getCorsAllowCredentials() != null){
@@ -132,6 +132,10 @@ public class OpenApiVertxRouterFactory {
                                             } catch (JsonProcessingException e) {
                                                 VertxWebUtil.writeException(ctx, e);
                                             }
+                                            return null;
+                                        })
+                                        .exceptionally(throwable -> {
+                                            VertxWebUtil.writeException(ctx, throwable);
                                             return null;
                                         });
               });
