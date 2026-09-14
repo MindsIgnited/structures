@@ -9,9 +9,10 @@ nothing failing, nothing restarting, nothing logged, and no drift over time.
 
 - Image `mindsignited/structures-server:3.6.0-pr11.bee0983` (Spring Boot 4.1.1, Vert.x 5.1.8,
   Jackson 3.1.5, continuum 3.1.0-SNAPSHOT `ffc6727b`), three replicas, no CPU or memory limits.
-- KinD on an Apple Silicon Mac (Docker Desktop, 16 CPUs / 63 GB), two-node Elasticsearch 8.18
-  in the same cluster, ingress-nginx with TLS in front (its limit raised to 2 CPU for the run so it
-  could not be the bottleneck; it used 29 m at peak).
+- KinD on an Apple Silicon Mac (Docker Desktop, 16 CPUs / 63 GB), two-node Elasticsearch 8.19.13
+  in the same cluster (1 CPU / 2 GiB per node, 1 GiB heap), ingress-nginx with TLS in front (its
+  limit raised to 2 CPU for the run so it could not be the bottleneck; it used 29 m at peak).
+  Full hardware and infrastructure detail in [LOAD_TESTING.md](../../LOAD_TESTING.md).
 - Generators ran on the same machine, through the ingress: STOMP over WebSocket at
   `wss://localhost/v1`, OpenAPI at `https://localhost/api`. All against one structure,
   `load-testing.person` (multi-tenant, client-supplied ids), tenant `kinotic`.

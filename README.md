@@ -142,6 +142,7 @@ Ready to dive deeper? Our comprehensive documentation covers everything:
 - **[Decorators Reference](https://structuresframework.org/webdocs/reference/decorators)** - All available decorators
 - **[Multi-tenant Guide](https://structuresframework.org/webdocs/guide/multi-tenant-access)** - Multi-tenancy setup
 - **[Docker Compose Setup](docker-compose/README.md)** - Development environment configuration
+- **[Load Testing](LOAD_TESTING.md)** - How releases are load tested, the setup it assumes, and what the runs have shown
 
 ## 🔧 Development Setup
 

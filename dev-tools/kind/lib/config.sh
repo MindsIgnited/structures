@@ -26,6 +26,7 @@ readonly CONFIG_ELASTICSEARCH_DIR="${DEFAULT_CONFIG_DIR}/elasticsearch"
 readonly CONFIG_POSTGRESQL_DIR="${DEFAULT_CONFIG_DIR}/postgresql"
 readonly CONFIG_KEYCLOAK_DIR="${DEFAULT_CONFIG_DIR}/keycloak"
 readonly CONFIG_INGRESS_NGINX_DIR="${DEFAULT_CONFIG_DIR}/ingress-nginx"
+readonly CONFIG_METRICS_SERVER_DIR="${DEFAULT_CONFIG_DIR}/metrics-server"
 readonly CONFIG_CERT_MANAGER_DIR="${DEFAULT_CONFIG_DIR}/cert-manager"
 readonly CONFIG_COREDNS_DIR="${DEFAULT_CONFIG_DIR}/coredns"
 readonly CONFIG_STRUCTURES_SERVER_DIR="${DEFAULT_CONFIG_DIR}/structures-server"
@@ -155,7 +156,7 @@ get_helm_values_flags() {
 #
 # Get service-specific values file path
 # Args:
-#   $1: Service name (elasticsearch, postgresql, keycloak, ingress-nginx, cert-manager, coredns, structures-server)
+#   $1: Service name (elasticsearch, postgresql, keycloak, ingress-nginx, metrics-server, cert-manager, coredns, structures-server)
 # Returns:
 #   Path to the service's values.yaml file
 # Example:
@@ -177,6 +178,9 @@ get_service_values_path() {
             ;;
         ingress-nginx)
             config_dir="${CONFIG_INGRESS_NGINX_DIR}"
+            ;;
+        metrics-server)
+            config_dir="${CONFIG_METRICS_SERVER_DIR}"
             ;;
         cert-manager)
             config_dir="${CONFIG_CERT_MANAGER_DIR}"
