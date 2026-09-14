@@ -94,9 +94,11 @@ describe('Continuum client contract', () => {
         const reported = new Promise<{error: Error, activeWhenReported: boolean}>(resolve =>
             continuum.eventBus.fatalErrors.subscribe(error =>
                 resolve({error, activeWhenReported: continuum.eventBus.isConnectionActive()})))
-        // A service request with no reply-to is one the gateway answers by ending the connection
+        // A service request whose reply-to is not a valid address is one the gateway answers by
+        // ending the connection (a missing reply-to it lets through - that is a gateway FIXME)
         const {Event, EventConstants} = await import('@kinotic/continuum-client')
         const bad = new Event(EventConstants.SERVICE_DESTINATION_PREFIX + 'org.kinotic.structures.api.services.ApplicationService/findAll')
+        bad.setHeader(EventConstants.REPLY_TO_HEADER, '')
         bad.setHeader(EventConstants.CONTENT_TYPE_HEADER, EventConstants.CONTENT_JSON)
         bad.setDataString('[]')
         continuum.eventBus.send(bad)

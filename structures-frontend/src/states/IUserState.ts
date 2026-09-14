@@ -43,6 +43,9 @@ export class UserState implements IUserState {
     private authenticated: boolean = false
     private accessDenied: boolean = false
     private restorePromise: Promise<boolean> | null = null
+    private connectionWatch: { unsubscribe(): void } | null = null
+    /** Why the last session ended without the user asking, for the login page to say so */
+    public connectionLost: Error | null = null
 
     public async authenticate(login: string, passcode: string): Promise<void> {
         try {
@@ -61,16 +64,36 @@ export class UserState implements IUserState {
             this.connectedInfo = await Continuum.connect(connectionInfo)
             this.authenticated = true
             this.accessDenied = false
+            this.watchConnection()
             // Note: We intentionally do NOT store basic auth credentials in cookies
             // This is more secure - users must re-login on page refresh
         } catch (reason: any) {
             this.accessDenied = true
-            if (reason) {
-                throw new Error(reason)
-            } else {
-                throw new Error('Credentials invalid')
+            // connect() rejects with a typed error carrying the server's reason; rethrown as is so the
+            // login page shows that reason, not its type name in front of it
+            if (reason instanceof Error) {
+                throw reason
             }
+            throw new Error(reason ? String(reason) : 'Credentials invalid')
         }
+    }
+
+    /**
+     * The connection can end without the user asking: the server refused a reconnect, or gave up
+     * on it. It is reported once on fatalErrors with the connection already down, and from then on
+     * the session it carried is over - the state stops claiming it, so the router sends the user
+     * to log in again on the next navigation rather than every page failing one request at a time.
+     */
+    private watchConnection(): void {
+        if (this.connectionWatch) {
+            return
+        }
+        this.connectionWatch = Continuum.eventBus.fatalErrors.subscribe((error: Error) => {
+            debug('Connection ended by the server, ending the session: %O', error)
+            this.connectionLost = error
+            this.connectedInfo = null
+            this.authenticated = false
+        })
     }
 
     public async handleOidcLogin(user: User, provider: string): Promise<void> {
@@ -183,6 +206,7 @@ export class UserState implements IUserState {
         }
 
         this.connectedInfo = await Continuum.connect(connectionInfo)
+        this.watchConnection()
 
         try {
             // Frontend role gate. The backend has already validated the token; this is a
@@ -268,6 +292,7 @@ export class UserState implements IUserState {
         this.oidcUser = null
         this.authenticated = false
         this.accessDenied = false
+        this.connectionLost = null
     }
 
     public isAccessDenied(): boolean {
