@@ -16,6 +16,10 @@ import org.kinotic.continuum.idl.api.schema.StringC3Type;
 import org.kinotic.continuum.idl.api.schema.decorators.C3Decorator;
 import org.kinotic.structures.api.domain.FastestType;
 import org.kinotic.structures.api.domain.RawJson;
+import org.kinotic.structures.api.domain.Structure;
+import org.kinotic.structures.api.domain.idl.decorators.FlattenedDecorator;
+import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.json.JsonData;
 import org.kinotic.structures.api.domain.idl.decorators.EntityServiceDecoratorsDecorator;
 import org.kinotic.structures.api.domain.idl.decorators.IdDecorator;
 import org.kinotic.structures.support.elastic.ElasticTestBase;
@@ -81,6 +85,36 @@ class IdlJacksonInteropTest extends ElasticTestBase {
         TokenBuffer result = jsonMapper.readValue(jsonMapper.writeValueAsString(buffer), TokenBuffer.class);
         assertEquals(jsonMapper.readTree(json),
                      jsonMapper.readTree(jsonMapper.writeValueAsString(result)));
+    }
+
+    @Test
+    void fieldValueOfAnyKindRoundTrips() {
+        // A search cursor is the last hit's sort values serialized through this mapper; a sort on a
+        // non-scalar value arrives as kind Any and has to survive the trip like the scalar kinds do
+        FieldValue any = FieldValue.of(JsonData.of(Map.of("lat", 45.5, "lon", -122.6)));
+        String json = jsonMapper.writeValueAsString(any);
+        FieldValue back = jsonMapper.readValue(json, FieldValue.class);
+        assertEquals(FieldValue.Kind.Any, back._kind());
+        assertEquals(jsonMapper.readTree("{\"lat\":45.5,\"lon\":-122.6}"),
+                     jsonMapper.readTree(back.anyValue().toJson().toString()));
+
+        // and the scalar kinds still do
+        for (FieldValue scalar : List.of(FieldValue.of("text"), FieldValue.of(42L), FieldValue.of(1.5), FieldValue.of(true), FieldValue.NULL)) {
+            FieldValue scalarBack = jsonMapper.readValue(jsonMapper.writeValueAsString(scalar), FieldValue.class);
+            assertEquals(scalar._kind(), scalarBack._kind());
+            assertEquals(scalar._get(), scalarBack._get());
+        }
+    }
+
+    @Test
+    void nullForAPrimitiveFieldIsCoercedAsItAlwaysWas() {
+        // Jackson 3 fails a null bound to a primitive by default; Jackson 2, which every client of
+        // 3.5 was written against, coerced it to false or 0. A hand-built client sending
+        // {"published": null} keeps working.
+        Structure structure = jsonMapper.readValue("{\"name\":\"Person\",\"published\":null}", Structure.class);
+        assertEquals(false, structure.isPublished());
+        FlattenedDecorator decorator = jsonMapper.readValue("{\"depthLimit\":null,\"index\":null}", FlattenedDecorator.class);
+        assertEquals(0, decorator.getDepthLimit());
     }
 
     @Test
