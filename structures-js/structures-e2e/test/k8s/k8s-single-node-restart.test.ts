@@ -1,4 +1,4 @@
-import { Continuum } from '@kinotic/continuum-client'
+import { ConnectionLostError, ConnectionRefusedError, Continuum, ContinuumError } from '@kinotic/continuum-client'
 import { WebSocket } from 'ws'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
@@ -22,9 +22,11 @@ Object.assign(global, { WebSocket })
  *
  *   1. a request in flight when the instance dies must settle - reject - within a bounded time, not
  *      wait forever for a reply the dead instance can no longer send.
- *   2. the client must reconnect on its own once the instance is back, without the application
- *      calling disconnect and connect, which it has no way of knowing to do.
- *   3. a fresh request after the restart must succeed.
+ *   2. when the instance is back, the client's reconnect presents a session the new instance has
+ *      never seen and is refused. The client holds no credentials, so it cannot recover on its own:
+ *      it must report the refusal on fatalErrors with the connection already down, so the
+ *      application can connect again with credentials of its choosing - from inside the handler.
+ *   3. a fresh request after that connect must succeed, served by the new instance.
  *
  * Runs against the KinD cluster scaled to one replica, through the ingress at structures.local so the
  * reconnect has a stable address that survives the pod being replaced. Needs the mkcert root trusted:
@@ -79,11 +81,24 @@ describe('K8s Single Node Restart Tests', () => {
         // Default connection: sticky session on, static credentials, which is how both structures
         // clients connect today
         console.log(`Connecting through ${ingressHost} to the single instance ${only.name}`)
-        const connected = await Continuum.connect({
+        const connectionInfo = {
             host: ingressHost, port: 443, useSSL: true, maxConnectionAttempts: 5,
             connectHeaders: { login: 'admin', passcode: 'structures' }
-        })
+        }
+        const connected = await Continuum.connect(connectionInfo)
         expect(connected.sessionId, 'a sticky session should be established').toBeTruthy()
+
+        // The contract is that by the time fatalErrors emits the connection is already down, so the
+        // application may connect again right there. Done inside the handler to pin exactly that.
+        const fatal: ContinuumError[] = []
+        let activeWhenReported: boolean | null = null
+        const recovered = new Promise<unknown>((resolve, reject) => {
+            Continuum.eventBus.fatalErrors.subscribe(e => {
+                fatal.push(e)
+                activeWhenReported = Continuum.eventBus.isConnectionActive()
+                Continuum.connect(connectionInfo).then(resolve, reject)
+            })
+        })
 
         const echo = Continuum.serviceProxy(ECHO_SERVICE)
         const before = await echo.invoke('echo', ['before-restart'])
@@ -115,24 +130,38 @@ describe('K8s Single Node Restart Tests', () => {
                + 'before it replied, so the scenario was not exercised; raise IN_FLIGHT_DELAY_MS or check '
                + 'the delete took effect')
             .toBe('rejected')
-        if (settledAs === 'rejected') console.log(`In-flight request rejected after ${settleMs}ms: ${(settledWith as Error)?.message}`)
-        else console.log(`In-flight request still pending ${settleMs}ms after the instance died`)
+        if (settledAs === 'rejected') {
+            console.log(`In-flight request rejected after ${settleMs}ms: ${(settledWith as Error)?.message}`)
+            expect.soft(settledWith, 'failed with ConnectionLostError, so a caller can tell it from an answer the server gave')
+                .toBeInstanceOf(ConnectionLostError)
+        } else {
+            console.log(`In-flight request still pending ${settleMs}ms after the instance died`)
+        }
 
-        // Stage 2: the instance comes back. The client must come back with it, unprompted.
-        console.log('Waiting for the replacement pod, then for the client to reconnect on its own')
+        // Stage 2: the instance comes back with no memory of the session. The reconnect is refused,
+        // and that has to be reported with the connection already down - the application's cue.
+        console.log('Waiting for the replacement pod, then for the refused reconnect to be reported')
         scaleDeployment(context, namespace, labelSelector, deployment, 1)
         const replacement = getPodPlacements(context, namespace, labelSelector)[0]
         expect(replacement?.name, 'a replacement pod should be running').not.toBe(only.name)
 
-        const recoveredAt = await waitUntil(() => Continuum.eventBus.isConnected(), RECOVERY_BUDGET_MS)
+        const recoveredAt = await waitUntil(() => fatal.length > 0, RECOVERY_BUDGET_MS)
         expect.soft(recoveredAt,
-               `client should be connected again within ${RECOVERY_BUDGET_MS}ms of the instance returning; `
-               + 'still disconnected means the reconnect presented a session id the new instance had never '
-               + 'seen, was refused, and the client deactivated itself instead of re-authenticating')
+               `the refused reconnect should be reported on fatalErrors within ${RECOVERY_BUDGET_MS}ms of the `
+               + 'instance returning; nothing reported means the client is silently dead or silently retrying')
             .not.toBeNull()
+        if (fatal.length > 0) {
+            expect.soft(fatal.length, 'reported exactly once').toBe(1)
+            expect.soft(fatal[0], 'as the server saying no, typed so the application can tell it from anything else')
+                .toBeInstanceOf(ConnectionRefusedError)
+            expect.soft(fatal[0].message, 'with the server\'s own reason').toMatch(/Could not authenticate with the given Session id/)
+            expect.soft(activeWhenReported, 'with the connection already down when reported, so connect() works from the handler')
+                .toBe(false)
+            await recovered
+            console.log(`Reported "${fatal[0].message}"; connected again from the handler`)
+        }
 
-        // Stage 3: and it must actually work. A throw here is itself evidence - "You must call connect"
-        // means the client deactivated itself on the refused reconnect - so it is reported, not thrown.
+        // Stage 3: and it must actually work, on the new instance
         let after: any = null
         let afterError: unknown = null
         try {
@@ -141,8 +170,7 @@ describe('K8s Single Node Restart Tests', () => {
             afterError = e
         }
         expect.soft(afterError,
-               'a fresh request after the restart must succeed; an error here is the client refusing '
-               + `to send on a connection it silently tore down: ${(afterError as Error)?.message ?? ''}`)
+               `a fresh request after connecting again must succeed: ${(afterError as Error)?.message ?? ''}`)
             .toBeNull()
         if (after) {
             expect(after.message).toBe('after-restart')

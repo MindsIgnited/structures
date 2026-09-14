@@ -74,6 +74,9 @@ describe('K8s Cluster Segmentation Tests', () => {
     }, 120000)
 
     it('keeps serving traffic while isolated, reports the condition, and rejoins on restart', async () => {
+        // Log assertions below are scoped to this test: a peer pod may have been created minutes ago
+        // by another test's scaling and logged a slow-start warning then, which is not a split now
+        const testStartedAt = new Date()
         if (!k8s.isEnabled()) {
             console.log('Test skipped: K8s tests not enabled')
             return
@@ -156,7 +159,7 @@ describe('K8s Cluster Segmentation Tests', () => {
             await k8s.disconnectFromPod()
 
             expect(
-                /never reached the minimum/i.test(getPodLogs(context, namespace, peer.name)),
+                /never reached the minimum/i.test(getPodLogs(context, namespace, peer.name, testStartedAt)),
                 `${peer.name} is in a 2 node majority and must not report a split`
             ).toBe(false)
         }

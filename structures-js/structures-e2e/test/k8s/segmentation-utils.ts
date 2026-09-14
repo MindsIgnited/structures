@@ -212,10 +212,16 @@ export function restartPod(context: string,
  * Logs for a pod. Reads the whole log rather than tailing, because the observer reports the
  * condition once and then only hourly, so the line under test can be well behind the tail.
  */
-export function getPodLogs(context: string, namespace: string, podName: string): string {
+/**
+ * @param since only lines logged at or after this instant. A pod carries its whole history, and a
+ *              pod that came up minutes ago under some other test's scaling may well have logged the
+ *              very line a later assertion is looking for; scope the read to the window that matters
+ */
+export function getPodLogs(context: string, namespace: string, podName: string, since?: Date): string {
     try {
+        const sinceTime = since ? ` --since-time=${since.toISOString()}` : ''
         return execSync(
-            `kubectl --context ${context} logs ${podName} -n ${namespace} --tail=-1`,
+            `kubectl --context ${context} logs ${podName} -n ${namespace} --tail=-1${sinceTime}`,
             { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 }
         )
     } catch {
