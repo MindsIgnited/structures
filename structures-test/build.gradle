@@ -28,6 +28,10 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'io.projectreactor:reactor-test'
     testImplementation 'tools.jackson.core:jackson-databind'
+    // Jackson 2, test scope only: JsonPathBenchmark measures the pre-upgrade path against it as the
+    // baseline. Nothing in Structures uses Jackson 2; it is on the runtime classpath anyway as a
+    // transitive of jjwt, swagger-core and the OpenAI client.
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind'
     testImplementation "org.testcontainers:testcontainers:${testContainersVersion}"
     testImplementation "org.testcontainers:junit-jupiter:${testContainersVersion}"
 	testImplementation "org.testcontainers:elasticsearch:${testContainersVersion}"

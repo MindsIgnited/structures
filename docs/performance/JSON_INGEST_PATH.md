@@ -59,6 +59,41 @@ Spring AI's OpenAI client. The one place Structures code touches it is
 Excluding Jackson 2 outright is not an option while those are on the classpath; kinotic carries the
 same exclusions commented out for the same reason.
 
+## Measured
+
+`JsonPathBenchmark` (structures-test, opt in with `STRUCTURES_BENCHMARK=true`) measures the same
+paths the bridge figures were taken on: median time / mean allocation per operation, 100 iterations
+after 20 warm-up, `ThreadMXBean.getThreadAllocatedBytes`, on an Apple Silicon Mac, Java 21. The
+*Jackson 2 direct* column is the pre-upgrade path re-measured on the same machine, not quoted;
+*ingest* is the whole upsert pre-processor path a save takes, parameter type in, `RawJson` out.
+
+```
+STRUCTURES_BENCHMARK=true ./gradlew :structures-test:test --tests '*JsonPathBenchmark*'
+```
+
+| payload | path | Jackson 2 direct | Jackson 3 | ingest (Jackson 3) |
+|---------|------|------------------|-----------|--------------------|
+| 16 KB | read TokenBuffer | 77 µs / 51 KB | 72 µs / 51 KB | 101 µs / 79 KB |
+| 16 KB | read RawJson | 62 µs / 47 KB | 65 µs / 44 KB | 177 µs / 71 KB |
+| 16 KB | write TokenBuffer | 37 µs / 30 KB | 37 µs / 30 KB | - |
+| 16 KB | write RawJson | 33 µs / 46 KB | 36 µs / 46 KB | - |
+| 168 KB | read TokenBuffer | 254 µs / 513 KB | 243 µs / 513 KB | 586 µs / 543 KB |
+| 168 KB | read RawJson | 476 µs / 493 KB | 371 µs / 461 KB | 565 µs / 505 KB |
+| 168 KB | write TokenBuffer | 320 µs / 307 KB | 322 µs / 308 KB | - |
+| 168 KB | write RawJson | 69 µs / 476 KB | 67 µs / 477 KB | - |
+| 871 KB | read TokenBuffer | 1.21 ms / 2.6 MB | 1.24 ms / 2.6 MB | 1.84 ms / 2.8 MB |
+| 871 KB | read RawJson | 1.74 ms / 2.3 MB | 1.93 ms / 2.2 MB | 2.40 ms / 2.5 MB |
+| 871 KB | write TokenBuffer | 1.70 ms / 1.6 MB | 1.67 ms / 1.6 MB | - |
+| 871 KB | write RawJson | 353 µs / 2.5 MB | 343 µs / 2.5 MB | - |
+
+Jackson 3 is at parity with the Jackson 2 direct baseline on every path and size, within noise. Set
+against the bridge - 14.4 MB and 6.95 ms to read the 830 KB payload - the 4.5x allocation on the
+write path is gone, not reduced. The ingest column is the number that matters for bulk saves: an
+871 KB batch costs 2.8 MB and 1.84 ms end to end from a `TokenBuffer`, which is the buffer itself
+plus the streaming copy to `RawJson`; the difference between the *read* and *ingest* cells is the
+whole pre-processor. The benchmark also checks that every path still produces the input JSON, so a
+change that made a path fast by making it wrong fails rather than looks like a win.
+
 ## Follow-ups worth their own change
 
 - **Version stamping still builds a tree per entity.** `updateVersionForEntity` does
@@ -68,9 +103,6 @@ same exclusions commented out for the same reason.
 - **`RawJsonSerializer` converts `byte[]` to `String`** before `writeRawValue`, a 2x allocation on
   the response path. Jackson 3's `writeRawValue` takes `String`/`char[]` only; writing bytes
   directly would need the generator's underlying stream.
-- **Measure.** The figures above were taken against the bridge. Port that throwaway benchmark into
-  an opt-in task, gated the way the k8s tests are, and confirm the single-parse path allocates at or
-  below the "direct Jackson 2" column. Anything above it means a copy is still hiding somewhere.
 - **`TokenBuffer` → `RawJson` on `JsonEntitiesService` (4.0.0, if ever).** `TokenBuffer` is a full
   in-memory copy of every payload that the upsert path turns into `RawJson` and, for `save` and
   `update`, converts back to satisfy the signature. Taking `RawJson` on the interface would remove
