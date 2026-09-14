@@ -4,7 +4,7 @@ import tools.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.AsyncLoadingCache;
 import com.github.benmanes.caffeine.cache.CacheLoader;
 import org.apache.commons.lang3.tuple.Pair;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.jspecify.annotations.Nullable;
 import org.kinotic.continuum.idl.api.schema.ArrayC3Type;
 import org.kinotic.continuum.idl.api.schema.IntC3Type;
 import org.kinotic.continuum.idl.api.schema.ObjectC3Type;

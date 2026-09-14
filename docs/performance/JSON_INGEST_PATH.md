@@ -68,6 +68,8 @@ paths the bridge figures were taken on: median time / mean allocation per operat
 after 20 warm-up, `ThreadMXBean.getThreadAllocatedBytes`, on an Apple Silicon Mac, Java 21. The
 *Jackson 2 direct* column is the pre-upgrade path re-measured on the same machine, not quoted;
 *ingest* is the whole upsert pre-processor path a save takes, parameter type in, `RawJson` out.
+The figures are from the versions this ships with: Jackson 3.1.5 and Jackson 2.21.5 as Spring Boot
+4.1.1 manages them, Elasticsearch client 8.19.21.
 
 ```
 STRUCTURES_BENCHMARK=true ./gradlew :structures-test:test --tests '*JsonPathBenchmark*'
@@ -75,24 +77,24 @@ STRUCTURES_BENCHMARK=true ./gradlew :structures-test:test --tests '*JsonPathBenc
 
 | payload | path | Jackson 2 direct | Jackson 3 | ingest (Jackson 3) |
 |---------|------|------------------|-----------|--------------------|
-| 16 KB | read TokenBuffer | 77 µs / 51 KB | 72 µs / 51 KB | 101 µs / 79 KB |
-| 16 KB | read RawJson | 62 µs / 47 KB | 65 µs / 44 KB | 177 µs / 71 KB |
-| 16 KB | write TokenBuffer | 37 µs / 30 KB | 37 µs / 30 KB | - |
-| 16 KB | write RawJson | 33 µs / 46 KB | 36 µs / 46 KB | - |
-| 168 KB | read TokenBuffer | 254 µs / 513 KB | 243 µs / 513 KB | 586 µs / 543 KB |
-| 168 KB | read RawJson | 476 µs / 493 KB | 371 µs / 461 KB | 565 µs / 505 KB |
-| 168 KB | write TokenBuffer | 320 µs / 307 KB | 322 µs / 308 KB | - |
-| 168 KB | write RawJson | 69 µs / 476 KB | 67 µs / 477 KB | - |
-| 871 KB | read TokenBuffer | 1.21 ms / 2.6 MB | 1.24 ms / 2.6 MB | 1.84 ms / 2.8 MB |
-| 871 KB | read RawJson | 1.74 ms / 2.3 MB | 1.93 ms / 2.2 MB | 2.40 ms / 2.5 MB |
-| 871 KB | write TokenBuffer | 1.70 ms / 1.6 MB | 1.67 ms / 1.6 MB | - |
-| 871 KB | write RawJson | 353 µs / 2.5 MB | 343 µs / 2.5 MB | - |
+| 16 KB | read TokenBuffer | 92 µs / 51 KB | 98 µs / 51 KB | 143 µs / 59 KB |
+| 16 KB | read RawJson | 108 µs / 47 KB | 95 µs / 44 KB | 147 µs / 58 KB |
+| 16 KB | write TokenBuffer | 44 µs / 30 KB | 52 µs / 30 KB | - |
+| 16 KB | write RawJson | 39 µs / 46 KB | 39 µs / 46 KB | - |
+| 168 KB | read TokenBuffer | 351 µs / 513 KB | 336 µs / 513 KB | 605 µs / 498 KB |
+| 168 KB | read RawJson | 414 µs / 493 KB | 420 µs / 461 KB | 589 µs / 517 KB |
+| 168 KB | write TokenBuffer | 313 µs / 307 KB | 322 µs / 307 KB | - |
+| 168 KB | write RawJson | 68 µs / 476 KB | 69 µs / 477 KB | - |
+| 871 KB | read TokenBuffer | 1.24 ms / 2.6 MB | 1.28 ms / 2.6 MB | 1.99 ms / 2.7 MB |
+| 871 KB | read RawJson | 2.00 ms / 2.3 MB | 1.92 ms / 2.2 MB | 2.31 ms / 2.6 MB |
+| 871 KB | write TokenBuffer | 1.67 ms / 1.6 MB | 1.61 ms / 1.6 MB | - |
+| 871 KB | write RawJson | 455 µs / 2.5 MB | 349 µs / 2.5 MB | - |
 
 Jackson 3 is at parity with the Jackson 2 direct baseline on every path and size, within noise. Set
 against the bridge - 14.4 MB and 6.95 ms to read the 830 KB payload - the 4.5x allocation on the
 write path is gone, not reduced. The *ingest* cell is the pre-processor alone: the `TokenBuffer` it
 starts from is built outside the timing, so what a bulk save costs end to end is the *read* cell plus
-the *ingest* cell - about 4.4 MB and 3.2 ms for an 871 KB batch. The benchmark exercises
+the *ingest* cell - about 5.3 MB and 3.3 ms for an 871 KB batch. The benchmark exercises
 `MultiTenancyType.NONE` with an id decorator; the tenant and version decorator branches are not in
 these numbers. It also checks that every path still produces the input JSON, so a change that made a
 path fast by making it wrong fails rather than looks like a win.

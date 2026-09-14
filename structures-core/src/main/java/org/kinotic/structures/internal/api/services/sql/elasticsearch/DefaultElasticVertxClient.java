@@ -19,7 +19,6 @@ import io.vertx.core.tracing.TracingPolicy;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
-import me.escoffier.vertx.completablefuture.VertxCompletableFuture;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.mutable.MutableObject;
 import org.kinotic.continuum.core.api.crud.CursorPage;
@@ -158,7 +157,8 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
             }
         }
 
-        VertxCompletableFuture<Page<T>> fut = new VertxCompletableFuture<>(vertx);
+        // Completed from the WebClient's handler, on a Vert.x context, so dependent stages already run there
+        CompletableFuture<Page<T>> fut = new CompletableFuture<>();
         sqlQueryRequest.sendJsonObject(json)
                        .onComplete(ar -> {
                            if(ar.succeeded()){
@@ -201,7 +201,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     @Override
     public CompletableFuture<TranslateResponse> translateSql(String statement,
                                                              List<?> parameters){
-        VertxCompletableFuture<TranslateResponse> responseFuture = new VertxCompletableFuture<>(vertx);
+        CompletableFuture<TranslateResponse> responseFuture = new CompletableFuture<>();
         JsonObject json = new JsonObject().put("query", statement);
         if(parameters != null) {
             JsonArray paramsJson = new JsonArray();

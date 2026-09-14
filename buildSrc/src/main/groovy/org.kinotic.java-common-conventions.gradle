@@ -40,10 +40,14 @@ configurations {
     }
 }
 
-// The Boot BOM manages Netty below what Vert.x 5.1 was built against (4.2.9 against 4.2.16), and the
-// gap is a NoSuchMethodError on the event loop the first time a client upgrades to HTTP/2 - which
-// nothing speaking HTTP/1.1 ever sees. Overriding the BOM's property keeps the whole Netty set
+// The Boot BOM manages Netty below what Vert.x was built against (vertx-dependencies <netty.version>),
+// and the gap is a NoSuchMethodError on the event loop the first time a client upgrades to HTTP/2 -
+// which nothing speaking HTTP/1.1 ever sees. Overriding the BOM's property keeps the whole Netty set
 // consistent at the version Vert.x asks for. Pinned by HttpTransportTest.
+//
+// Vert.x's JSON codec has the same shape against Jackson 2 (vertx-dependencies <jackson2.version>
+// against Boot's jackson-2-bom), one patch apart rather than seven; left to the BOM and pinned by
+// VertxJsonCodecTest so a widening gap shows up there and not in production.
 ext['netty.version'] = nettyVersion
 
 dependencyManagement {
@@ -56,11 +60,11 @@ dependencyManagement {
     dependencies {
         dependency "co.elastic.clients:elasticsearch-java:${elasticClientVersion}"
 
-        dependency "com.github.ben-manes.caffeine:caffeine:${caffeineVersion}"
-
+        // Ahead of the Boot BOM: vertx-web-graphql is compiled against a newer graphql-java than Boot
+        // manages, and federation and the extended scalars follow it. Pinned by GraphQlJsonObjectAdapterTest.
         dependency "com.graphql-java:graphql-java:${graphQlJavaVersion}"
-
-        dependency "jakarta.annotation:jakarta.annotation-api:${jakartaAnnotationVersion}"
+        dependency "com.graphql-java:graphql-java-extended-scalars:${graphQlJavaExtendedScalarsVersion}"
+        dependency "com.apollographql.federation:federation-graphql-java-support:${graphQlFederationJvmVersion}"
 
         dependency "org.apache.commons:commons-lang3:${apacheCommonsLangVersion}"
         dependency "org.apache.commons:commons-text:${apacheCommonsTextVersion}"
@@ -72,39 +76,26 @@ dependencyManagement {
         dependency "io.vertx:vertx-web-client:${vertxVersion}"
         dependency "io.vertx:vertx-health-check:${vertxVersion}"
 
-        dependency "me.escoffier.vertx:vertx-completable-future:${vertxCompletableFutureVersion}"
-
         dependency "org.apache.commons:commons-compress:${commonsCompressVersion}"
 
         dependency "org.apache.ignite:ignite-core:${igniteVersion}"
         dependency "org.apache.ignite:ignite-kubernetes:${igniteVersion}"
         dependency "org.apache.ignite:ignite-spring:${igniteVersion}"
 
-        dependency "org.apache.lucene:lucene-analyzers-common:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-backwards-codecs:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-core:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-grouping:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-highlighter:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-join:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-memory:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-misc:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-queries:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-queryparser:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-sandbox:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-spatial:${luceneVersion}"
-        dependency "org.apache.lucene:lucene-suggest:${luceneVersion}"
 
-        dependency "org.elasticsearch:elasticsearch:${elasticClientVersion}"
         dependency "org.elasticsearch.client:elasticsearch-rest-client:${elasticClientVersion}"
-        dependency "org.elasticsearch.client:elasticsearch-rest-high-level-client:${elasticClientVersion}"
+
+        // The jakarta flavour: the javax one names javax.validation / javax.xml.bind classes nothing on a
+        // Boot 4 classpath provides. Pinned by SwaggerModelResolverTest.
+        dependency "io.swagger.core.v3:swagger-core-jakarta:${swaggerCoreVersion}"
+        dependency "io.swagger.core.v3:swagger-models-jakarta:${swaggerCoreVersion}"
+
+        dependency "com.github.dasniko:testcontainers-keycloak:${testcontainersKeycloakVersion}"
 
         dependency "org.kinotic:continuum-core:${continuumVersion}"
         dependency "org.kinotic:continuum-core-vertx:${continuumVersion}"
         dependency "org.kinotic:continuum-gateway:${continuumVersion}"
         dependency "org.kinotic:continuum-idl:${continuumVersion}"
-
-
-        // must be overridden for the elastic client
 
         // JWT and OIDC dependencies
         dependency "io.jsonwebtoken:jjwt-api:${jsonwebtokenVersion}"
