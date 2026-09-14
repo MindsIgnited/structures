@@ -21,11 +21,23 @@ try {
     structuresConfig.print()
     loadTestConfig.print()
 
+    const startDelaySeconds = parseInt(process.env.START_DELAY_SECONDS || '60')
+    const executionOptions = {
+        durationSeconds: parseInt(process.env.DURATION_SECONDS || '0'),
+        reportIntervalSeconds: parseInt(process.env.REPORT_INTERVAL_SECONDS || '0'),
+        logTasks: (process.env.LOG_TASKS || 'true') === 'true',
+        reportFile: process.env.REPORT_FILE
+    }
+    console.log(`START_DELAY_SECONDS=${startDelaySeconds}`)
+    console.log(`DURATION_SECONDS=${executionOptions.durationSeconds}`)
+    console.log(`REPORT_INTERVAL_SECONDS=${executionOptions.reportIntervalSeconds}`)
+
     const taskGenerator = LoadTaskGeneratorFactory.createTaskGenerator(structuresConfig, loadTestConfig)
     const taskExecutor = new TaskExecutionService(concurrencyConfig.maxConcurrentRequests,
                                                   concurrencyConfig.maxRequestsPerSecond,
                                                   100,
-                                                  taskGenerator)
+                                                  taskGenerator,
+                                                  executionOptions)
 
     process
         .on('unhandledRejection', (reason, p) => {
@@ -49,8 +61,10 @@ try {
     try {
         const start = performance.now()
         
-        console.log('Waiting 1 minute before starting tasks...')
-        await new Promise(resolve => setTimeout(resolve, 60000)) // 1 minute delay
+        if (startDelaySeconds > 0) {
+            console.log(`Waiting ${startDelaySeconds}s before starting tasks...`)
+            await new Promise(resolve => setTimeout(resolve, startDelaySeconds * 1000))
+        }
         
         await taskExecutor.start()
         console.log('Load Generator Started')
@@ -66,6 +80,7 @@ try {
     } finally {
         await taskExecutor.stop()
     }
+    process.exit(0)
 
 } catch (e: any) {
     console.error(e, 'Exception thrown')

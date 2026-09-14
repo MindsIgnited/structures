@@ -26,7 +26,7 @@ export class SaveTaskGenerator implements ITaskGenerator {
     constructor(connectionInfoSupplier: () => Promise<ConnectionInfo>,
                 batchSize: number,
                 numberOfPeopleToCreate: number) {
-        if(numberOfPeopleToCreate % batchSize !== 0) {
+        if(Number.isFinite(numberOfPeopleToCreate) && numberOfPeopleToCreate % batchSize !== 0) {
             throw new Error('numberOfPeopleToCreate must be evenly divisible by batchSize')
         }
         const continuum = new ContinuumSingleton()
@@ -44,6 +44,10 @@ export class SaveTaskGenerator implements ITaskGenerator {
 
     hasMoreTasks(): boolean {
         return this.continuumTaskGenerator.hasMoreTasks()
+    }
+
+    shutdown(): Promise<void> {
+        return this.continuumTaskGenerator.shutdown()
     }
 
     private createTaskFactory(batchSize: number): ITaskFactory {

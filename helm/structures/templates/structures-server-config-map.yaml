@@ -77,6 +77,10 @@ data:
   CONTINUUM_CLUSTER_JOIN_TIMEOUT_MS: "{{ .Values.continuum.cluster.joinTimeoutMs | default "0" }}"
   CONTINUUM_CLUSTER_DISCOVERY_PORT: "{{ .Values.continuum.cluster.discoveryPort | default "47500" }}"
   CONTINUUM_CLUSTER_COMMUNICATION_PORT: "{{ .Values.continuum.cluster.communicationPort | default "47100" }}"
+  {{- if .Values.continuum.cluster.communicationMessageQueueLimit }}
+  # Back pressure on Ignite's per-connection message queue (0 / unset = unbounded, Ignite's default)
+  CONTINUUM_CLUSTER_COMMUNICATION_MESSAGE_QUEUE_LIMIT: "{{ .Values.continuum.cluster.communicationMessageQueueLimit }}"
+  {{- end }}
   # Container local address: bind to 0.0.0.0 (all interfaces) for port mapping
   CONTINUUM_CLUSTER_LOCAL_ADDRESS: "{{ .Values.continuum.cluster.localAddress | default "" }}"
 

@@ -1,6 +1,6 @@
 import { CodeGenerationService } from '@kinotic/structures-cli/dist/internal/CodeGenerationService.js'
 import { ConsoleLogger } from '@kinotic/structures-cli/dist/internal/Logger.js'
-import { NamespaceConfiguration } from '@kinotic/structures-cli/dist/internal/state/StructuresProject.js'
+import { TypescriptProjectConfig } from '@kinotic/structures-api'
 import path from 'path'
 import fs from 'fs/promises'
 
@@ -14,8 +14,9 @@ async function buildEntityDefinitions() {
         const namespace = 'ecommerce'
         const codeGenerationService = new CodeGenerationService(namespace, '.js', logger)
 
-        const namespaceConfig: NamespaceConfiguration = new NamespaceConfiguration()
-        namespaceConfig.namespaceName = namespace
+        const namespaceConfig = new TypescriptProjectConfig()
+        namespaceConfig.application = namespace
+        namespaceConfig.fileExtensionForImports = '.js'
         namespaceConfig.validate = false
         namespaceConfig.entitiesPaths = [path.resolve(__dirname, '../entity/domain/ecommerce')]
         namespaceConfig.generatedPath = path.resolve(__dirname, '../services/ecommerce')
@@ -39,8 +40,9 @@ async function buildEntityDefinitions() {
         const namespace = 'healthcare'
         const codeGenerationService = new CodeGenerationService(namespace, '.js', logger)
 
-        const namespaceConfig: NamespaceConfiguration = new NamespaceConfiguration()
-        namespaceConfig.namespaceName = namespace
+        const namespaceConfig = new TypescriptProjectConfig()
+        namespaceConfig.application = namespace
+        namespaceConfig.fileExtensionForImports = '.js'
         namespaceConfig.validate = false
         namespaceConfig.entitiesPaths = [path.resolve(__dirname, '../entity/domain/health')]
         namespaceConfig.generatedPath = path.resolve(__dirname, '../services/health')
@@ -58,6 +60,34 @@ async function buildEntityDefinitions() {
             }
         )
     }
+
+    async function buildPeopleDefinitions() {
+        const logger = new ConsoleLogger()
+        const namespace = 'load-testing'
+        const codeGenerationService = new CodeGenerationService(namespace, '.js', logger)
+
+        const namespaceConfig = new TypescriptProjectConfig()
+        namespaceConfig.application = namespace
+        namespaceConfig.fileExtensionForImports = '.js'
+        namespaceConfig.validate = false
+        namespaceConfig.entitiesPaths = [path.resolve(__dirname, '../entity/domain/people')]
+        namespaceConfig.generatedPath = path.resolve(__dirname, '../services')
+
+        await fs.mkdir(outputDir, { recursive: true })
+
+        await codeGenerationService.generateAllEntities(
+            namespaceConfig,
+            false,
+            async (entityInfo) => {
+                const outputPath = path.join(outputDir, `${entityInfo.entity.name.toLowerCase()}.json`)
+                await fs.writeFile(outputPath, JSON.stringify(entityInfo.entity, null, 2))
+                logger.log(`Generated entity definition for ${entityInfo.entity.name} at ${outputPath}`)
+            }
+        )
+    }
+
+    console.log('Building people definitions...')
+    await buildPeopleDefinitions()
 
     console.log('Building ecommerce definitions...')
     await buildEcommerceDefinitions()

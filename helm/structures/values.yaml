@@ -98,6 +98,10 @@ continuum:
     # Test instance ports (must be unique from container nodes)
     discoveryPort: 47500      
     communicationPort: 47100 
+    # Limit on messages queued per Ignite communication connection before back pressure applies.
+    # Unset or 0 leaves Ignite's unbounded default, which Ignite recommends against in production;
+    # Ignite suggests 1024 as a starting point. Requires continuum 3.1.0.
+    communicationMessageQueueLimit: 1024
     # Static IP addresses for all nodes in the cluster
     # Format: host:port,host:port,...
     localAddresses: null

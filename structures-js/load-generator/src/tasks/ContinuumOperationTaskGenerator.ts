@@ -26,16 +26,22 @@ class ContinuumTask implements ITask{
 }
 
 /**
- * A {@link TaskGenerator} that will generate tasks that will execute on a {@link ContinuumSingleton}
+ * A {@link TaskGenerator} that will generate tasks that will execute on a {@link ContinuumSingleton}.
+ * The first task connects, the last disconnects; every task between waits for the connection, so the
+ * executor may run them concurrently. A total of {@link Number.POSITIVE_INFINITY} makes the generator
+ * unbounded - the run then ends by duration, and {@link shutdown} disconnects.
  */
 export class ContinuumOperationTaskGenerator implements ITaskGenerator{
 
     private readonly connectionInfoSupplier: () => Promise<ConnectionInfo>
     private taskFactory: ITaskFactory
+    private readonly totalTasks: number
     private taskCreationsRemaining: number
-    private readonly totalTasks: number = 0
+    private connectIssued: boolean = false
+    private disconnectIssued: boolean = false
+    private disconnected: boolean = false
     private taskCompletionCount: number = 0
-    private readonly tasksComplete: Promise<void> | null = null
+    private readonly tasksComplete: Promise<void>
     private resolveAllTasksComplete: ((value: void) => void) | null = null
     private readonly continuumConnected: Promise<void>
     private resolveContinuumConnected: ((value: void) => void) | null = null
@@ -48,8 +54,8 @@ export class ContinuumOperationTaskGenerator implements ITaskGenerator{
         this.connectionInfoSupplier = connectionInfoSupplier
         this.continuum = continuum
         this.taskFactory = taskFactory
-        this.totalTasks = totalTasks + 2// we add 2 for the connect and disconnect tasks
-        this.taskCreationsRemaining = this.totalTasks
+        this.totalTasks = totalTasks
+        this.taskCreationsRemaining = totalTasks
         this.tasksComplete = new Promise<void>((resolve) => {
             this.resolveAllTasksComplete = resolve
         })
@@ -59,8 +65,8 @@ export class ContinuumOperationTaskGenerator implements ITaskGenerator{
     }
 
     getNextTask(): ITask {
-        if(this.taskCreationsRemaining === this.totalTasks){
-            this.taskCreationsRemaining--
+        if(!this.connectIssued){
+            this.connectIssued = true
             return {
                 name: () => 'Connect Continuum',
                 execute: async () => {
@@ -69,23 +75,27 @@ export class ContinuumOperationTaskGenerator implements ITaskGenerator{
                     this.resolveContinuumConnected!()
                 }
             }
-        }else if(this.taskCreationsRemaining === 1){
+        }else if(this.taskCreationsRemaining > 0){
             this.taskCreationsRemaining--
+            return new ContinuumTask(this.taskFactory.createTask(), this)
+        }else{
+            this.disconnectIssued = true
             return {
                 name: () => 'Disconnect Continuum',
                 execute: async () => {
                     await this.tasksComplete // Wait for all tasks to complete before disconnecting
-                    await this.continuum.disconnect()
+                    await this.disconnect()
                 }
             }
-        }else{
-            this.taskCreationsRemaining--
-            return new ContinuumTask(this.taskFactory.createTask(), this)
         }
     }
 
     hasMoreTasks(): boolean {
-        return this.taskCreationsRemaining > 0
+        return !this.disconnectIssued
+    }
+
+    async shutdown(): Promise<void> {
+        await this.disconnect()
     }
 
     awaitConnectionComplete(): Promise<void> {
@@ -94,11 +104,18 @@ export class ContinuumOperationTaskGenerator implements ITaskGenerator{
 
     markTaskComplete(): void {
         this.taskCompletionCount++
-        if(this.taskCompletionCount === (this.totalTasks-2)){ // We subtract 2 for the connect and disconnect tasks
+        if(this.taskCompletionCount === this.totalTasks){
             if(this.resolveAllTasksComplete){
                 this.resolveAllTasksComplete()
                 this.resolveAllTasksComplete = null
             }
+        }
+    }
+
+    private async disconnect(): Promise<void> {
+        if(this.connectIssued && !this.disconnected){
+            this.disconnected = true
+            await this.continuum.disconnect()
         }
     }
 

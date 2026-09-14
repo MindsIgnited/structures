@@ -35,6 +35,10 @@ export class FindTaskGenerator implements ITaskGenerator {
         return this.continuumTaskGenerator.hasMoreTasks()
     }
 
+    shutdown(): Promise<void> {
+        return this.continuumTaskGenerator.shutdown()
+    }
+
     private createTaskFactory(pageSize: number): ITaskFactory {
         return {
             createTask: () => {

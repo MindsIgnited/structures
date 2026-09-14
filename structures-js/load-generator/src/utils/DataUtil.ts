@@ -1,4 +1,4 @@
-import {Person} from '@/entity/domain/Person.js'
+import {Person} from '@/entity/domain/people/Person.js'
 import {faker} from '@faker-js/faker'
 import { v4 as uuidv4 } from 'uuid'
 
