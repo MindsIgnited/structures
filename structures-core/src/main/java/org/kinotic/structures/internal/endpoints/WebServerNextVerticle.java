@@ -1,7 +1,7 @@
 package org.kinotic.structures.internal.endpoints;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.SerializationFeature;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServer;
@@ -27,8 +27,9 @@ import org.slf4j.LoggerFactory;
 public class WebServerNextVerticle extends AbstractVerticle {
 
     private static final Logger logger = LoggerFactory.getLogger(WebServerNextVerticle.class);
-    private static final ObjectMapper objectMapper = new ObjectMapper()
-            .enable(SerializationFeature.INDENT_OUTPUT);
+    private static final JsonMapper objectMapper = JsonMapper.builder()
+            .enable(SerializationFeature.INDENT_OUTPUT)
+            .build();
 
     private final HealthChecks healthChecks;
     private final StructuresProperties properties;

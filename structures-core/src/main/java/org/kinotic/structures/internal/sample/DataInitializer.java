@@ -1,6 +1,6 @@
 package org.kinotic.structures.internal.sample;
 
-import java.io.IOException;
+import tools.jackson.core.JacksonException;
 import java.util.concurrent.CompletableFuture;
 
 import org.kinotic.structures.api.config.StructuresProperties;
@@ -11,8 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.util.TokenBuffer;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.util.TokenBuffer;
 
 import jakarta.annotation.PostConstruct;
 
@@ -67,10 +67,10 @@ public class DataInitializer {
                                                  String participantId){
         return testDataService.createRandomTestPeople(numberOfPeopleToCreate)
                               .thenCompose(people -> {
-                                  TokenBuffer tokenBuffer = new TokenBuffer(objectMapper, false);
+                                  TokenBuffer tokenBuffer = TokenBuffer.forGeneration();
                                   try {
-                                      tokenBuffer.writeObject(people);
-                                  } catch (IOException e) {
+                                      objectMapper.writeValue(tokenBuffer, people);
+                                  } catch (JacksonException e) {
                                       return CompletableFuture.failedFuture(e);
                                   }
 

@@ -13,8 +13,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 
 import io.jsonwebtoken.security.Jwk;
@@ -39,7 +40,7 @@ public class DefaultJwksService implements JwksService {
     public DefaultJwksService(DefaultCaffeineCacheFactory cacheFactory) {
         this.webClient = WebClient.builder().build();
         this.insecureWebClient = createInsecureWebClient();
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = JsonMapper.builder().build();
         
         // Cache for individual keys, with 1 hour TTL
         this.keyCache = cacheFactory.<String, Jwk<? extends Key>>newBuilder()

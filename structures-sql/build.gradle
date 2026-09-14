@@ -31,8 +31,8 @@ dependencies {
     api 'org.elasticsearch.client:elasticsearch-rest-client'
     
     // Jackson dependencies
-    api 'com.fasterxml.jackson.core:jackson-databind'
-    api 'com.fasterxml.jackson.core:jackson-core'
+    api 'tools.jackson.core:jackson-databind'
+    api 'tools.jackson.core:jackson-core'
     api 'com.fasterxml.jackson.core:jackson-annotations'
 
     // Parsing dependencies

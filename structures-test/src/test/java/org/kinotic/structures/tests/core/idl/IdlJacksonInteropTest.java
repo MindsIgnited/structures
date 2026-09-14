@@ -14,38 +14,28 @@ import org.junit.jupiter.api.Test;
 import org.kinotic.continuum.idl.api.schema.ObjectC3Type;
 import org.kinotic.continuum.idl.api.schema.StringC3Type;
 import org.kinotic.continuum.idl.api.schema.decorators.C3Decorator;
+import org.kinotic.structures.api.domain.FastestType;
+import org.kinotic.structures.api.domain.RawJson;
 import org.kinotic.structures.api.domain.idl.decorators.EntityServiceDecoratorsDecorator;
 import org.kinotic.structures.api.domain.idl.decorators.IdDecorator;
 import org.kinotic.structures.support.elastic.ElasticTestBase;
 import org.springframework.beans.factory.annotation.Autowired;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.util.TokenBuffer;
-import org.kinotic.structures.api.domain.FastestType;
-import org.kinotic.structures.api.domain.RawJson;
-
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.util.TokenBuffer;
 
 /**
- * Continuum serializes the IDL with Jackson 3 while Structures' own code is built on Jackson 2, so the
- * Structures {@link C3Decorator} subtypes have to be registered with both mappers. When only the Jackson 2
- * module knew them, continuum's mapper resolved nothing but its own built-in decorators and every schema
- * carrying a Structures decorator failed to deserialize with:
- * <p>
- * {@code Could not resolve type id 'EntityServiceDecorators' as a subtype of C3Decorator: known type ids = [NotNull]}
- * <p>
- * That is invisible to a Jackson 2 only test, which is why this asserts against the Jackson 3 mapper.
+ * There is one Jackson mapper in the application - the Jackson 3 one Spring Boot builds, which
+ * continuum, the Elasticsearch client and Structures all share. These pin what Structures needs it
+ * to do: resolve the Structures IDL subtypes by type id, carry the payload types on published
+ * service signatures, and write dates as text.
  */
 class IdlJacksonInteropTest extends ElasticTestBase {
 
     @Autowired
     private JsonMapper jsonMapper;
 
-    @Autowired
-    private ObjectMapper objectMapper;
-
     @Test
-    void structuresDecoratorsRoundTripThroughContinuumsMapper() {
+    void structuresDecoratorsRoundTripThroughTheSharedMapper() {
         ObjectC3Type schema = new ObjectC3Type()
                 .setName("Person")
                 .setNamespace("org.kinotic.structures.tests")
@@ -63,64 +53,48 @@ class IdlJacksonInteropTest extends ElasticTestBase {
         assertInstanceOf(IdDecorator.class, idDecorators.getFirst());
     }
 
-    /**
-     * JsonEntitiesService takes and returns Jackson 2 TokenBuffers, and RawJson/FastestType ride on the other
-     * published signatures. Continuum's Jackson 3 mapper has no idea what those are on its own, which surfaced
-     * against the built image as:
-     * <p>
-     * {@code Cannot deserialize value of type `com.fasterxml.jackson.databind.util.TokenBuffer` from Array value}
-     */
     @Test
-    void jackson2PayloadTypesRoundTripThroughContinuumsMapper() throws Exception {
+    void payloadTypesRoundTripThroughTheSharedMapper() {
         String json = "{\"id\":\"1\",\"name\":\"Bob\",\"tags\":[\"a\",\"b\"]}";
 
-        TokenBuffer buffer = objectMapper.readValue(json, TokenBuffer.class);
+        TokenBuffer buffer = jsonMapper.readValue(json, TokenBuffer.class);
         TokenBuffer bufferResult = jsonMapper.readValue(jsonMapper.writeValueAsString(buffer), TokenBuffer.class);
-        assertEquals(objectMapper.readTree(json),
-                     objectMapper.readTree(objectMapper.writeValueAsString(bufferResult)));
+        assertEquals(jsonMapper.readTree(json),
+                     jsonMapper.readTree(jsonMapper.writeValueAsString(bufferResult)));
 
         RawJson rawJson = new RawJson(json.getBytes(StandardCharsets.UTF_8));
         RawJson rawJsonResult = jsonMapper.readValue(jsonMapper.writeValueAsString(rawJson), RawJson.class);
-        assertEquals(objectMapper.readTree(json),
-                     objectMapper.readTree(rawJsonResult.data()));
+        assertEquals(jsonMapper.readTree(json),
+                     jsonMapper.readTree(rawJsonResult.data()));
 
         // FastestType is a return type only, so serialization is what has to hold
         FastestType fastest = new FastestType(Map.of("id", "1"));
-        assertEquals(objectMapper.readTree("{\"id\":\"1\"}"),
-                     objectMapper.readTree(jsonMapper.writeValueAsString(fastest)));
+        assertEquals(jsonMapper.readTree("{\"id\":\"1\"}"),
+                     jsonMapper.readTree(jsonMapper.writeValueAsString(fastest)));
     }
 
-    /**
-     * A TokenBuffer holding an array is what bulkSave receives, and the array shape is what the reported
-     * failure named explicitly.
-     */
     @Test
-    void tokenBufferArrayRoundTripsThroughContinuumsMapper() throws Exception {
+    void tokenBufferArrayRoundTripsThroughTheSharedMapper() {
         String json = "[{\"id\":\"1\"},{\"id\":\"2\"}]";
 
-        TokenBuffer buffer = objectMapper.readValue(json, TokenBuffer.class);
+        TokenBuffer buffer = jsonMapper.readValue(json, TokenBuffer.class);
         TokenBuffer result = jsonMapper.readValue(jsonMapper.writeValueAsString(buffer), TokenBuffer.class);
-
-        assertEquals(objectMapper.readTree(json),
-                     objectMapper.readTree(objectMapper.writeValueAsString(result)));
+        assertEquals(jsonMapper.readTree(json),
+                     jsonMapper.readTree(jsonMapper.writeValueAsString(result)));
     }
 
-    /**
-     * Boot 3 disabled WRITE_DATES_AS_TIMESTAMPS and WRITE_DURATIONS_AS_TIMESTAMPS on the mapper it
-     * auto-configured. Declaring the mapper by hand dropped that, and since Jackson then writes epoch
-     * numbers instead of ISO-8601 it changes both API responses and what the Elasticsearch client
-     * stores, symmetrically enough that reading our own data back still works.
-     * <p>
-     * Structure.created, updated and publishedTimestamp are {@link Date}, so this is not hypothetical.
-     */
     @Test
-    void datesSerializeAsTextRatherThanEpochNumbers() throws Exception {
-        assertEquals("\"2023-11-14T22:13:20.000+00:00\"",
-                     objectMapper.writeValueAsString(new Date(1700000000000L)));
+    void datesSerializeAsTextRatherThanEpochNumbers() {
+        // Boot 3 had to switch these off on Jackson 2; Jackson 3 writes text by default. Pinned so a
+        // mapper customisation cannot quietly put epoch numbers back into API responses and the index.
+        // Jackson 3 spells UTC as Z where Jackson 2 wrote +00:00 - the same instant, and ISO-8601 both
+        // ways, so a consumer parsing the text is unaffected.
+        assertEquals("\"2023-11-14T22:13:20.000Z\"",
+                     jsonMapper.writeValueAsString(new Date(1700000000000L)));
 
         assertEquals("\"2023-11-14T22:13:20Z\"",
-                     objectMapper.writeValueAsString(Instant.ofEpochMilli(1700000000000L)));
+                     jsonMapper.writeValueAsString(Instant.ofEpochMilli(1700000000000L)));
 
-        assertEquals("\"PT1H\"", objectMapper.writeValueAsString(Duration.ofHours(1)));
+        assertEquals("\"PT1H\"", jsonMapper.writeValueAsString(Duration.ofHours(1)));
     }
 }

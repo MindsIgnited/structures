@@ -1,10 +1,9 @@
 package org.kinotic.structures.internal.endpoints.openapi;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.type.TypeFactory;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JavaType;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.type.TypeFactory;
 import io.swagger.v3.core.util.ObjectMapperFactory;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.vertx.core.Vertx;
@@ -38,7 +37,9 @@ import java.util.function.Function;
 @Component
 public class OpenApiVertxRouterFactory {
 
-    private static final ObjectMapper openApiMapper;
+    // swagger-core serializes the OpenAPI model with its own Jackson 2 mapper; that Jackson 2 is
+    // swagger's, arriving with it, and this is the one place Structures touches it
+    private static final com.fasterxml.jackson.databind.ObjectMapper openApiMapper;
 
     static {
         // Specific serializers are added to the ObjectMapper by the swagger implementation
@@ -129,7 +130,7 @@ public class OpenApiVertxRouterFactory {
                                                 ctx.response().putHeader("Content-Type", "application/json");
                                                 ctx.response().end(Buffer.buffer(bytes));
 
-                                            } catch (JsonProcessingException e) {
+                                            } catch (com.fasterxml.jackson.core.JacksonException e) {
                                                 VertxWebUtil.writeException(ctx, e);
                                             }
                                             return null;
@@ -351,7 +352,7 @@ public class OpenApiVertxRouterFactory {
                                                 VertxWebUtil.writeException(ctx, throwable);
                                                 return null;
                                             });
-                  } catch (IOException e) {
+                  } catch (tools.jackson.core.JacksonException e) {
                       VertxWebUtil.writeException(ctx, e);
                   }
               });
@@ -384,7 +385,7 @@ public class OpenApiVertxRouterFactory {
                                                 VertxWebUtil.writeException(ctx, throwable);
                                                 return null;
                                             });
-                  } catch (IOException e) {
+                  } catch (tools.jackson.core.JacksonException e) {
                       VertxWebUtil.writeException(ctx, e);
                   }
               });
@@ -424,7 +425,7 @@ public class OpenApiVertxRouterFactory {
                                           return null;
                                       });
 
-            } catch (IOException e) {
+            } catch (tools.jackson.core.JacksonException e) {
                 VertxWebUtil.writeException(ctx, e);
             }
         });
@@ -502,7 +503,7 @@ public class OpenApiVertxRouterFactory {
                                           VertxWebUtil.writeException(ctx, throwable);
                                           return null;
                                       });
-            } catch (IOException e) {
+            } catch (tools.jackson.core.JacksonException e) {
                 VertxWebUtil.writeException(ctx, e);
             }
         });
@@ -566,7 +567,7 @@ public class OpenApiVertxRouterFactory {
                                                     return null;
                                                 });
                       }
-                  } catch (IOException e) {
+                  } catch (tools.jackson.core.JacksonException e) {
                       VertxWebUtil.writeException(ctx, e);
                   }
               });

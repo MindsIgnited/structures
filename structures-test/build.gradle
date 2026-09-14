@@ -27,7 +27,7 @@ dependencies {
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'io.projectreactor:reactor-test'
-    testImplementation 'com.fasterxml.jackson.core:jackson-databind'
+    testImplementation 'tools.jackson.core:jackson-databind'
     testImplementation "org.testcontainers:testcontainers:${testContainersVersion}"
     testImplementation "org.testcontainers:junit-jupiter:${testContainersVersion}"
 	testImplementation "org.testcontainers:elasticsearch:${testContainersVersion}"

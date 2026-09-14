@@ -62,7 +62,8 @@ public class ReindexStatementExecutor implements StatementExecutor<ReindexStatem
                     s.query(q -> q.queryString(qs -> qs.query(statement.query())));
                 }
                 if (statement.sourceFields() != null) {
-                    s.sourceFields(Arrays.asList(statement.sourceFields().split(",")));
+                    // 8.19 takes a source filter rather than a bare list of fields
+                    s.sourceFields(sc -> sc.filter(f -> f.includes(Arrays.asList(statement.sourceFields().split(",")))));
                 }
                 if (statement.size() != null) {
                     s.size(statement.size());

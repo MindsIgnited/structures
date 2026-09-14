@@ -11,12 +11,12 @@ import org.kinotic.structures.api.config.StructuresProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.json.JsonpMapper;
-import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.json.jackson.Jackson3JsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 
@@ -80,8 +80,8 @@ public class StructuresElasticsearchConfig {
     }
 
     @Bean
-    public JsonpMapper jsonpMapper(ObjectMapper objectMapper){
-        return new JacksonJsonpMapper(objectMapper);
+    public JsonpMapper jsonpMapper(JsonMapper jsonMapper){
+        return new Jackson3JsonpMapper(jsonMapper);
     }
 
 }

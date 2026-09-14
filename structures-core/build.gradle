@@ -36,8 +36,8 @@ dependencies {
 	implementation "org.kinotic:continuum-idl"
 
 	implementation 'com.fasterxml.jackson.core:jackson-annotations'
-	implementation 'com.fasterxml.jackson.core:jackson-core'
-	implementation 'com.fasterxml.jackson.core:jackson-databind'
+	implementation 'tools.jackson.core:jackson-core'
+	implementation 'tools.jackson.core:jackson-databind'
 
 	implementation "com.github.ben-manes.caffeine:caffeine"
 
