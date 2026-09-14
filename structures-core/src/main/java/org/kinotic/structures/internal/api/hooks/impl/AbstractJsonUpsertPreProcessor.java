@@ -7,6 +7,7 @@ import tools.jackson.core.JsonToken;
 import tools.jackson.core.util.ByteArrayBuilder;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectReader;
 import org.kinotic.continuum.idl.api.schema.decorators.C3Decorator;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.EntityContext;
@@ -33,6 +34,8 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
 
     protected final StructuresProperties structuresProperties;
     protected final ObjectMapper objectMapper;
+    /** Reads a single field value off the streaming parser; see the constructor */
+    private final ObjectReader fieldReader;
     protected final Structure structure;
     // Map of json path to decorator logic
     private final Map<String, DecoratorLogic> fieldPreProcessors;
@@ -43,17 +46,12 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
                                           Structure structure,
                                           Map<String, DecoratorLogic> fieldPreProcessors) {
         this.structuresProperties = structuresProperties;
+        this.objectMapper = objectMapper;
         // This reads one field value at a time off a parser positioned mid-stream, and Jackson 3 fails
-
-        // a read that leaves tokens behind it by default (FAIL_ON_TRAILING_TOKENS). Rebuilt from the
-
-        // shared mapper so every other setting is the configured one; only that check is off, here.
-
-        this.objectMapper = objectMapper.rebuild()
-
-                                        .disable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-
-                                        .build();
+        // a read that leaves tokens behind it by default (FAIL_ON_TRAILING_TOKENS). A reader from the
+        // shared mapper with that one check off keeps the mapper's caches and every other setting -
+        // where rebuilding a mapper here would cost a full mapper per structure per cache load.
+        this.fieldReader = objectMapper.reader().without(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.structure = structure;
         this.fieldPreProcessors = fieldPreProcessors;
     }
@@ -75,12 +73,14 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
         int objectDepth = 0;
         int arrayDepth = 0;
 
-        try(JsonParser jsonParser = createParser(json)) {
+        // The generator is closed with the parser: a generator returns its buffers to Jackson's pool
+        // only on close, and one that is merely flushed leaves a fresh 8 KB buffer behind per call
+        ByteArrayBuilder byteArrayBuilder = new ByteArrayBuilder();
+        try(JsonParser jsonParser = createParser(json);
+            JsonGenerator jsonGenerator = objectMapper.createGenerator(byteArrayBuilder, JsonEncoding.UTF8)) {
             String currentId = null;
             String currentTenantId = null;
             String currentVersion = null;
-            ByteArrayBuilder byteArrayBuilder = new ByteArrayBuilder();
-            JsonGenerator jsonGenerator = objectMapper.createGenerator(byteArrayBuilder, JsonEncoding.UTF8);
 
             while (jsonParser.nextToken() != null) {
 
@@ -107,7 +107,7 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
 
                         C3Decorator decorator = preProcessorLogic.getDecorator();
                         UpsertFieldPreProcessor<C3Decorator, Object, Object> preProcessor = preProcessorLogic.getProcessor();
-                        Object input = objectMapper.readValue(jsonParser, preProcessor.supportsFieldType());
+                        Object input = fieldReader.forType(preProcessor.supportsFieldType()).readValue(jsonParser);
                         Object value = preProcessor.process(structure, fieldName, decorator, input, context);
 
                         // We exclude the version field from the data to be persisted
@@ -174,7 +174,7 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
                             // since the tenant id field is already present check its value to make sure it is null
                             // or matches the logged in tenant
                             jsonParser.nextToken(); // move to value token
-                            currentTenantId = objectMapper.readValue(jsonParser, String.class);
+                            currentTenantId = fieldReader.forType(String.class).readValue(jsonParser);
                             if(currentTenantId != null && !currentTenantId.equals(context.getParticipant().getTenantId())){
                                 throw new IllegalArgumentException("Tenant Id invalid for logged in participant");
                             }

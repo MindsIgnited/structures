@@ -40,6 +40,12 @@ configurations {
     }
 }
 
+// The Boot BOM manages Netty below what Vert.x 5.1 was built against (4.2.9 against 4.2.16), and the
+// gap is a NoSuchMethodError on the event loop the first time a client upgrades to HTTP/2 - which
+// nothing speaking HTTP/1.1 ever sees. Overriding the BOM's property keeps the whole Netty set
+// consistent at the version Vert.x asks for. Pinned by HttpTransportTest.
+ext['netty.version'] = nettyVersion
+
 dependencyManagement {
     imports {
         mavenBom "org.springframework.boot:spring-boot-dependencies:${springBootVersion}"
@@ -99,7 +105,6 @@ dependencyManagement {
 
 
         // must be overridden for the elastic client
-        dependency 'jakarta.json:jakarta.json-api:2.0.1'
 
         // JWT and OIDC dependencies
         dependency "io.jsonwebtoken:jjwt-api:${jsonwebtokenVersion}"

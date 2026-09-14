@@ -1,6 +1,7 @@
 package org.kinotic.structures.internal.serializer;
 
 import co.elastic.clients.elasticsearch._types.FieldValue;
+import jakarta.json.JsonValue;
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.databind.ValueSerializer;
 import tools.jackson.databind.SerializationContext;
@@ -33,7 +34,18 @@ public class FieldValueSerializer extends ValueSerializer<FieldValue> {
                 jsonGenerator.writeNullProperty("value");
                 break;
             case Any :
-                jsonGenerator.writePOJOProperty("value", field._get());
+                // Arbitrary JSON held as JsonData, in one of two forms: parsed JSON (what the deserializer
+                // below and the Elasticsearch client produce), or a Java object it was built from, which
+                // JsonData can only render with a mapper it does not have here. Either way it is written as
+                // the JSON it stands for, which is what FieldValueDeserializer reads back.
+                jsonGenerator.writeName("value");
+                Object any = field.anyValue().to(Object.class);
+                if (any instanceof JsonValue jsonValue) {
+                    jsonGenerator.writeRawValue(jsonValue.toString());
+                } else {
+                    jsonGenerator.writePOJO(any);
+                }
+                break;
             default :
                 throw new IllegalStateException("Unknown kind " + field._kind());
         }

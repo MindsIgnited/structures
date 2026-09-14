@@ -82,7 +82,12 @@ describe('K8s Local Delivery Tests', () => {
                 podNames.map(name => [name, countInPodLogs(context, namespace, name, EXECUTION_MARKER)])
             )
 
-            await k8s.connectToPod(podIndex)
+            // The helper's own list is unfiltered, so the pod is resolved by name rather than by
+            // position: a terminating pod that sorts earlier would otherwise shift every index and
+            // have the calls made to one pod and attributed to another
+            const helperIndex = k8s.getPodNames().indexOf(podNames[podIndex])
+            expect(helperIndex, `${podNames[podIndex]} should be in the helper's pod list`).toBeGreaterThanOrEqual(0)
+            await k8s.connectToPod(helperIndex)
             const proxy = Continuum.serviceProxy(ECHO_SERVICE)
 
             const servingNodes = new Set<string>()

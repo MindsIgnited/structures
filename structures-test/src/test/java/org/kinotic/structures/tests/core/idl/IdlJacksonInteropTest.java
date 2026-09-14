@@ -17,7 +17,7 @@ import org.kinotic.continuum.idl.api.schema.decorators.C3Decorator;
 import org.kinotic.structures.api.domain.FastestType;
 import org.kinotic.structures.api.domain.RawJson;
 import org.kinotic.structures.api.domain.Structure;
-import org.kinotic.structures.api.domain.idl.decorators.FlattenedDecorator;
+import org.kinotic.structures.api.domain.Application;
 import co.elastic.clients.elasticsearch._types.FieldValue;
 import co.elastic.clients.json.JsonData;
 import org.kinotic.structures.api.domain.idl.decorators.EntityServiceDecoratorsDecorator;
@@ -113,8 +113,8 @@ class IdlJacksonInteropTest extends ElasticTestBase {
         // {"published": null} keeps working.
         Structure structure = jsonMapper.readValue("{\"name\":\"Person\",\"published\":null}", Structure.class);
         assertEquals(false, structure.isPublished());
-        FlattenedDecorator decorator = jsonMapper.readValue("{\"depthLimit\":null,\"index\":null}", FlattenedDecorator.class);
-        assertEquals(0, decorator.getDepthLimit());
+        Application application = jsonMapper.readValue("{\"id\":\"app\",\"enableGraphQL\":null}", Application.class);
+        assertEquals(false, application.isEnableGraphQL());
     }
 
     @Test

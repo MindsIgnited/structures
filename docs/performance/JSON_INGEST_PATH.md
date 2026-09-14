@@ -45,7 +45,9 @@ deleted. Ingest is back to a single parse:
 bytes -> J3 parse -> TokenBuffer -> asParser -> ByteArrayBuilder -> RawJson
 ```
 
-which is the pre-upgrade shape, on the new mapper. `TokenBuffer` is Jackson 3's
+which is the pre-upgrade shape, on the new mapper - one parse on the pre-processor path; the
+non-locking `save`/`update` path still rebuilds a tree to return the entity, see the follow-ups.
+`TokenBuffer` is Jackson 3's
 (`tools.jackson.databind.util.TokenBuffer`); the `JsonEntitiesService` signatures are otherwise as
 they were. The wire format is unchanged - `TokenBuffer` and `RawJson` both serialize as raw JSON -
 so the JS clients, the CLI and the e2e suite see no difference, and Jackson 3 writes dates as text
@@ -88,21 +90,25 @@ STRUCTURES_BENCHMARK=true ./gradlew :structures-test:test --tests '*JsonPathBenc
 
 Jackson 3 is at parity with the Jackson 2 direct baseline on every path and size, within noise. Set
 against the bridge - 14.4 MB and 6.95 ms to read the 830 KB payload - the 4.5x allocation on the
-write path is gone, not reduced. The ingest column is the number that matters for bulk saves: an
-871 KB batch costs 2.8 MB and 1.84 ms end to end from a `TokenBuffer`, which is the buffer itself
-plus the streaming copy to `RawJson`; the difference between the *read* and *ingest* cells is the
-whole pre-processor. The benchmark also checks that every path still produces the input JSON, so a
-change that made a path fast by making it wrong fails rather than looks like a win.
+write path is gone, not reduced. The *ingest* cell is the pre-processor alone: the `TokenBuffer` it
+starts from is built outside the timing, so what a bulk save costs end to end is the *read* cell plus
+the *ingest* cell - about 4.4 MB and 3.2 ms for an 871 KB batch. The benchmark exercises
+`MultiTenancyType.NONE` with an id decorator; the tenant and version decorator branches are not in
+these numbers. It also checks that every path still produces the input JSON, so a change that made a
+path fast by making it wrong fails rather than looks like a win.
 
 ## Follow-ups worth their own change
 
-- **Version stamping still builds a tree per entity.** `updateVersionForEntity` does
-  `readTree -> put -> write` for both the `RawJson` and the `TokenBuffer` case, a full tree per
-  saved entity on the optimistic locking path. Injecting the field with a streaming copy would
-  remove it. Probably worth as much as the bridge removal on the write path.
-- **`RawJsonSerializer` converts `byte[]` to `String`** before `writeRawValue`, a 2x allocation on
-  the response path. Jackson 3's `writeRawValue` takes `String`/`char[]` only; writing bytes
-  directly would need the generator's underlying stream.
+- **A tree per returned entity on `save`/`update`.** With optimistic locking off (the default),
+  `DefaultEntityService.postProcessSaveOrUpdate` does `readTree -> writeValue(TokenBuffer)` to hand
+  the caller back the type it sent; with it on, `updateVersionForEntity` does `readTree -> put ->
+  write` to stamp the version. Either way it is a full parse and tree per single-entity save on top
+  of the pre-processor. Injecting the version with a streaming copy, and returning the buffer that
+  was sent, would remove both. Probably worth as much as the bridge removal on that path.
+- **`RawJson` converts `byte[]` to `String` on write** - in `RawJsonSerializer` and in
+  `RawJson.serialize` on the Elasticsearch index path - for a generator that re-encodes it. Jackson
+  3's `JsonGenerator.writeRawValue(SerializableString)` writes bytes straight into the output buffer,
+  so a small `byte[]`-backed `SerializableString` removes the decode and encode pass per document.
 - **`TokenBuffer` → `RawJson` on `JsonEntitiesService` (4.0.0, if ever).** `TokenBuffer` is a full
   in-memory copy of every payload that the upsert path turns into `RawJson` and, for `save` and
   `update`, converts back to satisfy the signature. Taking `RawJson` on the interface would remove

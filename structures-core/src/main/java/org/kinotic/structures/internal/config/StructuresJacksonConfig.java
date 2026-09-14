@@ -22,9 +22,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.boot.jackson.autoconfigure.JsonMapperBuilderCustomizer;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.type.classreading.MetadataReader;
 import tools.jackson.core.Version;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.jsontype.NamedType;
 import tools.jackson.databind.module.SimpleAbstractTypeResolver;
@@ -49,6 +51,17 @@ import java.util.Set;
 public class StructuresJacksonConfig {
 
     private static final Logger log = LoggerFactory.getLogger(StructuresJacksonConfig.class);
+
+    /**
+     * Jackson 3 fails a JSON null bound to a primitive field; Jackson 2, which every client of the
+     * 3.5 line was written against, coerced it to false or 0. A client sending {"published": null}
+     * keeps working. The other Jackson 3 default changes are kept: dates as text is what Boot 3 had
+     * configured anyway, and FAIL_ON_TRAILING_TOKENS is handled where Structures reads mid-stream.
+     */
+    @Bean
+    public JsonMapperBuilderCustomizer structuresJacksonDefaults(){
+        return builder -> builder.disable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES);
+    }
 
     @Bean
     public SimpleModule structuresJacksonModule(ApplicationContext applicationContext){
