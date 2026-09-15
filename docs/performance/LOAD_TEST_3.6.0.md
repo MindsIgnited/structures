@@ -95,7 +95,11 @@ minutes old). `load-testing.person` started at 0 documents (3 shards, 2 replicas
   at 79 ops/s against its nominal 50/s cap; see below). 1,106,420 documents indexed, about 1,800/s;
   Elasticsearch counted 2,212,840 index operations across the two nodes' primaries and replicas,
   which is the measure the first run's 2,097,618 used, and 66,051 shard-level search queries.
-- No pod restarts. No WARN or ERROR in any server pod's log for the window.
+- No pod restarts. **The log scan covered one pod of three**: it used `kubectl logs deploy/...`,
+  which reads a single pod, and the run's pods had been replaced by the next deploy before that was
+  caught, so the other two pods' logs for the window are gone. The one pod scanned had no WARN or
+  ERROR; for the other two, the evidence is 0 client errors across 95,497 operations and 0 restarts.
+  LOAD_TESTING.md now shows the per-pod command.
 - Structures pods: 86, 103 and 288 m CPU at the median, peaks 231, 265 and 965 m; memory 767, 877
   and 797 MiB at the start, 1,130, 1,162 and 1,275 MiB at the end. Elasticsearch 250 and 273 m
   median, 482 m peak, heap 24-36 % at the end. Ingress 23 m median, 28 m peak.
