@@ -146,6 +146,21 @@ Vert.x 5.1.8, Jackson 3, continuum 3.1.0, the four processes above for ten minut
   growing into its heap looks the same as a slow leak at this length; a longer soak at the same
   load would settle it.
 
+**3.6.0 final image** (`3.6.0-pr11.1e30e55`, continuum 3.1.0 release, [same record](docs/performance/LOAD_TEST_3.6.0.md),
+second section), on a cluster recreated from nothing so the migration job ran against an empty
+Elasticsearch, after the Gradle suite (109), e2e native + openapi (55) and k8s (5) on that cluster:
+
+- 95,497 operations at ~155 requests/s, 1,106,420 documents indexed from an empty index,
+  **0 failures**, no restarts, no `WARN` or `ERROR` logged.
+- Same shape as the candidate run: STOMP search p50 9 ms / p95 27 ms; STOMP bulk save p50 27 ms /
+  p95 79 ms; OpenAPI save p50 28 ms / p95 83 ms; OpenAPI reads p95 16-23 ms. Flat after warm-up,
+  one write-path spike window (Elasticsearch refresh or merge), as before.
+- Memory rose 285-478 MiB per pod again over the ten minutes; the soak question stands. One pod
+  carried the three sticky STOMP connections and ran about three times hotter than the others.
+- The generator's nominal rate cap leaks when the queue keeps draining (p-queue's fixed window
+  restarts); the OpenAPI process issued 79 ops/s against a 50/s cap. Compare observed rates, not
+  caps, between runs.
+
 ## What a release run should add
 
 - The same four processes, same rates, on the candidate image, compared against the previous
