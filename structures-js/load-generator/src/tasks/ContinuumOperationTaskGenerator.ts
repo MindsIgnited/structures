@@ -19,9 +19,12 @@ class ContinuumTask implements ITask{
 
     async execute(): Promise<void> {
         await this.continuumGenerator.awaitConnectionComplete()
-        const ret = await this.delegate.execute()
-        this.continuumGenerator.markTaskComplete()
-        return ret
+        try {
+            return await this.delegate.execute()
+        } finally {
+            // Settled, not succeeded: Disconnect waits for every task to be over, and a failed one is
+            this.continuumGenerator.markTaskComplete()
+        }
     }
 }
 

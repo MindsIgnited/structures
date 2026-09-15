@@ -39,6 +39,11 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
     protected final Structure structure;
     // Map of json path to decorator logic
     private final Map<String, DecoratorLogic> fieldPreProcessors;
+    // Readers bound to each decorated field's type, and to String for the tenant id field. forType()
+    // on an unbound reader allocates a new ObjectReader per call, which on this path is per field
+    // per entity; bound once here it is a plain read.
+    private final Map<String, ObjectReader> boundFieldReaders;
+    private final ObjectReader stringReader;
 
 
     public AbstractJsonUpsertPreProcessor(StructuresProperties structuresProperties,
@@ -54,6 +59,11 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
         this.fieldReader = objectMapper.reader().without(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.structure = structure;
         this.fieldPreProcessors = fieldPreProcessors;
+        this.boundFieldReaders = new HashMap<>();
+        for (Map.Entry<String, DecoratorLogic> entry : fieldPreProcessors.entrySet()) {
+            boundFieldReaders.put(entry.getKey(), fieldReader.forType(entry.getValue().getProcessor().supportsFieldType()));
+        }
+        this.stringReader = fieldReader.forType(String.class);
     }
 
     protected abstract JsonParser createParser(T input);
@@ -107,7 +117,7 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
 
                         C3Decorator decorator = preProcessorLogic.getDecorator();
                         UpsertFieldPreProcessor<C3Decorator, Object, Object> preProcessor = preProcessorLogic.getProcessor();
-                        Object input = fieldReader.forType(preProcessor.supportsFieldType()).readValue(jsonParser);
+                        Object input = boundFieldReaders.get(currentJsonPath).readValue(jsonParser);
                         Object value = preProcessor.process(structure, fieldName, decorator, input, context);
 
                         // We exclude the version field from the data to be persisted
@@ -174,7 +184,7 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
                             // since the tenant id field is already present check its value to make sure it is null
                             // or matches the logged in tenant
                             jsonParser.nextToken(); // move to value token
-                            currentTenantId = fieldReader.forType(String.class).readValue(jsonParser);
+                            currentTenantId = stringReader.readValue(jsonParser);
                             if(currentTenantId != null && !currentTenantId.equals(context.getParticipant().getTenantId())){
                                 throw new IllegalArgumentException("Tenant Id invalid for logged in participant");
                             }

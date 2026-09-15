@@ -29,6 +29,7 @@ export class TaskExecutionService {
     private startedAt = 0
     private reportTimer: NodeJS.Timeout | null = null
     private loggedErrors = 0
+    private stopRequested = false
     private stopping: Promise<void> | null = null
 
     constructor(concurrency: number,
@@ -48,10 +49,11 @@ export class TaskExecutionService {
         this.taskGenerator = taskGenerator
         this.options = options
 
-        this.queue.on('error', error => {
-            console.error(error, "Error executing task")
-        })
+        // Failures are recorded and logged in run(); p-queue also emits them as 'error' events, and
+        // a listener there would print every one a second time, past the cap run() keeps.
 
+        // Fires whenever the queue drains, including from clear() while stopping, so hasMoreTasks()
+        // has to say no once a stop is under way or the paused queue is refilled and never idles
         this.queue.on('empty', async () => {
             let tasksAdded = false
             if(this.hasMoreTasks()){
@@ -84,6 +86,7 @@ export class TaskExecutionService {
 
     public async stop(): Promise<void> {
         if (this.started && !this.stopping) {
+            this.stopRequested = true
             this.stopping = (async () => {
                 console.log('Stopping Task Execution Service')
                 if (this.reportTimer) {
@@ -122,6 +125,9 @@ export class TaskExecutionService {
     }
 
     private hasMoreTasks(): boolean {
+        if (this.stopRequested) {
+            return false
+        }
         if (this.options.durationSeconds > 0
             && (performance.now() - this.startedAt) / 1000 >= this.options.durationSeconds) {
             return false

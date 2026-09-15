@@ -56,7 +56,10 @@ public class StructuresJacksonConfig {
      * Jackson 3 fails a JSON null bound to a primitive field; Jackson 2, which every client of the
      * 3.5 line was written against, coerced it to false or 0. A client sending {"published": null}
      * keeps working. The other Jackson 3 default changes are kept: dates as text is what Boot 3 had
-     * configured anyway, and FAIL_ON_TRAILING_TOKENS is handled where Structures reads mid-stream.
+     * configured anyway, FAIL_ON_TRAILING_TOKENS is handled where Structures reads mid-stream, and
+     * SORT_PROPERTIES_ALPHABETICALLY (on by default in Jackson 3, and Boot 4 leaves it on) means
+     * POJOs serialize with their properties in alphabetical order; nothing in Structures or its
+     * clients depends on property order, and RawJson bypasses it.
      */
     @Bean
     public JsonMapperBuilderCustomizer structuresJacksonDefaults(){

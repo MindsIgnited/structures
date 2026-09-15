@@ -26,7 +26,6 @@ import org.kinotic.structures.internal.api.services.sql.MapParameterHolder;
 import org.kinotic.structures.internal.utils.VertxWebUtil;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -38,7 +37,9 @@ import java.util.function.Function;
 public class OpenApiVertxRouterFactory {
 
     // swagger-core serializes the OpenAPI model with its own Jackson 2 mapper; that Jackson 2 is
-    // swagger's, arriving with it, and this is the one place Structures touches it
+    // swagger's, arriving with it. The other Jackson 2 touch point in this file is indirect: the
+    // admin query bodies read with ctx.body().asPojo(...) go through Vert.x's own Jackson 2 codec,
+    // pinned by VertxJsonCodecTest.
     private static final com.fasterxml.jackson.databind.ObjectMapper openApiMapper;
 
     static {

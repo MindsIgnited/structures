@@ -56,7 +56,6 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     private final ObjectMapper objectMapper;
     private final HttpRequest<Buffer> sqlQueryRequest;
     private final HttpRequest<Buffer> sqlTranslateRequest;
-    private final Vertx vertx;
     private final WebClient webClient;
     private final Cache<String, List<ElasticColumn>> columnsCache;
 
@@ -66,7 +65,6 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                                      Vertx vertx,
                                      DefaultCaffeineCacheFactory cacheFactory) {
         this.objectMapper = objectMapper;
-        this.vertx = vertx;
         this.columnsCache = cacheFactory.<String, List<ElasticColumn>>newBuilder()
                 .name("elasticColumnsCache")
                 .expireAfterAccess(Duration.ofMinutes(35))

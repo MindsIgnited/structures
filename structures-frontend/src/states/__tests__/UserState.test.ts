@@ -51,7 +51,7 @@ vi.mock('@/util/config', () => ({configService: {getOidcProviderByName: vi.fn(as
 vi.mock('@/util/tokenCookie', () => ({selectToken: () => 'token', writeTokenCookie: vi.fn()}))
 vi.mock('@/pages/login/OidcConfiguration', () => ({createUserManagerSettings: vi.fn(async () => ({}))}))
 
-import {UserState} from '../IUserState'
+import {type IUserState, UserState} from '../IUserState'
 
 const connectedInfo = {sessionId: 'session-1', replyToId: 'reply-1', participant: {id: 'admin', roles: ['ADMIN'], metadata: new Map()}}
 
@@ -98,6 +98,25 @@ describe('UserState and the connection underneath it', () => {
         await Promise.resolve()
 
         expect(state.isAuthenticated(), 'the session is over once the connection is').toBe(false)
+    })
+
+    it('the reason a session ended is kept for the login page and cleared by the next login', async () => {
+        // The login page reads the state through IUserState, so the reason has to be on the
+        // interface; and once the user has logged in again it is no longer why they are here
+        mocks.connect.mockImplementation(async () => { mocks.link.active = true; return connectedInfo })
+        const state: IUserState = new UserState()
+        await state.authenticate('admin', 'structures')
+        expect(state.connectionLost).toBeNull()
+
+        mocks.link.active = false
+        const ended = Object.assign(new ContinuumError('Could not authenticate with the given Session id'), {name: 'ConnectionRefusedError'})
+        mocks.fatalErrors.next(ended)
+        await Promise.resolve()
+        expect(state.connectionLost, 'the login page can say why the user is back there').toBe(ended)
+
+        await state.authenticate('admin', 'structures')
+        expect(state.connectionLost, 'a new session is not a lost one').toBeNull()
+        expect(state.isAuthenticated()).toBe(true)
     })
 
     it('logging out is not fatal', async () => {

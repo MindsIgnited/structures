@@ -37,11 +37,6 @@ configurations {
         canBeResolved = true
         canBeConsumed = true
     }
-    // continuum is consumed as a -SNAPSHOT between releases; Gradle would otherwise keep whichever
-    // snapshot it first saw for 24 hours (CI's restored cache included), so every build re-checks.
-    all {
-        resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
-    }
 }
 
 // The Boot BOM manages Netty below what Vert.x was built against (vertx-dependencies <netty.version>),

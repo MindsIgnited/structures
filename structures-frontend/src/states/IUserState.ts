@@ -35,6 +35,8 @@ export interface IUserState {
     handleOidcLogin(user: User, provider: string): Promise<void>
     restoreSession(): Promise<boolean>
     logout(): Promise<void>
+    /** Why the last session ended without the user asking, for the login page to say so; null once they log in again */
+    readonly connectionLost: Error | null
 }
 
 export class UserState implements IUserState {
@@ -64,6 +66,7 @@ export class UserState implements IUserState {
             this.connectedInfo = await Continuum.connect(connectionInfo)
             this.authenticated = true
             this.accessDenied = false
+            this.connectionLost = null
             this.watchConnection()
             // Note: We intentionally do NOT store basic auth credentials in cookies
             // This is more secure - users must re-login on page refresh
@@ -235,6 +238,7 @@ export class UserState implements IUserState {
 
         this.authenticated = true
         this.accessDenied = false
+        this.connectionLost = null
         this.oidcUser = user
 
         // Best-effort persistence: a storage failure must not tear down the

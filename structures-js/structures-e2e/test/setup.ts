@@ -96,9 +96,10 @@ export async function setup(project: TestProject) {
         // @ts-ignore
         project.provide('STRUCTURES_USE_SSL', useSSL)
         // STRUCTURES_E2E_OPENAPI_BASE_URL is separate from the STOMP target on purpose: the KinD
-        // ingress routes /api and /graphql but not /api-docs, which falls through to the UI's catch
-        // all and answers 200 with index.html, so the OpenAPI tests have to be pointed straight at a
-        // pod even while the rest of the suite goes through nginx
+        // ingress strips the /api prefix it matches on, while the server's router keeps it, so
+        // through nginx the OpenAPI routes sit at /api/api/... and the spec at /api/api-docs/...,
+        // not where the tests (and the OpenAPI clients) expect them. Pointing the OpenAPI tests
+        // straight at a pod keeps their paths the ones the server serves.
         const openApiBaseUrl = process.env.STRUCTURES_E2E_OPENAPI_BASE_URL
             || `${useSSL ? 'https' : 'http'}://${host}`
                + `${(useSSL && openApiPort === 443) || (!useSSL && openApiPort === 80)
