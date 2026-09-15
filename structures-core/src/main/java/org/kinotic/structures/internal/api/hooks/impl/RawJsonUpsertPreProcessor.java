@@ -1,8 +1,8 @@
 package org.kinotic.structures.internal.api.hooks.impl;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.async.ByteArrayFeeder;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.async.ByteArrayFeeder;
+import tools.jackson.databind.ObjectMapper;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.EntityContext;
@@ -11,7 +11,7 @@ import org.kinotic.structures.api.domain.Structure;
 import org.kinotic.structures.internal.api.hooks.DecoratorLogic;
 import org.kinotic.structures.internal.api.services.EntityHolder;
 
-import java.io.IOException;
+import tools.jackson.core.JacksonException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -34,11 +34,11 @@ public class RawJsonUpsertPreProcessor extends AbstractJsonUpsertPreProcessor<Ra
         try {
             byte[] bytes = input.data();
             JsonParser jsonParser = objectMapper.createNonBlockingByteArrayParser();
-            ByteArrayFeeder feeder = (ByteArrayFeeder) jsonParser.getNonBlockingInputFeeder();
+            ByteArrayFeeder feeder = (ByteArrayFeeder) jsonParser.nonBlockingInputFeeder();
             feeder.feedInput(bytes, 0, bytes.length);
             feeder.endOfInput();
             return jsonParser;
-        } catch (IOException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException(e);
         }
     }

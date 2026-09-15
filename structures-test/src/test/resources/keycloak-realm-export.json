@@ -1,5 +1,6 @@
 {
   "realm": "test",
+  "sslRequired": "none",
   "enabled": true,
   "clients": [
     {

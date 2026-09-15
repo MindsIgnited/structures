@@ -9,7 +9,7 @@
     "ui-test": "vitest --ui --mode development"
   },
   "dependencies": {
-    "@kinotic/continuum-client": "2.14.10",
+    "@kinotic/continuum-client": "3.0.0",
     "@kinotic/continuum-idl": "^2.0.4",
     "@kinotic/structures-api": "link:../structures-api",
     "@stomp/rx-stomp": "2.1.0",

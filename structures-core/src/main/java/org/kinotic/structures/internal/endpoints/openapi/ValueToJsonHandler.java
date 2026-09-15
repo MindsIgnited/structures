@@ -1,7 +1,7 @@
 package org.kinotic.structures.internal.endpoints.openapi;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.RoutingContext;
 import lombok.RequiredArgsConstructor;
@@ -49,7 +49,7 @@ class ValueToJsonHandler<T> implements BiFunction<T, Throwable, Void> {
                         context.response().setStatusCode(200);
                         byte[] bytes = objectMapper.writeValueAsBytes(value);
                         context.response().end(Buffer.buffer(bytes));
-                    } catch (JsonProcessingException e) {
+                    } catch (JacksonException e) {
                         VertxWebUtil.writeException(context, e);
                     }
                 }

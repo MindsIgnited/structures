@@ -177,16 +177,17 @@ Deploy structures-server and its dependencies to the cluster.
 1. Verifies cluster exists and is accessible
 2. Adds required Helm repositories (Bitnami, etc.)
 3. Deploys NGINX Ingress Controller
-4. Deploys Elasticsearch (always, unless --no-deps)
-5. **If `--with-keycloak` is specified:**
+4. Deploys metrics-server (`kubectl top`, which the load-test tooling samples)
+5. Deploys Elasticsearch (always, unless --no-deps)
+6. **If `--with-keycloak` is specified:**
    - Deploys PostgreSQL (for Keycloak backend)
    - Creates Keycloak realm ConfigMap from `docker-compose/keycloak-test-realm.json`
    - Deploys Keycloak with OIDC configuration
    - Enables OIDC in structures-server (`oidc.enabled=true`)
-6. Builds and loads structures-server image
-7. Deploys structures-server via Helm
-8. Waits for all pods to be ready
-9. Displays access URLs and next steps
+7. Builds and loads structures-server image
+8. Deploys structures-server via Helm
+9. Waits for all pods to be ready
+10. Displays access URLs and next steps
 
 **Time:** ~3 minutes (without Keycloak), ~5 minutes (with Keycloak)
 
@@ -448,7 +449,8 @@ Other services have their own values files in `dev-tools/kind/config/<service>/v
 - `elasticsearch/values.yaml` - Elasticsearch configuration
 - `postgresql/values.yaml` - PostgreSQL (Keycloak database)
 - `keycloak/values.yaml` - Keycloak OIDC provider
-- `ingress-nginx/values.yaml` - NGINX Ingress Controller
+- `ingress-nginx/values.yaml` - NGINX Ingress Controller (sized for load runs)
+- `metrics-server/values.yaml` - metrics-server (accepts KinD's self-signed kubelet certificates)
 - `cert-manager/values.yaml` - TLS certificate management
 
 ### Environment Variables

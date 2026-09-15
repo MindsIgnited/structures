@@ -14,6 +14,13 @@ generateGrammarSource {
 	enabled = project.gradle.startParameter.taskNames.contains(':structures-sql:generateGrammarSource')
 }
 
+// Since Gradle 9 the antlr plugin derives the generated source root from outputDirectory minus
+// the package (src/main/java again) and registers it as a second java source dir. Compilation
+// dedupes by file, but the sources jar walks both roots and fails on the duplicate entries.
+tasks.named('sourcesJar') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 // Configure Javadoc to exclude generated files
 tasks.withType(Javadoc) {
     exclude '**/parser/StructuresSQL*.java'
@@ -31,8 +38,8 @@ dependencies {
     api 'org.elasticsearch.client:elasticsearch-rest-client'
     
     // Jackson dependencies
-    api 'com.fasterxml.jackson.core:jackson-databind'
-    api 'com.fasterxml.jackson.core:jackson-core'
+    api 'tools.jackson.core:jackson-databind'
+    api 'tools.jackson.core:jackson-core'
     api 'com.fasterxml.jackson.core:jackson-annotations'
 
     // Parsing dependencies

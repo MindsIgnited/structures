@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@faker-js/faker": "^10.2.0",
-    "@kinotic/continuum-client": "^2.14.10",
+    "@kinotic/continuum-client": "^3.0.0",
     "@kinotic/continuum-idl": "^2.0.4",
     "@kinotic/structures-api": "^3.5.3",
     "@kinotic/structures-cli": "^3.5.3",
@@ -46,5 +46,12 @@
     "uuid": "^13.0.0",
     "ws": "^8.19.0"
   },
-  "packageManager": "pnpm@10.34.1"
+  "packageManager": "pnpm@10.34.1",
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "@kinotic/structures-api>@kinotic/continuum-client": "3"
+      }
+    }
+  }
 }

@@ -14,6 +14,12 @@ OpenID Connect authentication implementation and provider configuration.
 - [Microsoft Entra ID](./oidc/entra/) - Microsoft/Azure AD configuration and troubleshooting
 - [Social Login](./oidc/social/) - Social identity provider integration
 
+### ⚡ [Performance](./performance/)
+
+Data path performance work and plans.
+
+- [JSON Ingest Path](./performance/JSON_INGEST_PATH.md) - Plan to remove the payload copies on entity ingest (4.0.0)
+
 ### 🔄 [Clustering & High Availability](./clustering/)
 
 Apache Ignite cluster configuration and cache management.

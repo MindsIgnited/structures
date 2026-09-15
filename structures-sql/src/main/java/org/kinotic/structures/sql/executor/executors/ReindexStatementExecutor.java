@@ -62,7 +62,8 @@ public class ReindexStatementExecutor implements StatementExecutor<ReindexStatem
                     s.query(q -> q.queryString(qs -> qs.query(statement.query())));
                 }
                 if (statement.sourceFields() != null) {
-                    s.sourceFields(Arrays.asList(statement.sourceFields().split(",")));
+                    // 8.19 takes a source filter rather than a bare list of fields
+                    s.sourceFields(sc -> sc.filter(f -> f.includes(Arrays.asList(statement.sourceFields().split(",")))));
                 }
                 if (statement.size() != null) {
                     s.size(statement.size());
@@ -109,6 +110,9 @@ public class ReindexStatementExecutor implements StatementExecutor<ReindexStatem
                 future.completeExceptionally(ex);
                 return;
             }
+            // Anything thrown below would escape this callback and strand the future, since the
+            // deadline is only ever checked when a poll comes back
+            try {
             if (taskResp.completed()) {
                 if(taskResp.error() != null) {
                     String errorDetails = buildErrorDetails(taskResp.error());
@@ -122,6 +126,9 @@ public class ReindexStatementExecutor implements StatementExecutor<ReindexStatem
                 // Schedule next poll
                 CompletableFuture.delayedExecutor(2, java.util.concurrent.TimeUnit.SECONDS)
                     .execute(() -> pollTaskRecursive(taskId, future, start, timeout));
+            }
+            } catch (Throwable t) {
+                future.completeExceptionally(t);
             }
         });
     }

@@ -1,0 +1,20 @@
+# metrics-server Helm Values for KinD
+# Chart: metrics-server/metrics-server
+# Repository: https://kubernetes-sigs.github.io/metrics-server/
+#
+# Provides the metrics API behind `kubectl top pods` / `kubectl top nodes`, which the load-test
+# tooling (docs/performance) samples for per-pod CPU and memory during a run.
+
+args:
+  # KinD's kubelets present self-signed certificates; metrics-server must accept them to scrape
+  - --kubelet-insecure-tls
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

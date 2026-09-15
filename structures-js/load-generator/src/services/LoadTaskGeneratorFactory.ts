@@ -1,6 +1,8 @@
 import {LoadTestConfig} from '@/config/LoadTestConfig.js'
 import {StructuresConnectionConfig} from '@/config/StructuresConnectionConfig.js'
 import { CreateComplexStructuresTaskGenerator } from '@/tasks/schema/CreateComplexStructuresTaskGenerator'
+import {CreatePersonStructureTaskGenerator} from '@/tasks/schema/CreatePersonStructureTaskGenerator.js'
+import {OpenApiMixedTaskGenerator} from '@/tasks/OpenApiMixedTaskGenerator.js'
 import {FindTaskGenerator} from '@/tasks/FindTaskGenerator.js'
 import {ITaskGenerator} from '@/tasks/ITaskGenerator.js'
 import {ITaskGeneratorFactory} from '@/tasks/ITaskGeneratorFactory.js'
@@ -10,6 +12,7 @@ import {MultiTenantTaskGeneratorDelegator, TenantId} from '@/tasks/MultiTenantTa
 import {SaveTaskGenerator} from '@/tasks/SaveTaskGenerator.js'
 import {SearchPeopleTaskGenerator} from '@/tasks/SearchPeopleTaskGenerator.js'
 import {ConnectionInfo} from '@kinotic/continuum-client'
+import {generateDeterministicId} from '@/utils/DataUtil.js'
 
 
 export class LoadTaskGeneratorFactory {
@@ -119,10 +122,58 @@ export class LoadTaskGeneratorFactory {
         } else if(loadTestConfig.testName === 'generateComplexStructures'){
 
             return new CreateComplexStructuresTaskGenerator(this.createConnectionInfo('kinotic', structuresConfig))
-            
+
+        } else if(loadTestConfig.testName === 'createPersonStructure'){
+
+            return new CreatePersonStructureTaskGenerator(this.createConnectionInfo('kinotic', structuresConfig))
+
+        // The sustained tests never run out of tasks: they run until DURATION_SECONDS, on one tenant
+        } else if(loadTestConfig.testName === 'sustainedBulkSave'){
+
+            return new SaveTaskGenerator(this.createConnectionInfo(this.tenantId(loadTestConfig), structuresConfig),
+                                         parseInt(process.env.BATCH_SIZE || '200'),
+                                         Number.POSITIVE_INFINITY)
+
+        } else if(loadTestConfig.testName === 'sustainedSearch'){
+
+            return new SearchPeopleTaskGenerator(this.createConnectionInfo(this.tenantId(loadTestConfig), structuresConfig),
+                                                 Number.POSITIVE_INFINITY,
+                                                 process.env.SEARCH_TEXT || 'firstName: John',
+                                                 parseInt(process.env.PAGE_SIZE || '100'))
+
+        } else if(loadTestConfig.testName === 'sustainedFindAll'){
+
+            return new FindTaskGenerator(this.createConnectionInfo(this.tenantId(loadTestConfig), structuresConfig),
+                                         Number.POSITIVE_INFINITY,
+                                         parseInt(process.env.PAGE_SIZE || '100'))
+
+        } else if(loadTestConfig.testName === 'openApiMixed'){
+
+            const baseUrl = process.env.STRUCTURES_OPENAPI_BASE_URL
+            if(!baseUrl){
+                throw new Error('STRUCTURES_OPENAPI_BASE_URL environment variable is required for openApiMixed')
+            }
+            return new OpenApiMixedTaskGenerator({
+                baseUrl,
+                applicationId: CreatePersonStructureTaskGenerator.APPLICATION_ID,
+                structureName: CreatePersonStructureTaskGenerator.STRUCTURE_NAME,
+                tenantId: this.tenantId(loadTestConfig),
+                batchSize: parseInt(process.env.BATCH_SIZE || '200'),
+                pageSize: parseInt(process.env.PAGE_SIZE || '50'),
+                searchText: process.env.SEARCH_TEXT || 'firstName: John',
+                totalOperations: Number.POSITIVE_INFINITY
+            })
+
         }else {
             throw new Error(`Unsupported test name: ${loadTestConfig.testName}`)
         }
+    }
+
+    /** The sustained tests use a single tenant: the one BEGIN_TENANT_ID_NUMBER maps to, or kinotic */
+    private static tenantId(loadTestConfig: LoadTestConfig): string {
+        return process.env.TENANT_ID || (loadTestConfig.beginTenantIdNumber > 0
+                                         ? generateDeterministicId(loadTestConfig.beginTenantIdNumber)
+                                         : 'kinotic')
     }
 
     private static createConnectionInfo(tenantId: string,

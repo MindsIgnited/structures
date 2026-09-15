@@ -12,14 +12,14 @@ importers:
         specifier: ^10.2.0
         version: 10.2.0
       '@kinotic/continuum-client':
-        specifier: ^2.14.10
-        version: 2.14.10(reflect-metadata@0.2.2)
+        specifier: ^3.0.0
+        version: 3.0.0(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl':
         specifier: ^2.0.4
         version: 2.0.4
       '@kinotic/structures-api':
         specifier: ^3.5.3
-        version: 3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
+        version: 3.5.3(@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2))
       '@kinotic/structures-cli':
         specifier: ^3.5.3
         version: 3.5.3(@types/node@25.1.0)
@@ -566,6 +566,11 @@ packages:
 
   '@kinotic/continuum-client@2.14.10':
     resolution: {integrity: sha512-W+o2karVVqaWwyWwgobHfWR54m5weUivc5+H0JuLrXng71jat4Q/S/TAieCTJlVBMCx+PZ86P+zs7qDyMiplAA==}
+    peerDependencies:
+      reflect-metadata: ^0.2.2
+
+  '@kinotic/continuum-client@3.0.0':
+    resolution: {integrity: sha512-ZIjTBb/4JjZ7nbKwFY10WTDTFO13HFnMNzaBCg4YRbs+sD5XzzfJxc106RwMuXCqODaTPPOvgZ8ZQFPPjDrsBA==}
     peerDependencies:
       reflect-metadata: ^0.2.2
 
@@ -2852,11 +2857,34 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2)':
+    dependencies:
+      '@opentelemetry/api': 1.9.0
+      '@opentelemetry/semantic-conventions': 1.39.0
+      '@stomp/rx-stomp': 2.3.0(@stomp/stompjs@7.2.1)(rxjs@7.8.2)(uuid@13.0.0)
+      '@stomp/stompjs': 7.2.1
+      '@types/debug': 4.1.12
+      debug: 4.4.3(supports-color@8.1.1)
+      p-tap: 4.0.0
+      reflect-metadata: 0.2.2
+      rxjs: 7.8.2
+      typescript-optional: 3.0.0-alpha.3
+      uuid: 13.0.0
+    transitivePeerDependencies:
+      - supports-color
+
   '@kinotic/continuum-idl@2.0.4': {}
 
   '@kinotic/structures-api@3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))':
     dependencies:
       '@kinotic/continuum-client': 2.14.10(reflect-metadata@0.2.2)
+      '@kinotic/continuum-idl': 2.0.4
+      reflect-metadata: 0.2.2
+      rxjs: 7.8.2
+
+  '@kinotic/structures-api@3.5.3(@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2))':
+    dependencies:
+      '@kinotic/continuum-client': 3.0.0(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl': 2.0.4
       reflect-metadata: 0.2.2
       rxjs: 7.8.2

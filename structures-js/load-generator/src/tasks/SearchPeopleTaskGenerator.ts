@@ -38,6 +38,10 @@ export class SearchPeopleTaskGenerator implements ITaskGenerator {
         return this.continuumTaskGenerator.hasMoreTasks()
     }
 
+    shutdown(): Promise<void> {
+        return this.continuumTaskGenerator.shutdown()
+    }
+
     private createTaskFactory(searchText: string, pageSize: number): ITaskFactory {
         return {
             createTask: () => {
