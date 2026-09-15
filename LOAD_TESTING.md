@@ -123,7 +123,17 @@ wait
 While it runs, sample the cluster every 15 s: `kubectl top pods` for the Structures,
 Elasticsearch and ingress pods, `docker stats` for the KinD nodes, and Elasticsearch
 `_nodes/stats` (indexing and search totals, heap). Afterwards, check restarts
-(`kubectl get pods`) and the logs of every server pod for `WARN` and `ERROR` over the window.
+(`kubectl get pods`) and the logs of every server pod for `WARN` and `ERROR` over the window:
+
+```sh
+for p in $(kubectl get pods -l app=structures -o name); do
+  echo "== $p"; kubectl logs "$p" --since=11m | grep -E ' WARN | ERROR '
+done
+```
+
+Every pod, by name. `kubectl logs deploy/structures-server` silently picks **one** pod of the three
+(it says so only on stderr), and a scan done that way covers a third of the cluster. Capture the
+logs before the pods are replaced by the next deploy; they go with the pods.
 
 `OTEL_SDK_DISABLED=true` keeps the generator's OpenTelemetry SDK from trying to export to a
 collector that is not there; `START_DELAY_SECONDS` defaults to 60 for the Docker case where the
@@ -151,7 +161,8 @@ second section), on a cluster recreated from nothing so the migration job ran ag
 Elasticsearch, after the Gradle suite (109), e2e native + openapi (55) and k8s (5) on that cluster:
 
 - 95,497 operations at ~155 requests/s, 1,106,420 documents indexed from an empty index,
-  **0 failures**, no restarts, no `WARN` or `ERROR` logged.
+  **0 failures**, no restarts. The log scan for `WARN` and `ERROR` covered one pod of three (see the
+  record); the other two were replaced before that was noticed.
 - Same shape as the candidate run: STOMP search p50 9 ms / p95 27 ms; STOMP bulk save p50 27 ms /
   p95 79 ms; OpenAPI save p50 28 ms / p95 83 ms; OpenAPI reads p95 16-23 ms. Flat after warm-up,
   one write-path spike window (Elasticsearch refresh or merge), as before.
