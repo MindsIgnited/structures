@@ -21,7 +21,7 @@
     "@inquirer/prompts": "^8.0.2",
     "@kinotic/continuum-client": "3.0.0",
     "@kinotic/continuum-idl": "^2.0.4",
-    "@kinotic/structures-api": "^3.5.3",
+    "@kinotic/structures-api": "^3.6.0",
     "@oclif/core": "^4.8.0",
     "@oclif/plugin-autocomplete": "^3.2.39",
     "@oclif/plugin-help": "^6",
@@ -95,12 +95,5 @@
     "oclif"
   ],
   "types": "dist/index.d.ts",
-  "packageManager": "pnpm@10.34.1",
-  "pnpm": {
-    "peerDependencyRules": {
-      "allowedVersions": {
-        "@kinotic/structures-api>@kinotic/continuum-client": "3"
-      }
-    }
-  }
+  "packageManager": "pnpm@10.34.1"
 }
