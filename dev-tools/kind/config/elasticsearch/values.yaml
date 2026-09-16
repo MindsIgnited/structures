@@ -47,7 +47,9 @@ esConfig:
       # seed_providers: ""
       seed_hosts: ["elasticsearch-master-headless"]
     cluster:
-      initial_master_nodes: ["elasticsearch-master-0"]
+      # Both nodes, so a node that restarts empty (the data is an emptyDir) joins the cluster the
+      # other still holds instead of bootstrapping a new one it can never merge with
+      initial_master_nodes: ["elasticsearch-master-0", "elasticsearch-master-1"]
     # node:
     #   roles: ["master", "data", "data_content", "data_hot", "data_warm", "data_cold", "ingest", "ml", "remote_cluster_client", "transform"]
   # log4j2.properties: |
@@ -64,14 +66,18 @@ service:
   type: NodePort
   nodePort: 30920  # Maps to hostPort 9200 → localhost:9200
 
-# Resource limits (matching structures needs)
+# Resource limits. The heap stays at 1 GiB; the container needs room beyond it for Lucene's
+# off-heap segment memory, which grows with the index. At 2 GiB a node was OOM-killed 21 minutes
+# into a sustained-load soak (about 1,800 documents/s into a 3 M document index), and because the
+# data is an emptyDir and initial_master_nodes pins master-0, the restarted node bootstrapped a new
+# cluster the surviving node could not join. 4 GiB holds; see LOAD_TESTING.md.
 esJavaOpts: "-Xms1024m -Xmx1024m"
 resources:
   requests:
     cpu: "500m"
-    memory: "2Gi"
+    memory: "4Gi"
   limits:
-    memory: "2Gi"
+    memory: "4Gi"
 
 # Volume config - use emptyDir for local dev
 volumeClaimTemplate:

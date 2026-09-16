@@ -134,6 +134,79 @@ Worth knowing, in addition to the first run's notes:
 - The processes ran 600-617 s: tasks already queued when the deadline passed still run, up to the
   queue depth of 100, at the rate cap.
 
+## Soak: one hour on the develop snapshot
+
+The question both ten-minute runs left open was memory: pods rose 300-480 MiB in ten minutes, which
+cannot tell a JVM growing into its heap from a leak. The same four generators for 3,600 s, on
+`mindsignited/structures-server:3.6.0-SNAPSHOT` (digest `b20c3df0…`, the develop build of the PR #12
+merge `e371b4de`; the code that ships as 3.6.0 plus the npm consumer bumps), three pods started
+minutes before the run, `load-testing.person` from 0 documents. A detail that frames the memory
+numbers: the pods run with no memory limit, so the buildpack's memory calculator sizes the heap from
+the host and the JVM starts with `-Xmx49895592K` (47.6 GB). Nothing pushes it to collect early.
+
+**First attempt, aborted at 21 minutes: the rig failed, not the server.** Elasticsearch node 0 was
+OOM-killed (exit 137) at 21 minutes against its 2 GiB limit with a 1 GiB heap; both nodes had sat at
+1.9 GiB, and the second one survived only because it was killed first. Its data being an emptyDir,
+the node came back empty, and a two-node cluster cannot recover from that either way (no quorum for
+the survivor, nothing to join for the newcomer), so every write got 503 from then on. The server pods
+kept running and logged only the health-check failures until their liveness probe, which reports
+Elasticsearch's health, restarted them twelve minutes into the outage. The 21 clean minutes are still
+data: the three pods went 877, 1,008, 1,014 MiB at the start to 899, 1,157, 1,413 MiB at five minutes
+and 919, 1,155, 1,422 MiB at twenty-one. Flat after the first five. The Elasticsearch limit is now
+4 GiB (`dev-tools/kind/config/elasticsearch/values.yaml`), LOAD_TESTING.md has the reset procedure,
+and the run was repeated from a rebuilt store.
+
+**Second attempt, the full hour.**
+
+| operation | count | errors | ops/s | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|
+| STOMP bulk save (200) | 18,299 | 0 | 5.1 | 28 ms | 66 ms | 117 ms | 1.25 s |
+| STOMP search | 191,699 | 0 | 53.2 | 11 ms | 30 ms | 60 ms | 1.35 s |
+| STOMP find all | 73,999 | 0 | 20.5 | 5 ms | 14 ms | 24 ms | 909 ms |
+| OpenAPI save | 68,069 | 0 | 18.9 | 27 ms | 69 ms | 114 ms | 1.13 s |
+| OpenAPI bulk save (200) | 13,807 | 0 | 3.8 | 63 ms | 132 ms | 192 ms | 1.22 s |
+| OpenAPI find by id | 68,345 | 0 | 19.0 | 4 ms | 18 ms | 31 ms | 1.14 s |
+| OpenAPI find all | 40,749 | 0 | 11.3 | 4 ms | 12 ms | 24 ms | 1.19 s |
+| OpenAPI search | 54,677 | 0 | 15.2 | 5 ms | 15 ms | 30 ms | 1.19 s |
+| OpenAPI count | 27,053 | 0 | 7.5 | 3 ms | 11 ms | 22 ms | 730 ms |
+
+- 556,697 client operations, 0 failures, about 154 requests/s for 3,614 s; 6,489,269 documents
+  indexed from an empty index (about 1,800/s), 4.2 GB on disk at the end.
+- No pod restarts. No WARN or ERROR in any of the three server pods' logs for the window, each pod
+  scanned by name.
+- Every per-window maximum above 0.6 s falls in the first ten minutes (cold pods, empty index).
+  From then on: STOMP search p95 18-76 ms per 30 s window, STOMP bulk save 34-174 ms, OpenAPI save
+  36-199 ms, reads 8-34 ms, and no window's maximum above 0.53 s. No drift between the second and
+  the sixth ten-minute block.
+- Elasticsearch: 256 and 252 m CPU median, peaks 878 and 998 m; memory 1,420 and 1,437 MiB rising
+  to 1,626 and 1,624 MiB over the hour (the 2 GiB limit would have been crossed again around the
+  fortieth minute), heap 58-64 % at the end. Ingress 23 m median.
+
+**Memory, per pod, MiB at minute marks:**
+
+| pod | 0 | 5 | 10 | 20 | 30 | 40 | 50 | 60 | CPU median / peak |
+|---|---|---|---|---|---|---|---|---|---|
+| 6t465 | 868 | 1,268 | 1,270 | 1,271 | 1,270 | 1,344 | 1,410 | 1,411 | 158 m / 747 m |
+| nt5zx | 826 | 1,037 | 1,038 | 1,071 | 1,126 | 1,181 | 1,185 | 1,189 | 183 m / 563 m |
+| q48xd | 756 | 1,134 | 1,138 | 1,191 | 1,210 | 1,185 | 1,194 | 1,208 | 60 m / 404 m |
+
+The shape is the same on all three: a jump of 300-400 MiB in the first five minutes, then a slow
+climb of 74-152 MiB spread over the middle of the hour, then flat for the last ten to twenty minutes
+(one pod flat from minute 20). That is a JVM settling its heap under a 47.6 GB ceiling with nothing
+asking it to be frugal, not a leak; a leak at this load would not stop. What the ten-minute runs saw
+was the first five minutes of this curve. An hour cannot exclude a very slow leak, but it moves the
+question from "does it grow" to "does it grow after it has settled", and the answer here is no.
+
+Recommendation that falls out of it: give the server pods a memory limit in any deployment whose
+memory matters. The buildpack sizes the heap from the container limit when there is one, and the
+chart's `javaToolOptions` sets none, so today the heap ceiling is whatever the node has. The KinD
+values run without limits on purpose, so that growth shows in `kubectl top` rather than as an OOM
+kill, and that stays.
+
+Also seen: the OpenAPI process again ran above its nominal cap (about 75 ops/s against 50, the same
+p-queue window behaviour), and the STOMP-heavy pod (6t465) was the one whose memory stepped up
+between minutes 30 and 50, which is where the sticky STOMP connections put the ingest work.
+
 ## Reproducing
 
 Structure and tooling: `TEST_NAME=createPersonStructure` creates `load-testing.person` if it is

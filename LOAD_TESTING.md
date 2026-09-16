@@ -41,6 +41,15 @@ resource footprint.
   starting document count where it matters.
 - Elasticsearch is left at its defaults (1 s refresh). Write-path spikes that hit STOMP and
   OpenAPI in the same window are usually its refresh or merge activity, not either transport.
+- **The two-node Elasticsearch is not resilient, by design of a two-node cluster.** Its data is an
+  emptyDir, so a node that dies comes back empty, and with two master-eligible nodes neither the
+  survivor (no quorum) nor the empty one (nothing to join) can proceed; the server pods then fail
+  their liveness probe, which reports Elasticsearch's health, and are restarted about twelve minutes
+  in. Recovery is to reset both nodes together and start over: `kubectl delete pod -l
+  app=elasticsearch-master`, wait for both to be ready and green, run `kind-cluster.sh deploy` again
+  (the migration job recreates the system indices), then `kubectl rollout restart
+  deploy/structures-server`. A node dying mid-run ends that run; keep the nodes from dying instead,
+  which is what the 4 GiB limit below is for.
 - The server pods run with no CPU or memory limits, so a leak or a runaway shows up as growth in
   `kubectl top`, not as an OOM kill.
 
@@ -54,7 +63,7 @@ The 3.6.0 run, and the reference for future comparison:
 | Docker | Docker Desktop, engine 29.2, VM with 16 CPUs / 63 GB |
 | Kubernetes | KinD v0.30, Kubernetes v1.34, one control-plane + three worker nodes (each sees all 16 CPUs) |
 | Ingress | ingress-nginx controller v1.15, on the control-plane node, 2 CPU / 1 GiB limit (`dev-tools/kind/config/ingress-nginx/values.yaml`) |
-| Elasticsearch | 8.19.13, two nodes, 1 CPU / 2 GiB each, 1 GiB heap (`dev-tools/kind/config/elasticsearch/values.yaml`) |
+| Elasticsearch | 8.19.13, two nodes, 1 CPU / 4 GiB each, 1 GiB heap (`dev-tools/kind/config/elasticsearch/values.yaml`; 2 GiB until the first soak, when a node was OOM-killed at 21 minutes) |
 | Structures | three replicas, no resource limits, image built by CI from the release-candidate commit |
 | Metrics | metrics-server v0.9 (`kubectl top`, sampled every 15 s), Elasticsearch `_nodes/stats`, pod logs |
 | Generators | Node 24, `structures-js/load-generator`, `@kinotic/continuum-client` 3.0.0, on the host |
@@ -172,9 +181,25 @@ Elasticsearch, after the Gradle suite (109), e2e native + openapi (55) and k8s (
   restarts); the OpenAPI process issued 79 ops/s against a 50/s cap. Compare observed rates, not
   caps, between runs.
 
+**3.6.0 soak, one hour** (`3.6.0-SNAPSHOT` of develop `e371b4de`, [record](docs/performance/LOAD_TEST_3.6.0.md),
+third section), same four generators for 3,600 s from an empty index:
+
+- 556,697 operations at ~154 requests/s, 6,489,269 documents indexed, **0 failures**, no restarts,
+  no `WARN` or `ERROR` on any of the three pods (each scanned by name).
+- Latency flat from the second ten-minute block to the sixth; every spike above 0.6 s is in the
+  first ten minutes.
+- **The memory question is answered**: each pod jumps 300-400 MiB in its first five minutes, climbs
+  74-152 MiB over the middle of the hour, and is flat for the last ten to twenty minutes. That is
+  heap settling under a 47.6 GB `-Xmx` (no container limit, so the buildpack sized the heap from the
+  host), not a leak. Production deployments should set a memory limit so the heap is sized from it.
+- The first attempt was aborted at 21 minutes by the rig: an Elasticsearch node OOM-killed at its
+  2 GiB limit, after which the two-node cluster could not recover (see Assumptions). The limit is
+  4 GiB now, and the reset procedure is written down.
+
 ## What a release run should add
 
 - The same four processes, same rates, on the candidate image, compared against the previous
   record's table.
 - A longer soak (an hour) at least once per major dependency change, for the memory question.
+  Done for 3.6.0; the next one is due with the next such change.
 - Any new transport or hot path gets a workload here before it ships.
