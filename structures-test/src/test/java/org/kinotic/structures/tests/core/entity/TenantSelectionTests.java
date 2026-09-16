@@ -1,7 +1,6 @@
 package org.kinotic.structures.tests.core.entity;
 
 import org.junit.jupiter.api.Test;
-import org.kinotic.continuum.api.exceptions.AuthorizationException;
 import org.kinotic.continuum.core.api.crud.Pageable;
 import org.kinotic.continuum.idl.api.schema.StringC3Type;
 import org.kinotic.structures.api.domain.EntityContext;
@@ -30,9 +29,9 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Exercises a {@link MultiTenancyType#SHARED} {@link Structure} with a {@link TenantIdDecorator} field from both
- * kinds of participant: one that belongs to a tenant, and one connected without a tenant that names the tenants
- * it wants through a tenant selection, the way the admin service does.
+ * Exercises a {@link MultiTenancyType#SHARED} {@link Structure} with a {@link TenantIdDecorator} field, which is what
+ * enables the admin service. The data names the tenant each entity belongs to, and a tenant selection names the
+ * tenants a read spans, including {@link EntityContext#ALL_TENANTS} for every tenant of the Structure.
  */
 @SpringBootTest
 public class TenantSelectionTests extends ElasticTestBase {
@@ -52,8 +51,8 @@ public class TenantSelectionTests extends ElasticTestBase {
     private TestDataService testDataService;
 
     @Test
-    public void testTenantedParticipantOwnsTheTenantIdField() {
-        Structure structure = createTenantPersonStructure("_ownsField");
+    public void testTheDataNamesTheTenant() {
+        Structure structure = createTenantPersonStructure("_namesTheTenant");
 
         StepVerifier.create(Mono.fromFuture(savePerson(structure, contextFor("tenant1"), "", "Blank")))
                     .expectNextMatches(saved -> "tenant1".equals(saved.get(TENANT_ID_FIELD).asString()))
@@ -61,9 +60,9 @@ public class TenantSelectionTests extends ElasticTestBase {
                     .verifyComplete();
 
         StepVerifier.create(Mono.fromFuture(savePerson(structure, contextFor("tenant1"), "tenant2", "Other")))
-                    .as("Another tenant's id is rejected")
-                    .expectError(IllegalArgumentException.class)
-                    .verify();
+                    .expectNextMatches(saved -> "tenant2".equals(saved.get(TENANT_ID_FIELD).asString()))
+                    .as("A tenant id the data names is stored as given")
+                    .verifyComplete();
 
         StepVerifier.create(Mono.fromFuture(savePersonAsMap(structure, contextFor("tenant1"), "", "BlankMap")))
                     .expectNextMatches(saved -> "tenant1".equals(saved.get(TENANT_ID_FIELD)))
@@ -71,75 +70,68 @@ public class TenantSelectionTests extends ElasticTestBase {
                     .verifyComplete();
 
         StepVerifier.create(Mono.fromFuture(savePersonAsMap(structure, contextFor("tenant1"), "tenant2", "OtherMap")))
-                    .as("The Map upsert path rejects another tenant's id the same way")
-                    .expectError(IllegalArgumentException.class)
-                    .verify();
+                    .expectNextMatches(saved -> "tenant2".equals(saved.get(TENANT_ID_FIELD)))
+                    .as("The Map upsert path stores a named tenant id the same way")
+                    .verifyComplete();
 
         entitiesService.syncIndex(structure.getId(), contextFor("tenant1")).join();
 
         StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor("tenant1"))))
                     .expectNext(2L)
-                    .as("The participant sees its own tenant")
+                    .as("Without a selection the participant sees only its own tenant")
                     .verifyComplete();
     }
 
     @Test
-    public void testTenantedParticipantIsConfinedToItsTenant() {
-        Structure structure = createTenantPersonStructure("_confined");
+    public void testSelectionNamesTheTenantsAReadSpans() {
+        Structure structure = createTenantPersonStructure("_selection");
+
+        for(int i = 0; i < 2; i++) {
+            savePerson(structure, contextFor("tenant1"), "tenant1", "One" + i).join();
+        }
+        for(int i = 0; i < 3; i++) {
+            savePerson(structure, contextFor("tenant1"), "tenant2", "Two" + i).join();
+        }
+        entitiesService.syncIndex(structure.getId(), contextFor("tenant1")).join();
 
         StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor("tenant1", "tenant1"))))
-                    .expectNext(0L)
-                    .as("Selecting its own tenant is allowed")
+                    .expectNext(2L)
+                    .as("Selecting its own tenant counts that tenant")
                     .verifyComplete();
 
         StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor("tenant1", "tenant2"))))
-                    .as("Selecting another tenant is refused")
-                    .expectError(AuthorizationException.class)
-                    .verify();
-
-        StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(),
-                                                                  contextFor("tenant1", EntityContext.ALL_TENANTS))))
-                    .as("Selecting every tenant is refused")
-                    .expectError(AuthorizationException.class)
-                    .verify();
-    }
-
-    @Test
-    public void testParticipantWithoutATenantSelectsTenants() {
-        Structure structure = createTenantPersonStructure("_acrossTenants");
-
-        StepVerifier.create(Mono.fromFuture(savePerson(structure, contextFor(null), "", "Blank")))
-                    .as("Without a tenant of its own the data must name one")
-                    .expectError(IllegalArgumentException.class)
-                    .verify();
-
-        for(int i = 0; i < 2; i++) {
-            savePerson(structure, contextFor(null), "tenant1", "One" + i).join();
-        }
-        for(int i = 0; i < 3; i++) {
-            savePerson(structure, contextFor(null), "tenant2", "Two" + i).join();
-        }
-        entitiesService.syncIndex(structure.getId(), contextFor(null)).join();
-
-        StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor(null))))
-                    .as("A read without a tenant or a selection is refused")
-                    .expectError(IllegalArgumentException.class)
-                    .verify();
-
-        StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor(null, "tenant2"))))
                     .expectNext(3L)
-                    .as("A selection counts the named tenant")
+                    .as("Selecting a tenant the participant is not counts that tenant")
                     .verifyComplete();
 
         StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(),
-                                                                  contextFor(null, EntityContext.ALL_TENANTS))))
+                                                                  contextFor("tenant1", "tenant1", "tenant2"))))
+                    .expectNext(5L)
+                    .as("Selecting several tenants counts all of them")
+                    .verifyComplete();
+    }
+
+    @Test
+    public void testWildcardSelectionSpansEveryTenant() {
+        Structure structure = createTenantPersonStructure("_wildcard");
+
+        for(int i = 0; i < 2; i++) {
+            savePerson(structure, contextFor("tenant1"), "tenant1", "One" + i).join();
+        }
+        for(int i = 0; i < 3; i++) {
+            savePerson(structure, contextFor("tenant1"), "tenant2", "Two" + i).join();
+        }
+        entitiesService.syncIndex(structure.getId(), contextFor("tenant1")).join();
+
+        StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(),
+                                                                  contextFor("tenant1", EntityContext.ALL_TENANTS))))
                     .expectNext(5L)
                     .as("The wildcard counts every tenant")
                     .verifyComplete();
 
         StepVerifier.create(Mono.fromFuture(entitiesService.countByQuery(structure.getId(),
                                                                          "lastName: Two*",
-                                                                         contextFor(null, EntityContext.ALL_TENANTS))))
+                                                                         contextFor("tenant1", EntityContext.ALL_TENANTS))))
                     .expectNext(3L)
                     .as("The wildcard applies to a query")
                     .verifyComplete();
@@ -147,7 +139,7 @@ public class TenantSelectionTests extends ElasticTestBase {
         StepVerifier.create(Mono.fromFuture(entitiesService.findAll(structure.getId(),
                                                                     Pageable.ofSize(10),
                                                                     RawJson.class,
-                                                                    contextFor(null, EntityContext.ALL_TENANTS))))
+                                                                    contextFor("tenant1", EntityContext.ALL_TENANTS))))
                     .expectNextMatches(page -> page.getTotalElements() == 5 && page.getContent().size() == 5)
                     .as("The wildcard returns every tenant's rows")
                     .verifyComplete();

@@ -218,7 +218,7 @@ const adults = await service.findByAge(18)
 ## Multi-tenancy Decorators
 
 ### @TenantId
-Marks a field as the tenant ID for multi-tenant entities. Adding this decorator enables "Admin" services for the Structure, which take a tenant selection so that a caller with no tenant of its own can reach data across different tenants. This is particularly useful for administrative operations that need to work with data from multiple tenants.
+Marks a field as the tenant ID for multi-tenant entities. Adding this decorator enables "Admin" services for the Structure, which allow users to access data across different tenants. This is particularly useful for administrative operations that need to work with data from multiple tenants.
 
 ```typescript
 @TenantId
@@ -244,14 +244,13 @@ const multipleTenantUsers = await adminService.findAll(['tenant-123', 'tenant-45
 ```
 
 **Important Notes:**
+- Admin services should be used with caution as they bypass normal tenant isolation
+- Access to admin services should be restricted to users with appropriate permissions
 - When using admin services, you must specify a tenant selection as an array of strings:
   - `['*']` to access all tenants
   - `['tenant-id']` to access a specific tenant
   - `['tenant-id-1', 'tenant-id-2']` to access multiple specific tenants
-- A participant that belongs to a tenant is confined to it. Through the admin service it may select only its own tenant; naming another tenant, or `['*']`, fails with an authorization error
-- Selecting other tenants is possible only for a participant that has no tenant of its own, such as a service connected without one. Such a participant must name the tenant of every entity it saves
-- On save, a blank `@TenantId` field is filled with the participant's tenant, and any other value is rejected
-- Access to admin services should be restricted to users with appropriate permissions
+- On save the data names the tenant an entity belongs to. Leave the field at its `''` default and it is filled with the tenant of the participant performing the save
 
 ## Version Control Decorators
 

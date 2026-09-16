@@ -1,8 +1,7 @@
 # Multi-Tenant Access
 Multi-tenant field is a feature that when enabled will provide additional "Admin" level functionality. 
-This will include additional methods that take a tenant selection, so data can be viewed and managed across all tenants. 
-A participant that belongs to a tenant is still confined to it, so these methods reach several tenants only for a
-participant that has no tenant of its own. See [@TenantId](/reference/decorators#tenantid) for the rules that apply.
+This will include additional methods that allow for data to be viewed and managed across all tenants. 
+This means users will be able to view and manage data from all tenants, not just the tenant they are currently logged into.
 
 ## Enabling Multi-Tenant Access
 To enable multi-tenant access, you will add the @TenantId annotation to a field in the entity class.

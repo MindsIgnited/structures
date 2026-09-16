@@ -7,9 +7,8 @@ import org.kinotic.structures.internal.api.hooks.UpsertFieldPreProcessor;
 import org.springframework.stereotype.Component;
 
 /**
- * Resolves the value of a {@link TenantIdDecorator} field on save. A participant that belongs to a tenant
- * owns the field: an unset value is filled with that tenant and a different value is rejected. A participant
- * that has no tenant of its own names the tenant of each entity through the data.
+ * Resolves the value of a {@link TenantIdDecorator} field on save. The data names the tenant the entity belongs
+ * to, and a value that is not set is filled with the tenant of the participant performing the save.
  * Created by Navíd Mitchell 🤪 on 5/9/23.
  */
 @Component
@@ -28,15 +27,11 @@ public class TenantIdUpsertFieldPreProcessor implements UpsertFieldPreProcessor<
     @Override
     public String process(Structure structure, String fieldName, TenantIdDecorator decorator, String fieldValue, EntityContext context) {
         String ret;
-        String participantTenantId = context.getParticipant() != null ? context.getParticipant().getTenantId() : null;
-        if(participantTenantId == null){
-            ret = fieldValue;
-        }else if(fieldValue == null || fieldValue.isBlank()){
-            ret = participantTenantId;
-        }else if(fieldValue.equals(participantTenantId)){
-            ret = fieldValue;
+        if(fieldValue == null || fieldValue.isBlank()){
+            // clients default the field to an empty string, so a blank value means the entity is the participant's own
+            ret = context.getParticipant() != null ? context.getParticipant().getTenantId() : null;
         }else{
-            throw new IllegalArgumentException("Tenant Id invalid for logged in participant");
+            ret = fieldValue;
         }
         return ret;
     }
