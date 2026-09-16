@@ -30,8 +30,8 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Exercises a {@link MultiTenancyType#SHARED} {@link Structure} with a {@link TenantIdDecorator} field, which is what
- * enables the admin service. The data names the tenant each entity belongs to, and a tenant selection names the
- * tenants a read spans, including {@link EntityContext#ALL_TENANTS} for every tenant of the Structure.
+ * enables the admin service. The data names the tenant each entity belongs to, and a selection names the tenants a
+ * read spans, with {@link EntityContext#ALL_TENANTS} naming every tenant of the Structure.
  */
 @SpringBootTest
 public class TenantSelectionTests extends ElasticTestBase {
@@ -78,25 +78,17 @@ public class TenantSelectionTests extends ElasticTestBase {
 
         StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor("tenant1"))))
                     .expectNext(2L)
-                    .as("Without a selection the participant sees only its own tenant")
+                    .as("The entities that named no tenant landed in the participant's own")
                     .verifyComplete();
     }
 
     @Test
     public void testSelectionNamesTheTenantsAReadSpans() {
-        Structure structure = createTenantPersonStructure("_selection");
+        Structure structure = createTenantPersonStructureWithPeople("_selection");
 
-        for(int i = 0; i < 2; i++) {
-            savePerson(structure, contextFor("tenant1"), "tenant1", "One" + i).join();
-        }
-        for(int i = 0; i < 3; i++) {
-            savePerson(structure, contextFor("tenant1"), "tenant2", "Two" + i).join();
-        }
-        entitiesService.syncIndex(structure.getId(), contextFor("tenant1")).join();
-
-        StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor("tenant1", "tenant1"))))
+        StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor("tenant1"))))
                     .expectNext(2L)
-                    .as("Selecting its own tenant counts that tenant")
+                    .as("Without a selection a read sees only the participant's own tenant")
                     .verifyComplete();
 
         StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(), contextFor("tenant1", "tenant2"))))
@@ -113,15 +105,7 @@ public class TenantSelectionTests extends ElasticTestBase {
 
     @Test
     public void testWildcardSelectionSpansEveryTenant() {
-        Structure structure = createTenantPersonStructure("_wildcard");
-
-        for(int i = 0; i < 2; i++) {
-            savePerson(structure, contextFor("tenant1"), "tenant1", "One" + i).join();
-        }
-        for(int i = 0; i < 3; i++) {
-            savePerson(structure, contextFor("tenant1"), "tenant2", "Two" + i).join();
-        }
-        entitiesService.syncIndex(structure.getId(), contextFor("tenant1")).join();
+        Structure structure = createTenantPersonStructureWithPeople("_wildcard");
 
         StepVerifier.create(Mono.fromFuture(entitiesService.count(structure.getId(),
                                                                   contextFor("tenant1", EntityContext.ALL_TENANTS))))
@@ -153,6 +137,12 @@ public class TenantSelectionTests extends ElasticTestBase {
         return ret;
     }
 
+    /**
+     * Creates and publishes a Person {@link Structure} that names its tenant.
+     *
+     * @param structureNameSuffix appended to the structure name so each test gets its own index
+     * @return the published {@link Structure}
+     */
     private Structure createTenantPersonStructure(String structureNameSuffix) {
         Structure structure = new Structure();
         structure.setName("TenantPerson" + structureNameSuffix)
@@ -169,6 +159,28 @@ public class TenantSelectionTests extends ElasticTestBase {
                                  .thenCompose(saved -> structureService.publish(saved.getId())
                                                                        .thenApply(published -> saved))
                                  .join();
+    }
+
+    /**
+     * Creates a published Person {@link Structure} that names its tenant, holding two entities for tenant1 and
+     * three for tenant2.
+     *
+     * @param structureNameSuffix appended to the structure name so each test gets its own index
+     * @return the published {@link Structure}
+     */
+    private Structure createTenantPersonStructureWithPeople(String structureNameSuffix) {
+        Structure ret = createTenantPersonStructure(structureNameSuffix);
+
+        // the data names the tenant, so a single participant can populate both
+        for(int i = 0; i < 2; i++) {
+            savePerson(ret, contextFor("tenant1"), "tenant1", "One" + i).join();
+        }
+        for(int i = 0; i < 3; i++) {
+            savePerson(ret, contextFor("tenant1"), "tenant2", "Two" + i).join();
+        }
+        entitiesService.syncIndex(ret.getId(), contextFor("tenant1")).join();
+
+        return ret;
     }
 
     private CompletableFuture<JsonNode> savePerson(Structure structure,
