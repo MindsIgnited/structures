@@ -16,7 +16,7 @@ import tools.jackson.databind.util.TokenBuffer;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.NotImplementedException;
-import org.apache.commons.lang3.ObjectUtils;
+import org.kinotic.continuum.api.exceptions.AuthorizationException;
 import org.kinotic.continuum.core.api.crud.CursorPage;
 import org.kinotic.continuum.core.api.crud.Page;
 import org.kinotic.continuum.core.api.crud.Pageable;
@@ -513,7 +513,7 @@ public class DefaultEntityService implements EntityService {
                     String tenant = extractTenant(object, tenantIdFieldName);
                     // Find and search methods will use the logged in tenant if no multi tenant selection is provided
                     if(context.hasTenantSelection()){
-                        if(tenant != null && tenantIds.contains(tenant)){
+                        if(tenant != null && (context.selectsAllTenants() || tenantIds.contains(tenant))){
                             result.add(object);
                         }else{
                             log.error(
@@ -642,14 +642,15 @@ public class DefaultEntityService implements EntityService {
                                                EntityContext context,
                                                Function<EntityHolder<?>, CompletableFuture<T>> persistLogic){
         // We do this since ideally processing data before auth is not ideal
-        // However, in the case of Multi-tenant access we must extract tenant ids prior to calling auth
+        // However, in the case of Multi-tenant access the data names the tenants, so they must be
+        // extracted before the context is validated and authorized
         if(structure.isMultiTenantSelectionEnabled()){
 
-            return validateContext(context)
-                    .thenCompose(un -> delegatingUpsertPreProcessor.process(entity, context))
+            return delegatingUpsertPreProcessor.process(entity, context)
                     .thenCompose(entityHolder ->
-                                         authService.authorize(operation, context)
-                                                    .thenCompose(un -> persistLogic.apply(entityHolder)));
+                                         validateContext(context)
+                                                 .thenCompose(un -> authService.authorize(operation, context))
+                                                 .thenCompose(un -> persistLogic.apply(entityHolder)));
         }else{
             return validateContext(context)
                     .thenCompose(un -> authService.authorize(operation, context))
@@ -663,14 +664,15 @@ public class DefaultEntityService implements EntityService {
                                                       EntityContext context,
                                                       Function<EntityHolder<?>, BulkOperation> persistLogic){
         // We do this since ideally processing data before auth is not ideal
-        // However, in the case of Multi-tenant access we must extract tenant ids prior to calling auth
+        // However, in the case of Multi-tenant access the data names the tenants, so they must be
+        // extracted before the context is validated and authorized
         if(structure.isMultiTenantSelectionEnabled()){
 
-            return validateContext(context)
-                    .thenCompose(un -> delegatingUpsertPreProcessor.processArray(entities, context))
+            return delegatingUpsertPreProcessor.processArray(entities, context)
                     .thenCompose(entityList ->
-                                         authService.authorize(operation, context)
-                                                    .thenCompose(un -> doPersistBulkLogic(entityList, persistLogic)))
+                                         validateContext(context)
+                                                 .thenCompose(un -> authService.authorize(operation, context))
+                                                 .thenCompose(un -> doPersistBulkLogic(entityList, persistLogic)))
                     .thenApply(unused -> null);
         }else {
             return validateContext(context)
@@ -829,63 +831,48 @@ public class DefaultEntityService implements EntityService {
     }
 
     private CompletableFuture<Void> validateContext(final EntityContext context){
-        if(structure.getMultiTenancyType() == MultiTenancyType.SHARED){
-            if(context.getParticipant() != null && context.getParticipant().getTenantId() != null) {
+        CompletableFuture<Void> ret;
+        String participantTenantId = context.getParticipant() != null ? context.getParticipant().getTenantId() : null;
 
-                // Check if tenant selection is trying to be used but not enabled
-                if (ObjectUtils.isNotEmpty(context.getTenantSelection())
-                        && !structure.isMultiTenantSelectionEnabled()) {
-
-                    return CompletableFuture.failedFuture(
-                            new IllegalArgumentException("Multi-tenant access for this Structure %s is not enabled".formatted(structure.getName()))
-                    );
-                } else {
-                    return CompletableFuture.completedFuture(null);
-                }
-            }else{
-                return CompletableFuture.failedFuture(new IllegalArgumentException("Participant with a TenantId is required when MultiTenancyType is SHARED"));
-            }
-        }else if(ObjectUtils.isNotEmpty(context.getTenantSelection())){
-            // This check is here since continuum will allow any published service to be called.
-            // So someone could call the admin service even though it is not enabled for this Structure
-            // Multitenant access can only be enabled if MultiTenancyType.SHARED
-            return CompletableFuture.failedFuture(
+        // Continuum allows any published service to be called, so the admin service can reach a Structure
+        // that never enabled multi-tenant selection; the selection is refused here
+        if(context.hasTenantSelection() && !structure.isMultiTenantSelectionEnabled()){
+            ret = CompletableFuture.failedFuture(
                     new IllegalArgumentException("Multi-tenant access for this Structure %s is not enabled".formatted(structure.getName()))
             );
+        }else if(structure.getMultiTenancyType() != MultiTenancyType.SHARED){
+            ret = CompletableFuture.completedFuture(null);
+        }else if(participantTenantId != null){
+            // A participant that belongs to a tenant is confined to it, whatever selection it asks for
+            if(context.hasTenantSelection()
+                    && !List.of(participantTenantId).equals(context.getTenantSelection())){
+                ret = CompletableFuture.failedFuture(new AuthorizationException("Participant may only select its own tenant"));
+            }else{
+                ret = CompletableFuture.completedFuture(null);
+            }
+        }else if(context.hasTenantSelection()){
+            ret = CompletableFuture.completedFuture(null);
         }else{
-            return CompletableFuture.completedFuture(null);
+            ret = CompletableFuture.failedFuture(new IllegalArgumentException("Participant with a TenantId is required when MultiTenancyType is SHARED"));
         }
+        return ret;
     }
 
     private CompletableFuture<List<MultiGetOperation>> validate_ComposeIds_AddTenantsToContext(final List<TenantSpecificId> ids, EntityContext entityContext){
-        if(structure.getMultiTenancyType() == MultiTenancyType.SHARED
-                && structure.isMultiTenantSelectionEnabled()){
+        List<MultiGetOperation> ret = new ArrayList<>(ids.size());
+        Set<String> tenants = new LinkedHashSet<>();
+        for (TenantSpecificId id : ids) {
+            MultiGetOperation.Builder builder = new MultiGetOperation.Builder();
+            builder.index(structure.getItemIndex())
+                   .id(composeId(id))
+                   .routing(id.tenantId());
 
-            if(entityContext.getParticipant() != null && entityContext.getParticipant().getTenantId() != null) {
-
-                List<MultiGetOperation> ret = new ArrayList<>(ids.size());
-                List<String> tenants = new ArrayList<>(ids.size());
-                for (TenantSpecificId id : ids) {
-                    MultiGetOperation.Builder builder = new MultiGetOperation.Builder();
-                    builder.index(structure.getItemIndex())
-                           .id(id.tenantId() + "-" + id.entityId())
-                           .routing(id.tenantId());
-
-                    ret.add(builder.build());
-                    tenants.add(id.tenantId());
-                }
-
-                entityContext.setTenantSelection(tenants);
-                return CompletableFuture.completedFuture(ret);
-
-            }else{
-                return CompletableFuture.failedFuture(new IllegalArgumentException("Participant with a TenantId is required when MultiTenancyType is SHARED"));
-            }
-        }else{
-            return CompletableFuture.failedFuture(
-                    new IllegalArgumentException("Multi-tenant access for this Structure %s is not enabled".formatted(structure.getName()))
-            );
+            ret.add(builder.build());
+            tenants.add(id.tenantId());
         }
+
+        entityContext.setTenantSelection(new ArrayList<>(tenants));
+        return validateContext(entityContext).thenApply(un -> ret);
     }
 
 }
