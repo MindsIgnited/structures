@@ -250,6 +250,7 @@ const multipleTenantUsers = await adminService.findAll(['tenant-123', 'tenant-45
   - `['*']` to access all tenants
   - `['tenant-id']` to access a specific tenant
   - `['tenant-id-1', 'tenant-id-2']` to access multiple specific tenants
+- On save the data names the tenant an entity belongs to. Leave the field at its `''` default and it is filled with the tenant of the participant performing the save
 
 ## Version Control Decorators
 

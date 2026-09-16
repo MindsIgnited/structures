@@ -513,7 +513,7 @@ public class DefaultEntityService implements EntityService {
                     String tenant = extractTenant(object, tenantIdFieldName);
                     // Find and search methods will use the logged in tenant if no multi tenant selection is provided
                     if(context.hasTenantSelection()){
-                        if(tenant != null && tenantIds.contains(tenant)){
+                        if(tenant != null && (context.selectsAllTenants() || tenantIds.contains(tenant))){
                             result.add(object);
                         }else{
                             log.error(
