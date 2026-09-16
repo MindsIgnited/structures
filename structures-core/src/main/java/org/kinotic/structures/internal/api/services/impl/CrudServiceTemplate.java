@@ -18,9 +18,9 @@ import co.elastic.clients.json.JsonpDeserializer;
 import co.elastic.clients.json.JsonpMapperBase;
 import co.elastic.clients.transport.JsonEndpoint;
 import co.elastic.clients.transport.endpoints.EndpointWithResponseMapperAttr;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.type.TypeFactory;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.type.TypeFactory;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.continuum.core.api.crud.*;
 import org.kinotic.structures.api.domain.RawJson;
@@ -407,7 +407,7 @@ public class CrudServiceTemplate {
                         if (lastSort != null) {
                             try {
                                 cursor = objectMapper.writeValueAsString(lastSort);
-                            } catch(JsonProcessingException e){
+                            } catch(JacksonException e){
                                 throw new IllegalStateException("Sort Array could not be serialized to JSON", e);
                             }
                         }
@@ -572,7 +572,7 @@ public class CrudServiceTemplate {
                                                                                                               FieldValue.class));
                     builder.searchAfter(searchAfter);
                 }
-            } catch (JsonProcessingException e) {
+            } catch (JacksonException e) {
                 throw new IllegalStateException("Cursor could not be deserialized", e);
             }
 

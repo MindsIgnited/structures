@@ -1,7 +1,7 @@
 import { ObjectC3Type } from '@kinotic/continuum-idl'
 import { ConsoleLogger } from '@kinotic/structures-cli/dist/internal/Logger.js'
 import { CodeGenerationService } from '@kinotic/structures-cli/dist/internal/CodeGenerationService.js'
-import { NamespaceConfiguration } from '@kinotic/structures-cli/dist/internal/state/StructuresProject.js'
+import { TypescriptProjectConfig } from '@kinotic/structures-api'
 
 export class EntityDefinitionGenerator {
     private readonly codeGenerationService: CodeGenerationService
@@ -19,8 +19,9 @@ export class EntityDefinitionGenerator {
     async generateDefinitions(): Promise<Map<string, ObjectC3Type>> {
         const definitions = new Map<string, ObjectC3Type>()
         
-        const namespaceConfig = new NamespaceConfiguration()
-        namespaceConfig.namespaceName = this.namespace
+        const namespaceConfig = new TypescriptProjectConfig()
+        namespaceConfig.application = this.namespace
+        namespaceConfig.fileExtensionForImports = '.js'
         namespaceConfig.validate = false
         namespaceConfig.entitiesPaths = [this.entitiesPath]
         namespaceConfig.generatedPath = this.generatedPath

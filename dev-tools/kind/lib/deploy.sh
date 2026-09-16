@@ -34,6 +34,7 @@ add_helm_repos() {
         "grafana:https://grafana.github.io/helm-charts"
         "open-telemetry:https://open-telemetry.github.io/opentelemetry-helm-charts"
         "ingress-nginx:https://kubernetes.github.io/ingress-nginx"
+        "metrics-server:https://kubernetes-sigs.github.io/metrics-server/"
         "jetstack:https://charts.jetstack.io"
     )
     
@@ -261,6 +262,53 @@ deploy_nginx_ingress() {
     fi
     
     success "NGINX Ingress Controller deployed successfully"
+    return 0
+}
+
+#
+# Deploy metrics-server so kubectl top (and anything else on the metrics API) works.
+# KinD's kubelets present self-signed certificates, which the values file tells metrics-server to accept.
+# Args:
+#   $1: Cluster name
+# Returns:
+#   0 on success, 1 on failure
+# Example:
+#   deploy_metrics_server "structures-cluster"
+#
+deploy_metrics_server() {
+    local cluster_name="$1"
+    local context="kind-${cluster_name}"
+
+    progress "Deploying metrics-server..."
+
+    local values_flags
+    values_flags=$(get_service_helm_flags "metrics-server") || return 1
+
+    progress "Using metrics-server configuration from: $(get_service_values_path metrics-server)"
+
+    local helm_output
+    # shellcheck disable=SC2086
+    helm_output=$(helm upgrade --install metrics-server metrics-server/metrics-server \
+        --kube-context "${context}" \
+        --namespace kube-system \
+        ${values_flags} \
+        --wait --timeout 5m 2>&1)
+
+    local exit_code=$?
+
+    if [[ ${exit_code} -ne 0 ]]; then
+        error "Failed to deploy metrics-server"
+        echo ""
+        echo "Helm output:"
+        echo "${helm_output}"
+        echo ""
+        echo "Check pod status:"
+        echo "  kubectl get pods -n kube-system -l app.kubernetes.io/name=metrics-server --context ${context}"
+        echo ""
+        return 1
+    fi
+
+    success "metrics-server deployed successfully (kubectl top pods)"
     return 0
 }
 

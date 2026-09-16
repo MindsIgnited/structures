@@ -21,21 +21,27 @@ dependencies {
 	implementation "com.github.ben-manes.caffeine:caffeine"
 
     // using api directly 
-    implementation "javax.annotation:javax.annotation-api"
+    implementation "jakarta.annotation:jakarta.annotation-api"
 
 	annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'io.projectreactor:reactor-test'
+    // Jackson 2, test scope only: JsonPathBenchmark measures the pre-upgrade path against it as the
+    // baseline. Nothing in Structures uses Jackson 2; it is on the runtime classpath anyway as a
+    // transitive of jjwt, swagger-core and the OpenAI client.
     testImplementation 'com.fasterxml.jackson.core:jackson-databind'
-    testImplementation "org.testcontainers:testcontainers:${testContainersVersion}"
-    testImplementation "org.testcontainers:junit-jupiter:${testContainersVersion}"
-	testImplementation "org.testcontainers:elasticsearch:${testContainersVersion}"
-	testImplementation 'com.github.dasniko:testcontainers-keycloak:3.8.0'
-
-	// Fix runtime linkage error in Testcontainers tar/copy (commons-compress expects newer commons-io).
-	// Without this you can see: NoSuchMethodError FileTimes.toUnixTime(FileTime)
-	testImplementation 'commons-io:commons-io:2.21.0'
+    // The libraries whose linkage against the versions the BOMs select is pinned by tests
+    testImplementation 'io.vertx:vertx-core'
+    testImplementation 'io.vertx:vertx-web-graphql'
+    testImplementation 'com.graphql-java:graphql-java'
+    testImplementation 'io.swagger.core.v3:swagger-core-jakarta'
+    testImplementation 'io.swagger.core.v3:swagger-models-jakarta'
+    // Testcontainers 2 at the version the Boot BOM manages. Pinned by TestcontainersDockerApiTest.
+    testImplementation 'org.testcontainers:testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-elasticsearch'
+    testImplementation 'com.github.dasniko:testcontainers-keycloak'
 }
 
 test {

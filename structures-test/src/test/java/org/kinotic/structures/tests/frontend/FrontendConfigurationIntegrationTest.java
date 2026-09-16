@@ -1,7 +1,8 @@
 package org.kinotic.structures.tests.frontend;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.auth.api.config.OidcSecurityServiceProperties;
@@ -21,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class FrontendConfigurationIntegrationTest extends ElasticTestBase {
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = JsonMapper.builder().build();
 
     @Autowired
     private OidcSecurityServiceProperties oidcSecurityServiceProperties;

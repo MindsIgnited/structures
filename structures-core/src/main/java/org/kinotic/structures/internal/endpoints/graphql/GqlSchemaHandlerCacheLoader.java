@@ -183,7 +183,7 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
                         }
 
                         // Add all additional types to the schema
-                        Map<String, GraphQLType> additionalTypes = new HashMap<>(converter.getConversionContext()
+                        Map<String, GraphQLNamedType> additionalTypes = new HashMap<>(converter.getConversionContext()
                                                                                           .state()
                                                                                           .getReferencedTypes());
 

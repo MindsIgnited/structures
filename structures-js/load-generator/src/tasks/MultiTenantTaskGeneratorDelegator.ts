@@ -41,6 +41,10 @@ export class MultiTenantTaskGeneratorDelegator implements ITaskGenerator {
         return hasMoreTasks
     }
 
+    async shutdown(): Promise<void> {
+        await this.currentTaskGenerator.shutdown?.()
+    }
+
 
 
 }

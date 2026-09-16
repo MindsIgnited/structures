@@ -11,7 +11,7 @@ export class BaseProductEntityService extends EntityService<Product> {
   private readonly shouldValidate: boolean
 
   constructor(shouldValidate: boolean = true, entitiesService?: IEntitiesService) {
-    super('', 'Product', entitiesService)
+    super('ecommerce', 'Product', entitiesService)
     this.shouldValidate = shouldValidate
   }
 

@@ -65,6 +65,9 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - name: tmp-work
               mountPath: /workspace/ignite/work

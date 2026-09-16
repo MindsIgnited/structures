@@ -468,6 +468,13 @@ EOF
         return "${EXIT_DEPLOYMENT_FAILED}"
     fi
     blank_line
+
+    # Deploy metrics-server (kubectl top, used by the load-test tooling)
+    section "Deploying Metrics Server"
+    if ! deploy_metrics_server "${CLUSTER_NAME}"; then
+        return "${EXIT_DEPLOYMENT_FAILED}"
+    fi
+    blank_line
     
     # Deploy dependencies if requested
     if [[ "${DEPLOY_DEPS}" == "1" ]]; then

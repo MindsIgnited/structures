@@ -19,13 +19,16 @@ dependencies {
 	implementation 'org.springframework.ai:spring-ai-commons'
 	implementation 'org.springframework.ai:spring-ai-model'
 	implementation 'org.springframework.ai:spring-ai-mcp'
-	implementation 'org.springframework.ai:spring-ai-starter-model-openai'
+	implementation('org.springframework.ai:spring-ai-starter-model-openai') {
+		// The OpenAI client carries the javax flavour of the swagger annotations, every class of which
+		// the jakarta flavour Structures uses also defines. Same names, one copy.
+		exclude group: 'io.swagger.core.v3', module: 'swagger-annotations'
+	}
 	
 	implementation "io.vertx:vertx-web"
 	implementation "io.vertx:vertx-web-graphql"
 	implementation "io.vertx:vertx-web-client"
 	implementation "io.vertx:vertx-health-check"
-	implementation "me.escoffier.vertx:vertx-completable-future"
 
 	implementation 'org.apache.ignite:ignite-core'
 	implementation 'org.apache.ignite:ignite-kubernetes'
@@ -36,17 +39,17 @@ dependencies {
 	implementation "org.kinotic:continuum-idl"
 
 	implementation 'com.fasterxml.jackson.core:jackson-annotations'
-	implementation 'com.fasterxml.jackson.core:jackson-core'
-	implementation 'com.fasterxml.jackson.core:jackson-databind'
+	implementation 'tools.jackson.core:jackson-core'
+	implementation 'tools.jackson.core:jackson-databind'
 
 	implementation "com.github.ben-manes.caffeine:caffeine"
 
 	implementation "com.graphql-java:graphql-java"
-	implementation "com.apollographql.federation:federation-graphql-java-support:${graphQlFederationJvmVersion}"
-	implementation "com.graphql-java:graphql-java-extended-scalars:${graphQlJavaExtendedScalarsVersion}"
+	implementation "com.apollographql.federation:federation-graphql-java-support"
+	implementation "com.graphql-java:graphql-java-extended-scalars"
 
-	implementation "io.swagger.core.v3:swagger-models:${swaggerCoreVersion}"
-	implementation "io.swagger.core.v3:swagger-core:${swaggerCoreVersion}"
+	implementation "io.swagger.core.v3:swagger-models-jakarta"
+	implementation "io.swagger.core.v3:swagger-core-jakarta"
 
 	implementation "com.github.slugify:slugify:${slugifyVersion}"
 

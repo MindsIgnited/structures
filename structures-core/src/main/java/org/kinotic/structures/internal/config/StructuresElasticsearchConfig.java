@@ -11,11 +11,12 @@ import org.kinotic.structures.api.config.StructuresProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.json.JsonpMapper;
-import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.json.jackson.Jackson3JsonpMapper;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 
@@ -67,9 +68,20 @@ public class StructuresElasticsearchConfig {
         return new ElasticsearchAsyncClient(transport);
     }
 
+    /**
+     * Spring Boot used to auto-configure this client from {@code spring.elasticsearch.uris}. Boot 4 moved that
+     * auto-configuration into a module that requires the Elasticsearch 9 client, so it is declared here instead,
+     * sharing the transport of {@link #elasticsearchAsyncClient(JsonpMapper)} so both clients always talk to the
+     * cluster described by {@code structures.elastic-connections}.
+     */
     @Bean
-    public JsonpMapper jsonpMapper(ObjectMapper objectMapper){
-        return new JacksonJsonpMapper(objectMapper);
+    public ElasticsearchClient elasticsearchClient(ElasticsearchAsyncClient elasticsearchAsyncClient){
+        return new ElasticsearchClient(elasticsearchAsyncClient._transport());
+    }
+
+    @Bean
+    public JsonpMapper jsonpMapper(JsonMapper jsonMapper){
+        return new Jackson3JsonpMapper(jsonMapper);
     }
 
 }

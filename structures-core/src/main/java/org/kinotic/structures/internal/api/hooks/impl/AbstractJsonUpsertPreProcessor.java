@@ -1,11 +1,13 @@
 package org.kinotic.structures.internal.api.hooks.impl;
 
-import com.fasterxml.jackson.core.JsonEncoding;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonToken;
-import com.fasterxml.jackson.core.util.ByteArrayBuilder;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JsonEncoding;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.core.JsonParser;
+import tools.jackson.core.JsonToken;
+import tools.jackson.core.util.ByteArrayBuilder;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectReader;
 import org.kinotic.continuum.idl.api.schema.decorators.C3Decorator;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.EntityContext;
@@ -32,9 +34,16 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
 
     protected final StructuresProperties structuresProperties;
     protected final ObjectMapper objectMapper;
+    /** Reads a single field value off the streaming parser; see the constructor */
+    private final ObjectReader fieldReader;
     protected final Structure structure;
     // Map of json path to decorator logic
     private final Map<String, DecoratorLogic> fieldPreProcessors;
+    // Readers bound to each decorated field's type, and to String for the tenant id field. forType()
+    // on an unbound reader allocates a new ObjectReader per call, which on this path is per field
+    // per entity; bound once here it is a plain read.
+    private final Map<String, ObjectReader> boundFieldReaders;
+    private final ObjectReader stringReader;
 
 
     public AbstractJsonUpsertPreProcessor(StructuresProperties structuresProperties,
@@ -43,8 +52,18 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
                                           Map<String, DecoratorLogic> fieldPreProcessors) {
         this.structuresProperties = structuresProperties;
         this.objectMapper = objectMapper;
+        // This reads one field value at a time off a parser positioned mid-stream, and Jackson 3 fails
+        // a read that leaves tokens behind it by default (FAIL_ON_TRAILING_TOKENS). A reader from the
+        // shared mapper with that one check off keeps the mapper's caches and every other setting -
+        // where rebuilding a mapper here would cost a full mapper per structure per cache load.
+        this.fieldReader = objectMapper.reader().without(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         this.structure = structure;
         this.fieldPreProcessors = fieldPreProcessors;
+        this.boundFieldReaders = new HashMap<>();
+        for (Map.Entry<String, DecoratorLogic> entry : fieldPreProcessors.entrySet()) {
+            boundFieldReaders.put(entry.getKey(), fieldReader.forType(entry.getValue().getProcessor().supportsFieldType()));
+        }
+        this.stringReader = fieldReader.forType(String.class);
     }
 
     protected abstract JsonParser createParser(T input);
@@ -64,18 +83,20 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
         int objectDepth = 0;
         int arrayDepth = 0;
 
-        try(JsonParser jsonParser = createParser(json)) {
+        // The generator is closed with the parser: a generator returns its buffers to Jackson's pool
+        // only on close, and one that is merely flushed leaves a fresh 8 KB buffer behind per call
+        ByteArrayBuilder byteArrayBuilder = new ByteArrayBuilder();
+        try(JsonParser jsonParser = createParser(json);
+            JsonGenerator jsonGenerator = objectMapper.createGenerator(byteArrayBuilder, JsonEncoding.UTF8)) {
             String currentId = null;
             String currentTenantId = null;
             String currentVersion = null;
-            ByteArrayBuilder byteArrayBuilder = new ByteArrayBuilder();
-            JsonGenerator jsonGenerator = objectMapper.getFactory().createGenerator(byteArrayBuilder, JsonEncoding.UTF8);
 
             while (jsonParser.nextToken() != null) {
 
-                JsonToken token = jsonParser.getCurrentToken();
+                JsonToken token = jsonParser.currentToken();
 
-                if (token == JsonToken.FIELD_NAME) {
+                if (token == JsonToken.PROPERTY_NAME) {
 
                     String fieldName = jsonParser.currentName();
 
@@ -96,16 +117,16 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
 
                         C3Decorator decorator = preProcessorLogic.getDecorator();
                         UpsertFieldPreProcessor<C3Decorator, Object, Object> preProcessor = preProcessorLogic.getProcessor();
-                        Object input = objectMapper.readValue(jsonParser, preProcessor.supportsFieldType());
+                        Object input = boundFieldReaders.get(currentJsonPath).readValue(jsonParser);
                         Object value = preProcessor.process(structure, fieldName, decorator, input, context);
 
                         // We exclude the version field from the data to be persisted
                         if(!(decorator instanceof VersionDecorator)) {
                             if (value != null) {
-                                jsonGenerator.writeFieldName(fieldName);
-                                jsonGenerator.writeObject(value);
+                                jsonGenerator.writeName(fieldName);
+                                jsonGenerator.writePOJO(value);
                             } else {
-                                jsonGenerator.writeNullField(fieldName);
+                                jsonGenerator.writeNullProperty(fieldName);
                             }
                         }
 
@@ -148,10 +169,10 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
 
                             // Elasticsearch requires a @timestamp field to contain the time data so we just duplicate the value
                             if(value != null){
-                                jsonGenerator.writeFieldName("@timestamp");
-                                jsonGenerator.writeObject(value);
+                                jsonGenerator.writeName("@timestamp");
+                                jsonGenerator.writePOJO(value);
                             }else{
-                                jsonGenerator.writeNullField("@timestamp");
+                                jsonGenerator.writeNullProperty("@timestamp");
                             }
                         }
                     }else{
@@ -163,13 +184,13 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
                             // since the tenant id field is already present check its value to make sure it is null
                             // or matches the logged in tenant
                             jsonParser.nextToken(); // move to value token
-                            currentTenantId = objectMapper.readValue(jsonParser, String.class);
+                            currentTenantId = stringReader.readValue(jsonParser);
                             if(currentTenantId != null && !currentTenantId.equals(context.getParticipant().getTenantId())){
                                 throw new IllegalArgumentException("Tenant Id invalid for logged in participant");
                             }
 
-                            jsonGenerator.writeFieldName(fieldName);
-                            jsonGenerator.writeObject(currentTenantId);
+                            jsonGenerator.writeName(fieldName);
+                            jsonGenerator.writePOJO(currentTenantId);
 
                         }else{
                             jsonGenerator.copyCurrentEvent(jsonParser);
@@ -198,7 +219,7 @@ public abstract class AbstractJsonUpsertPreProcessor<T> implements UpsertPreProc
                         if(structure.getMultiTenancyType() == MultiTenancyType.SHARED
                                 && currentTenantId == null){
                             currentTenantId = context.getParticipant().getTenantId();
-                            jsonGenerator.writeFieldName(structuresProperties.getTenantIdFieldName());
+                            jsonGenerator.writeName(structuresProperties.getTenantIdFieldName());
                             jsonGenerator.writeString(currentTenantId);
                         }
 

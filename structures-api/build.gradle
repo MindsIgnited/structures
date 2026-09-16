@@ -8,19 +8,21 @@ dependencies {
     // The can be removed once RawJson is no longer needed to extend JsonpSerializable
     api 'co.elastic.clients:elasticsearch-java'
 
+    // Jackson 3. The annotations keep the com.fasterxml.jackson.annotation package; everything else
+    // lives under tools.jackson. Jackson 2 is not declared anywhere in Structures - what remains of it
+    // on the classpath arrives with Vert.x, jjwt, swagger-core and the OpenAI client, and is theirs.
     api 'com.fasterxml.jackson.core:jackson-annotations'
-    // The two jackson libs below can be removed once RawJson is no longer needed to extend JsonpSerializable
-    api 'com.fasterxml.jackson.core:jackson-core'
-    api 'com.fasterxml.jackson.core:jackson-databind'
+    api 'tools.jackson.core:jackson-core'
+    api 'tools.jackson.core:jackson-databind'
 
     api "org.kinotic:continuum-core"
     api "org.kinotic:continuum-idl"
 
     // Test dependencies
-    testImplementation 'org.mockito:mockito-core:5.11.0'
-    testImplementation 'org.mockito:mockito-junit-jupiter:5.11.0'
+    testImplementation 'org.mockito:mockito-core'
+    testImplementation 'org.mockito:mockito-junit-jupiter'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
-	testImplementation "org.testcontainers:testcontainers:${testContainersVersion}"
-	testImplementation "org.testcontainers:elasticsearch:${testContainersVersion}"
+    testImplementation 'org.testcontainers:testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-elasticsearch'
 }
 

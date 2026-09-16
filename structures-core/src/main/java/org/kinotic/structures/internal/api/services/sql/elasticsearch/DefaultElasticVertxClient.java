@@ -5,20 +5,20 @@ import co.elastic.clients.elasticsearch._types.ErrorResponse;
 import co.elastic.clients.elasticsearch.sql.TranslateResponse;
 import co.elastic.clients.json.JsonpMapper;
 import co.elastic.clients.json.SimpleJsonpMapper;
-import com.fasterxml.jackson.core.JsonEncoding;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JsonEncoding;
+import tools.jackson.core.JsonGenerator;
+import tools.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.PoolOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.tracing.TracingPolicy;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
-import me.escoffier.vertx.completablefuture.VertxCompletableFuture;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.mutable.MutableObject;
 import org.kinotic.continuum.core.api.crud.CursorPage;
@@ -56,7 +56,6 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     private final ObjectMapper objectMapper;
     private final HttpRequest<Buffer> sqlQueryRequest;
     private final HttpRequest<Buffer> sqlTranslateRequest;
-    private final Vertx vertx;
     private final WebClient webClient;
     private final Cache<String, List<ElasticColumn>> columnsCache;
 
@@ -66,7 +65,6 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                                      Vertx vertx,
                                      DefaultCaffeineCacheFactory cacheFactory) {
         this.objectMapper = objectMapper;
-        this.vertx = vertx;
         this.columnsCache = cacheFactory.<String, List<ElasticColumn>>newBuilder()
                 .name("elasticColumnsCache")
                 .expireAfterAccess(Duration.ofMinutes(35))
@@ -75,12 +73,11 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
 
         WebClientOptions options = new WebClientOptions()
                 .setConnectTimeout((int) structuresProperties.getElasticConnectionTimeout().toMillis())
-                .setMaxPoolSize(500)
                 .setTcpNoDelay(true)
                 .setTcpKeepAlive(true)
                 .setTracingPolicy(TracingPolicy.IGNORE);
 
-        this.webClient = WebClient.create(vertx, options);
+        this.webClient = WebClient.create(vertx, options, new PoolOptions().setHttp1MaxSize(500));
 
         Validate.notEmpty(structuresProperties.getElasticConnections(), "No Elastic connections defined");
 
@@ -158,41 +155,43 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
             }
         }
 
-        VertxCompletableFuture<Page<T>> fut = new VertxCompletableFuture<>(vertx);
-        sqlQueryRequest.sendJsonObject(json, ar -> {
-            if(ar.succeeded()){
-                if(ar.result().statusCode() == 200) {
-                    Buffer buffer = ar.result().body();
-                    if (RawJson.class.isAssignableFrom(type)) {
-                        try {
-                            @SuppressWarnings("unchecked")
-                            Page<T> page = (Page<T>) processBufferToRawJson(buffer, cursorProvided.getValue());
-                            fut.complete(page);
-                        } catch (Exception e) {
-                            fut.completeExceptionally(e);
-                        }
-                    } else if (Map.class.isAssignableFrom(type)) {
-                        try {
-                            @SuppressWarnings("unchecked")
-                            Page<T> page = (Page<T>) processBufferToMap(buffer, cursorProvided.getValue());
-                            fut.complete(page);
-                        } catch (Exception e) {
-                            fut.completeExceptionally(e);
-                        }
-                    } else {
-                        fut.completeExceptionally(new IllegalArgumentException("Type: " + type.getName() + " is not supported at this time"));
-                    }
-                }else{
-                    try {
-                        fut.completeExceptionally(convertErrorResponse(new ByteArrayInputStream(ar.result().body().getBytes())));
-                    } catch (Exception e) {
-                        fut.completeExceptionally(new IllegalStateException("Could not convert error response " + e.getMessage(), e));
-                    }
-                }
-            }else{
-                fut.completeExceptionally(ar.cause());
-            }
-        });
+        // Completed from the WebClient's handler, on a Vert.x context, so dependent stages already run there
+        CompletableFuture<Page<T>> fut = new CompletableFuture<>();
+        sqlQueryRequest.sendJsonObject(json)
+                       .onComplete(ar -> {
+                           if(ar.succeeded()){
+                               if(ar.result().statusCode() == 200) {
+                                   Buffer buffer = ar.result().body();
+                                   if (RawJson.class.isAssignableFrom(type)) {
+                                       try {
+                                           @SuppressWarnings("unchecked")
+                                           Page<T> page = (Page<T>) processBufferToRawJson(buffer, cursorProvided.getValue());
+                                           fut.complete(page);
+                                       } catch (Exception e) {
+                                           fut.completeExceptionally(e);
+                                       }
+                                   } else if (Map.class.isAssignableFrom(type)) {
+                                       try {
+                                           @SuppressWarnings("unchecked")
+                                           Page<T> page = (Page<T>) processBufferToMap(buffer, cursorProvided.getValue());
+                                           fut.complete(page);
+                                       } catch (Exception e) {
+                                           fut.completeExceptionally(e);
+                                       }
+                                   } else {
+                                       fut.completeExceptionally(new IllegalArgumentException("Type: " + type.getName() + " is not supported at this time"));
+                                   }
+                               }else{
+                                   try {
+                                       fut.completeExceptionally(convertErrorResponse(new ByteArrayInputStream(ar.result().body().getBytes())));
+                                   } catch (Exception e) {
+                                       fut.completeExceptionally(new IllegalStateException("Could not convert error response " + e.getMessage(), e));
+                                   }
+                               }
+                           }else{
+                               fut.completeExceptionally(ar.cause());
+                           }
+                       });
         return fut;
     }
 
@@ -200,7 +199,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     @Override
     public CompletableFuture<TranslateResponse> translateSql(String statement,
                                                              List<?> parameters){
-        VertxCompletableFuture<TranslateResponse> responseFuture = new VertxCompletableFuture<>(vertx);
+        CompletableFuture<TranslateResponse> responseFuture = new CompletableFuture<>();
         JsonObject json = new JsonObject().put("query", statement);
         if(parameters != null) {
             JsonArray paramsJson = new JsonArray();
@@ -209,29 +208,38 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
             }
             json.put("params", paramsJson);
         }
-        sqlTranslateRequest.sendJsonObject(json, ar -> {
-            if(ar.succeeded()){
-                InputStream input = new ByteArrayInputStream(ar.result()
-                                                               .body()
-                                                               .getBytes());
-                if(ar.result().statusCode() == 200) {
-                    try {
-                        TranslateResponse translateResponse = TranslateResponse.of(builder -> {
-                            JsonpMapper mapper = SimpleJsonpMapper.INSTANCE; // We don't want to fail on unknown fields
-                            builder.withJson(mapper.jsonProvider().createParser(input), mapper);
-                            return builder;
-                        });
-                        responseFuture.complete(translateResponse);
-                    } catch (Exception e) {
-                        responseFuture.completeExceptionally(e);
-                    }
-                }else{
-                    responseFuture.completeExceptionally(convertErrorResponse(input));
-                }
-            }else{
-                responseFuture.completeExceptionally(ar.cause());
-            }
-        });
+        sqlTranslateRequest.sendJsonObject(json)
+                           .onComplete(ar -> {
+                               if(ar.succeeded()){
+                                   InputStream input = new ByteArrayInputStream(ar.result()
+                                                                                  .body()
+                                                                                  .getBytes());
+                                   if(ar.result().statusCode() == 200) {
+                                       try {
+                                           TranslateResponse translateResponse = TranslateResponse.of(builder -> {
+                                               JsonpMapper mapper = SimpleJsonpMapper.INSTANCE; // We don't want to fail on unknown fields
+                                               builder.withJson(mapper.jsonProvider().createParser(input), mapper);
+                                               return builder;
+                                           });
+                                           responseFuture.complete(translateResponse);
+                                       } catch (Exception e) {
+                                           responseFuture.completeExceptionally(e);
+                                       }
+                                   }else{
+                                       // Parsing the error body can itself throw; without this the future is
+                                       // never completed and the caller waits on it forever
+                                       try {
+                                           responseFuture.completeExceptionally(convertErrorResponse(input));
+                                       } catch (Exception e) {
+                                           responseFuture.completeExceptionally(
+                                                   new IllegalStateException("Could not convert error response "
+                                                                             + e.getMessage(), e));
+                                       }
+                                   }
+                               }else{
+                                   responseFuture.completeExceptionally(ar.cause());
+                               }
+                           });
         return responseFuture;
     }
 
@@ -292,15 +300,16 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         for(List<Object> row : response.getRows()){
 
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            JsonGenerator jsonGenerator = objectMapper.getFactory().createGenerator(outputStream, JsonEncoding.UTF8);
-            jsonGenerator.writeStartObject();
+            // Closed per row: a generator returns its buffers to Jackson's pool only on close
+            try (JsonGenerator jsonGenerator = objectMapper.createGenerator(outputStream, JsonEncoding.UTF8)) {
+                jsonGenerator.writeStartObject();
 
-            for(int colIdx = 0; colIdx < row.size(); colIdx++){
-                jsonGenerator.writeFieldName(elasticColumns.get(colIdx).getName());
-                jsonGenerator.writePOJO(row.get(colIdx));
+                for(int colIdx = 0; colIdx < row.size(); colIdx++){
+                    jsonGenerator.writeName(elasticColumns.get(colIdx).getName());
+                    jsonGenerator.writePOJO(row.get(colIdx));
+                }
+                jsonGenerator.writeEndObject();
             }
-            jsonGenerator.writeEndObject();
-            jsonGenerator.flush();
             ret.add(new RawJson(outputStream.toByteArray()));
         }
 

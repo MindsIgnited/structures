@@ -12,14 +12,14 @@ importers:
         specifier: ^8.0.2
         version: 8.5.2(@types/node@24.12.4)
       '@kinotic/continuum-client':
-        specifier: 2.14.10
-        version: 2.14.10(reflect-metadata@0.2.2)
+        specifier: 3.0.0
+        version: 3.0.0(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl':
         specifier: ^2.0.4
         version: 2.0.4
       '@kinotic/structures-api':
-        specifier: ^3.5.3
-        version: 3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))
+        specifier: ^3.6.0
+        version: 3.6.0(@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2))
       '@oclif/core':
         specifier: ^4.8.0
         version: 4.11.4
@@ -827,18 +827,18 @@ packages:
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
     engines: {node: '>=12'}
 
-  '@kinotic/continuum-client@2.14.10':
-    resolution: {integrity: sha512-W+o2karVVqaWwyWwgobHfWR54m5weUivc5+H0JuLrXng71jat4Q/S/TAieCTJlVBMCx+PZ86P+zs7qDyMiplAA==}
+  '@kinotic/continuum-client@3.0.0':
+    resolution: {integrity: sha512-ZIjTBb/4JjZ7nbKwFY10WTDTFO13HFnMNzaBCg4YRbs+sD5XzzfJxc106RwMuXCqODaTPPOvgZ8ZQFPPjDrsBA==}
     peerDependencies:
       reflect-metadata: ^0.2.2
 
   '@kinotic/continuum-idl@2.0.4':
     resolution: {integrity: sha512-akXcSw6Pw6hdorPV1lU2RXvMS+kpWZQnzfZv3GysyUrVU8IAZU5N1FmBM8QmthJUz+SXNdHgYzuireaV8aLtAw==}
 
-  '@kinotic/structures-api@3.5.3':
-    resolution: {integrity: sha512-a5gmJbnHhIGdare9o02R1CQkz5LlNUBv+pYqt5a5cjZE15E6/DDJcj0u4uE5jrQGiIJfUL+GLo2GHTMjz/0wiw==}
+  '@kinotic/structures-api@3.6.0':
+    resolution: {integrity: sha512-JDV1uWZjL/pJKaWiAxHaxj4zRTBuuzwz2bkCxN+/4NyJ3E8HhzPrQdzdFekHWLXX49alMGCfC+a+EK7sjcbkqQ==}
     peerDependencies:
-      '@kinotic/continuum-client': ^2.14.10
+      '@kinotic/continuum-client': ^3.0.0
 
   '@napi-rs/wasm-runtime@0.2.7':
     resolution: {integrity: sha512-5yximcFK5FNompXfJFoWanu5l8v1hNGqNHh9du1xETp9HWk/B/PzvchX55WYOPaIeNglG8++68AAiauBAtbnzw==}
@@ -4528,7 +4528,7 @@ snapshots:
       wrap-ansi: 8.1.0
       wrap-ansi-cjs: wrap-ansi@7.0.0
 
-  '@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2)':
+  '@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/semantic-conventions': 1.40.0
@@ -4546,9 +4546,9 @@ snapshots:
 
   '@kinotic/continuum-idl@2.0.4': {}
 
-  '@kinotic/structures-api@3.5.3(@kinotic/continuum-client@2.14.10(reflect-metadata@0.2.2))':
+  '@kinotic/structures-api@3.6.0(@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2))':
     dependencies:
-      '@kinotic/continuum-client': 2.14.10(reflect-metadata@0.2.2)
+      '@kinotic/continuum-client': 3.0.0(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl': 2.0.4
       reflect-metadata: 0.2.2
       rxjs: 7.8.2

@@ -53,14 +53,15 @@ controller:
   admissionWebhooks:
     enabled: false
 
-  # Resource limits for local dev
+  # Sized so the controller is never the bottleneck in a load run (docs/performance): every
+  # request and WebSocket frame from the host passes through it. Idle cost is unchanged.
   resources:
     requests:
-      cpu: 100m
-      memory: 90Mi
-    limits:
       cpu: 500m
       memory: 256Mi
+    limits:
+      cpu: 2
+      memory: 1Gi
 
   # Metrics disabled for local dev
   metrics:

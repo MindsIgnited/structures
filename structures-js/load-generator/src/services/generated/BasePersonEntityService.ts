@@ -1,5 +1,5 @@
-import { EntityService, IEntitiesService } from '@kinotic/structures-api'
-import { Person } from '../../domain/Person.js'
+import { EntityService, type IEntitiesService } from '@kinotic/structures-api'
+import { Person } from '../../entity/domain/people/Person.js'
 
 
 /**

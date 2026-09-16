@@ -38,6 +38,7 @@ Structures uses `ContinuumProperties` for Ignite cluster configuration. All clus
 |----------|------|---------|---------------------|-------------|
 | `continuum.cluster.discoveryPort` | Integer | `47500` | `CONTINUUM_CLUSTER_DISCOVERY_PORT` | Port for Ignite discovery protocol |
 | `continuum.cluster.communicationPort` | Integer | `47100` | `CONTINUUM_CLUSTER_COMMUNICATION_PORT` | Port for node communication |
+| `continuum.cluster.communicationMessageQueueLimit` | Integer | `0` | `CONTINUUM_CLUSTER_COMMUNICATION_MESSAGE_QUEUE_LIMIT` | Messages queued per communication connection before Ignite applies back pressure; `0` is unbounded, which Ignite recommends against in production (it suggests `1024`). continuum 3.1.0+; the Helm chart sets `1024` |
 | `continuum.cluster.joinTimeoutMs` | Long | `0` | `CONTINUUM_CLUSTER_JOIN_TIMEOUT_MS` | Cluster formation timeout (0 = no timeout) |
 | `continuum.cluster.localAddress` | String | `null` | `CONTINUUM_CLUSTER_LOCAL_ADDRESS` | Local bind address |
 

@@ -12,4 +12,10 @@ export interface ITaskGenerator {
      */
     hasMoreTasks(): boolean
 
+    /**
+     * Releases whatever the generator holds open (a Continuum connection, typically). Called when the
+     * run ends before the generator ran out of tasks, which is how a duration-bounded run stops.
+     */
+    shutdown?(): Promise<void>
+
 }
