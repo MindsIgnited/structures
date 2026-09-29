@@ -32,6 +32,68 @@ interface LocalTestContext {
     entityService: IEntityService<Person>
 }
 
+const COUNT_BY_LAST_NAME_PAGE = 'countPeopleByLastNamePage'
+
+interface CountByLastName {
+    count: number
+    lastName: string
+}
+
+async function saveCountByLastNamePageQuery({entityService, applicationIdUsed, projectIdUsed}: LocalTestContext): Promise<void> {
+    const query = new QueryDecorator(`SELECT COUNT(firstName) as count, lastName FROM "struct_${entityService.structureId}" GROUP BY lastName`)
+    const namedQuery = new FunctionDefinition(COUNT_BY_LAST_NAME_PAGE, [query])
+    namedQuery.addParameter('pageable', new PageableC3Type())
+    namedQuery.returnType = new PageC3Type(new ObjectC3Type('CountByLastName', applicationIdUsed)
+                                               .addProperty("count", new LongC3Type())
+                                               .addProperty("lastName", new StringC3Type()))
+    await Structures.getNamedQueriesService().save(new NamedQueriesDefinition(entityService.structureId,
+                                                                              applicationIdUsed,
+                                                                              projectIdUsed,
+                                                                              entityService.structureName,
+                                                                              [namedQuery]))
+}
+
+/**
+ * Creates people named Last0, Last1, ... so grouping by last name gives one group per person
+ */
+async function createPeopleWithDistinctLastNames(entityService: IEntityService<Person>, numberToCreate: number): Promise<void> {
+    const people: Person[] = createTestPeople(numberToCreate)
+    people.forEach((person, i) => person.lastName = `Last${i}`)
+    await expect(entityService.bulkSave(people)).resolves.toBeNull()
+    await expect(entityService.syncIndex()).resolves.toBeNull()
+}
+
+/**
+ * Fetches the count by last name query one page at a time, following each cursor by hand, and records
+ * the shape the server returned: how many rows each page had and whether it carried a cursor
+ */
+async function pageShapes(entityService: IEntityService<Person>, pageSize: number): Promise<{rows: number, cursor: boolean}[]> {
+    const ret: {rows: number, cursor: boolean}[] = []
+    let cursor: string | null = null
+    do {
+        const page: Page<CountByLastName> = await entityService.namedQueryPage<CountByLastName>(COUNT_BY_LAST_NAME_PAGE,
+                                                                                               [],
+                                                                                               Pageable.createWithCursor(cursor, pageSize))
+        ret.push({rows: page.content?.length ?? 0, cursor: page.cursor !== null && page.cursor !== undefined})
+        cursor = page.cursor ?? null
+    } while (cursor !== null && ret.length < 10)
+    return ret
+}
+
+/**
+ * Iterates the count by last name query with for await, returning the last names each yielded page held
+ */
+async function iteratedLastNames(entityService: IEntityService<Person>, pageSize: number): Promise<string[][]> {
+    const ret: string[][] = []
+    const firstPage = await entityService.namedQueryPage<CountByLastName>(COUNT_BY_LAST_NAME_PAGE,
+                                                                          [],
+                                                                          Pageable.createWithCursor(null, pageSize))
+    for await (const page of firstPage) {
+        ret.push((page.content ?? []).map(row => row.lastName))
+    }
+    return ret
+}
+
 describe('End To End Tests', () => {
 
     beforeAll(async () => {
@@ -131,85 +193,46 @@ describe('End To End Tests', () => {
 
     it<LocalTestContext>(
         'Aggregate Pageable Test',
-        async ({entityService, applicationIdUsed, projectIdUsed}) => {
-            // Create people
-            await createTestPeopleAndVerify(entityService, 100)
+        async (context) => {
+            // 100 people over two last names, so two groups
+            await createTestPeopleAndVerify(context.entityService, 100)
+            await saveCountByLastNamePageQuery(context)
 
-            const structureId = entityService.structureId
-            const query = new QueryDecorator(`SELECT COUNT(firstName) as count, lastName FROM "struct_${structureId}" GROUP BY lastName`)
-            const namedQuery = new FunctionDefinition('countPeopleByLastNamePage', [query])
-            namedQuery.addParameter('pageable', new PageableC3Type())
-            const contentType = new ObjectC3Type('CountByLastName', applicationIdUsed)
-                .addProperty("count", new LongC3Type())
-                .addProperty("lastName", new StringC3Type())
-            namedQuery.returnType = new PageC3Type(contentType)
-
-            const namedQueriesDefinition = new NamedQueriesDefinition(structureId,
-                                                                      applicationIdUsed,
-                                                                      projectIdUsed,
-                                                                      entityService.structureName,
-                                                                      [namedQuery])
-
-
-            const namedQueriesService = Structures.getNamedQueriesService()
-            await namedQueriesService.save(namedQueriesDefinition)
-
-            const pageable = Pageable.createWithCursor(null, 1)
-            const personPage: Page<Person> = await entityService.namedQueryPage('countPeopleByLastNamePage',
-                                                                                [],
-                                                                                pageable)
-            expect(personPage.cursor).toBeDefined()
-            expect(personPage.content).toHaveLength(1)
-
-            const personPage2: Page<Person> = await entityService.namedQueryPage('countPeopleByLastNamePage',
-                                                                                 [],
-                                                                                 Pageable.createWithCursor(personPage.cursor as string, 1))
-            expect(personPage2.cursor).toBeDefined()
-            expect(personPage2.content).toHaveLength(1)
-
-            const personPage3: Page<Person> = await entityService.namedQueryPage('countPeopleByLastNamePage',
-                                                                                 [],
-                                                                                 Pageable.createWithCursor(personPage2.cursor as string, 1))
-            expect(personPage3.cursor).toBeNull()
-            expect(personPage3.content).toHaveLength(0)
+            expect(await pageShapes(context.entityService, 1)).toEqual([{rows: 1, cursor: true},
+                                                                        {rows: 1, cursor: true},
+                                                                        {rows: 0, cursor: false}])
         }
     )
 
     it<LocalTestContext>(
         'Aggregate Iterate Uneven Pages Test',
-        async ({entityService, applicationIdUsed, projectIdUsed}) => {
-            // Five distinct last names, so a page size of two ends on a short page
-            const people: Person[] = createTestPeople(5)
-            people.forEach((person, i) => person.lastName = `Last${i}`)
-            await expect(entityService.bulkSave(people)).resolves.toBeNull()
-            await expect(entityService.syncIndex()).resolves.toBeNull()
+        async (context) => {
+            await createPeopleWithDistinctLastNames(context.entityService, 5)
+            await saveCountByLastNamePageQuery(context)
 
-            const structureId = entityService.structureId
-            const query = new QueryDecorator(`SELECT COUNT(firstName) as count, lastName FROM "struct_${structureId}" GROUP BY lastName`)
-            const namedQuery = new FunctionDefinition('countPeopleByLastNameUnevenPage', [query])
-            namedQuery.addParameter('pageable', new PageableC3Type())
-            const contentType = new ObjectC3Type('CountByLastName', applicationIdUsed)
-                .addProperty("count", new LongC3Type())
-                .addProperty("lastName", new StringC3Type())
-            namedQuery.returnType = new PageC3Type(contentType)
+            // The case the iterator must handle: the short last page has content but no cursor
+            expect(await pageShapes(context.entityService, 2)).toEqual([{rows: 2, cursor: true},
+                                                                        {rows: 2, cursor: true},
+                                                                        {rows: 1, cursor: false}])
+            expect(await iteratedLastNames(context.entityService, 2)).toEqual([['Last0', 'Last1'],
+                                                                               ['Last2', 'Last3'],
+                                                                               ['Last4']])
+        }
+    )
 
-            const namedQueriesDefinition = new NamedQueriesDefinition(structureId,
-                                                                      applicationIdUsed,
-                                                                      projectIdUsed,
-                                                                      entityService.structureName,
-                                                                      [namedQuery])
-            await Structures.getNamedQueriesService().save(namedQueriesDefinition)
+    it<LocalTestContext>(
+        'Aggregate Iterate Even Pages Test',
+        async (context) => {
+            await createPeopleWithDistinctLastNames(context.entityService, 4)
+            await saveCountByLastNamePageQuery(context)
 
-            const firstPage = await entityService.namedQueryPage<{count: number, lastName: string}>('countPeopleByLastNameUnevenPage',
-                                                                                                    [],
-                                                                                                    Pageable.createWithCursor(null, 2))
-            const lastNames: string[] = []
-            for await (const page of firstPage) {
-                for (const row of page.content ?? []) {
-                    lastNames.push(row.lastName)
-                }
-            }
-            expect(lastNames.sort()).toEqual(['Last0', 'Last1', 'Last2', 'Last3', 'Last4'])
+            // A full last page keeps its cursor and the server ends on an empty page, which the
+            // iterator must not yield
+            expect(await pageShapes(context.entityService, 2)).toEqual([{rows: 2, cursor: true},
+                                                                        {rows: 2, cursor: true},
+                                                                        {rows: 0, cursor: false}])
+            expect(await iteratedLastNames(context.entityService, 2)).toEqual([['Last0', 'Last1'],
+                                                                               ['Last2', 'Last3']])
         }
     )
 
