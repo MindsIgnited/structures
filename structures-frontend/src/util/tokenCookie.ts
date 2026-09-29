@@ -5,6 +5,25 @@ import { createDebug } from '@/util/debug'
 const debug = createDebug('token-cookie')
 
 /**
+ * Decode one segment of a JWT to its JSON text.
+ *
+ * Segments are base64url (RFC 7515, §2): '-' and '_' stand in for '+' and '/', and the trailing
+ * '=' padding is dropped. {@link atob} accepts standard base64 only and throws on those two
+ * characters, so the segment is translated back and repadded first. Which payloads carry them is a
+ * matter of alignment - a '?' in a claim encodes to one whenever it lands on the last byte of a
+ * three-byte group, as does much non-ascii text - so a token either has them or does not, and the
+ * more claims it carries the likelier it does.
+ *
+ * The bytes behind a segment are UTF-8, which atob() alone would leave as one character per byte.
+ */
+export function decodeJwtSegment(segment: string): string {
+    const base64 = segment.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    const bytes = Uint8Array.from(atob(padded), character => character.charCodeAt(0))
+    return new TextDecoder().decode(bytes)
+}
+
+/**
  * Check if a token is a structurally valid JWT
  */
 function isValidJWT(token: string): boolean {
@@ -14,8 +33,8 @@ function isValidJWT(token: string): boolean {
             return false
         }
 
-        const header = JSON.parse(atob(parts[0]))
-        const payload = JSON.parse(atob(parts[1]))
+        const header = JSON.parse(decodeJwtSegment(parts[0]))
+        const payload = JSON.parse(decodeJwtSegment(parts[1]))
 
         return !!(header.alg && payload.iss && payload.aud)
     } catch {

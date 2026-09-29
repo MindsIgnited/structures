@@ -4,6 +4,7 @@ import * as allure from 'allure-js-commons'
 import {createRequire} from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
+import semver from 'semver'
 import {afterAll, beforeAll, describe, expect, inject, it} from 'vitest'
 import {WebSocket} from 'ws'
 import {initContinuumClient, shutdownContinuumClient} from '../TestHelpers.js'
@@ -37,10 +38,8 @@ describe('Continuum client contract', () => {
         const client = packageJsonOf('@kinotic/continuum-client')
         const api = packageJsonOf('@kinotic/structures-api')
         const range: string = api.peerDependencies?.['@kinotic/continuum-client'] ?? ''
-        const admitted = range.split('||').map(r => r.trim()).some(r => {
-            const caret = r.match(/^\^(\d+)\./)
-            return caret ? caret[1] === String(client.version.split('.')[0]) : false
-        })
+        // The full range, not just the major: the peer's minimum is the client fix structures-api needs
+        const admitted = range !== '' && semver.satisfies(client.version, range)
         expect(admitted,
                `@kinotic/structures-api peer range "${range}" must admit the installed @kinotic/continuum-client ${client.version}, `
                + 'or pnpm installs a second client for structures-api and every service call fails')
