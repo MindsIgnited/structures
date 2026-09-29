@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@kinotic/continuum-client':
-        specifier: ^3.0.0
-        version: 3.0.0(reflect-metadata@0.2.2)
+        specifier: ^3.0.1
+        version: 3.0.1(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl':
         specifier: ^2.0.4
         version: 2.0.4
@@ -270,8 +270,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@kinotic/continuum-client@3.0.0':
-    resolution: {integrity: sha512-ZIjTBb/4JjZ7nbKwFY10WTDTFO13HFnMNzaBCg4YRbs+sD5XzzfJxc106RwMuXCqODaTPPOvgZ8ZQFPPjDrsBA==}
+  '@kinotic/continuum-client@3.0.1':
+    resolution: {integrity: sha512-d0D3gMkM8BMgwIFdw+y1DweHGEIzvCx/uWDOKODZU266Rz8DvcvIvWb2IB0pt0AMGGXbNqXQe5jxe1yCl3+mZQ==}
     peerDependencies:
       reflect-metadata: ^0.2.2
 
@@ -1233,7 +1233,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.1
       '@jridgewell/sourcemap-codec': 1.5.0
 
-  '@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2)':
+  '@kinotic/continuum-client@3.0.1(reflect-metadata@0.2.2)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/semantic-conventions': 1.38.0

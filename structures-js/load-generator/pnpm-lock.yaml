@@ -12,17 +12,17 @@ importers:
         specifier: ^10.2.0
         version: 10.2.0
       '@kinotic/continuum-client':
-        specifier: ^3.0.0
-        version: 3.0.0(reflect-metadata@0.2.2)
+        specifier: ^3.0.1
+        version: 3.0.1(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl':
         specifier: ^2.0.4
         version: 2.0.4
       '@kinotic/structures-api':
-        specifier: ^3.6.0
-        version: 3.6.0(@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2))
+        specifier: ^3.6.2
+        version: 3.6.2(@kinotic/continuum-client@3.0.1(reflect-metadata@0.2.2))
       '@kinotic/structures-cli':
-        specifier: ^3.6.0
-        version: 3.6.0(@types/node@25.1.0)
+        specifier: ^3.6.2
+        version: 3.6.2(@types/node@25.1.0)
       '@opentelemetry/api':
         specifier: 1.9.0
         version: 1.9.0
@@ -564,21 +564,21 @@ packages:
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
 
-  '@kinotic/continuum-client@3.0.0':
-    resolution: {integrity: sha512-ZIjTBb/4JjZ7nbKwFY10WTDTFO13HFnMNzaBCg4YRbs+sD5XzzfJxc106RwMuXCqODaTPPOvgZ8ZQFPPjDrsBA==}
+  '@kinotic/continuum-client@3.0.1':
+    resolution: {integrity: sha512-d0D3gMkM8BMgwIFdw+y1DweHGEIzvCx/uWDOKODZU266Rz8DvcvIvWb2IB0pt0AMGGXbNqXQe5jxe1yCl3+mZQ==}
     peerDependencies:
       reflect-metadata: ^0.2.2
 
   '@kinotic/continuum-idl@2.0.4':
     resolution: {integrity: sha512-akXcSw6Pw6hdorPV1lU2RXvMS+kpWZQnzfZv3GysyUrVU8IAZU5N1FmBM8QmthJUz+SXNdHgYzuireaV8aLtAw==}
 
-  '@kinotic/structures-api@3.6.0':
-    resolution: {integrity: sha512-JDV1uWZjL/pJKaWiAxHaxj4zRTBuuzwz2bkCxN+/4NyJ3E8HhzPrQdzdFekHWLXX49alMGCfC+a+EK7sjcbkqQ==}
+  '@kinotic/structures-api@3.6.2':
+    resolution: {integrity: sha512-YISdmDn7AWOhjemZQE6VWNzv/3wJIXiRsLmNyG1M2pku+I6zZKbXvvGyp5IohLSvHJXnuUx5QjW3fIAbReZSQQ==}
     peerDependencies:
-      '@kinotic/continuum-client': ^3.0.0
+      '@kinotic/continuum-client': ^3.0.1
 
-  '@kinotic/structures-cli@3.6.0':
-    resolution: {integrity: sha512-orq5jaU8Q018Ei+ZHa56e6XZlu/WE4hbrx9GmFcUX2/Ao1BLMZWepeQx/30/xpjrU0H3tIMs9dKjRnTUPlJnLA==}
+  '@kinotic/structures-cli@3.6.2':
+    resolution: {integrity: sha512-RcYskZdAhQ/6Eshxbv3HzDFSJ8MnaNza6ugcIkBsvNA+eDC3Sugo5Syw+oy9+JD/lI8j0vR3bqbg4XiD6p8ABA==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -2836,7 +2836,7 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2)':
+  '@kinotic/continuum-client@3.0.1(reflect-metadata@0.2.2)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/semantic-conventions': 1.39.0
@@ -2854,19 +2854,19 @@ snapshots:
 
   '@kinotic/continuum-idl@2.0.4': {}
 
-  '@kinotic/structures-api@3.6.0(@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2))':
+  '@kinotic/structures-api@3.6.2(@kinotic/continuum-client@3.0.1(reflect-metadata@0.2.2))':
     dependencies:
-      '@kinotic/continuum-client': 3.0.0(reflect-metadata@0.2.2)
+      '@kinotic/continuum-client': 3.0.1(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl': 2.0.4
       reflect-metadata: 0.2.2
       rxjs: 7.8.2
 
-  '@kinotic/structures-cli@3.6.0(@types/node@25.1.0)':
+  '@kinotic/structures-cli@3.6.2(@types/node@25.1.0)':
     dependencies:
       '@inquirer/prompts': 8.1.0(@types/node@25.1.0)
-      '@kinotic/continuum-client': 3.0.0(reflect-metadata@0.2.2)
+      '@kinotic/continuum-client': 3.0.1(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl': 2.0.4
-      '@kinotic/structures-api': 3.6.0(@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2))
+      '@kinotic/structures-api': 3.6.2(@kinotic/continuum-client@3.0.1(reflect-metadata@0.2.2))
       '@oclif/core': 4.8.0
       '@oclif/plugin-autocomplete': 3.2.39
       '@oclif/plugin-help': 6.2.28
