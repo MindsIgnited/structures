@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@faker-js/faker": "^10.2.0",
-    "@kinotic/continuum-client": "^3.0.0",
+    "@kinotic/continuum-client": "^3.0.1",
     "@kinotic/continuum-idl": "^2.0.4",
     "@kinotic/structures-api": "^3.6.0",
     "@kinotic/structures-cli": "^3.6.0",

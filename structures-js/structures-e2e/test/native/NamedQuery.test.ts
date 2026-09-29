@@ -15,6 +15,7 @@ import {WebSocket} from 'ws'
 import {Person} from '../domain/Person.js'
 import {
     createPersonStructureIfNotExist,
+    createTestPeople,
     createTestPeopleAndVerify,
     deleteStructure,
     generateRandomString,
@@ -171,6 +172,44 @@ describe('End To End Tests', () => {
                                                                                  Pageable.createWithCursor(personPage2.cursor as string, 1))
             expect(personPage3.cursor).toBeNull()
             expect(personPage3.content).toHaveLength(0)
+        }
+    )
+
+    it<LocalTestContext>(
+        'Aggregate Iterate Uneven Pages Test',
+        async ({entityService, applicationIdUsed, projectIdUsed}) => {
+            // Five distinct last names, so a page size of two ends on a short page
+            const people: Person[] = createTestPeople(5)
+            people.forEach((person, i) => person.lastName = `Last${i}`)
+            await expect(entityService.bulkSave(people)).resolves.toBeNull()
+            await expect(entityService.syncIndex()).resolves.toBeNull()
+
+            const structureId = entityService.structureId
+            const query = new QueryDecorator(`SELECT COUNT(firstName) as count, lastName FROM "struct_${structureId}" GROUP BY lastName`)
+            const namedQuery = new FunctionDefinition('countPeopleByLastNameUnevenPage', [query])
+            namedQuery.addParameter('pageable', new PageableC3Type())
+            const contentType = new ObjectC3Type('CountByLastName', applicationIdUsed)
+                .addProperty("count", new LongC3Type())
+                .addProperty("lastName", new StringC3Type())
+            namedQuery.returnType = new PageC3Type(contentType)
+
+            const namedQueriesDefinition = new NamedQueriesDefinition(structureId,
+                                                                      applicationIdUsed,
+                                                                      projectIdUsed,
+                                                                      entityService.structureName,
+                                                                      [namedQuery])
+            await Structures.getNamedQueriesService().save(namedQueriesDefinition)
+
+            const firstPage = await entityService.namedQueryPage<{count: number, lastName: string}>('countPeopleByLastNameUnevenPage',
+                                                                                                    [],
+                                                                                                    Pageable.createWithCursor(null, 2))
+            const lastNames: string[] = []
+            for await (const page of firstPage) {
+                for (const row of page.content ?? []) {
+                    lastNames.push(row.lastName)
+                }
+            }
+            expect(lastNames.sort()).toEqual(['Last0', 'Last1', 'Last2', 'Last3', 'Last4'])
         }
     )
 

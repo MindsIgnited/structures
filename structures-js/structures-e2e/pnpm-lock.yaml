@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@kinotic/continuum-client':
-        specifier: 3.0.0
-        version: 3.0.0(reflect-metadata@0.2.2)
+        specifier: 3.0.1
+        version: 3.0.1(reflect-metadata@0.2.2)
       '@kinotic/continuum-idl':
         specifier: ^2.0.4
         version: 2.0.4
@@ -322,8 +322,8 @@ packages:
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
 
-  '@kinotic/continuum-client@3.0.0':
-    resolution: {integrity: sha512-ZIjTBb/4JjZ7nbKwFY10WTDTFO13HFnMNzaBCg4YRbs+sD5XzzfJxc106RwMuXCqODaTPPOvgZ8ZQFPPjDrsBA==}
+  '@kinotic/continuum-client@3.0.1':
+    resolution: {integrity: sha512-d0D3gMkM8BMgwIFdw+y1DweHGEIzvCx/uWDOKODZU266Rz8DvcvIvWb2IB0pt0AMGGXbNqXQe5jxe1yCl3+mZQ==}
     peerDependencies:
       reflect-metadata: ^0.2.2
 
@@ -1704,7 +1704,7 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
-  '@kinotic/continuum-client@3.0.0(reflect-metadata@0.2.2)':
+  '@kinotic/continuum-client@3.0.1(reflect-metadata@0.2.2)':
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/semantic-conventions': 1.38.0
