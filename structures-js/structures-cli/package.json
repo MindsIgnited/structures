@@ -19,9 +19,9 @@
   ],
   "dependencies": {
     "@inquirer/prompts": "^8.0.2",
-    "@kinotic/continuum-client": "3.0.1",
+    "@kinotic/continuum-client": "^3.0.1",
     "@kinotic/continuum-idl": "^2.0.4",
-    "@kinotic/structures-api": "^3.6.0",
+    "@kinotic/structures-api": "^3.6.2",
     "@oclif/core": "^4.8.0",
     "@oclif/plugin-autocomplete": "^3.2.39",
     "@oclif/plugin-help": "^6",
