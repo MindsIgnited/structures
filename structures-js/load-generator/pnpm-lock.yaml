@@ -4,9 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  '@kinotic/structures-cli>@kinotic/continuum-client': ^3.0.1
-
 importers:
 
   .:
@@ -24,8 +21,8 @@ importers:
         specifier: ^3.6.2
         version: 3.6.2(@kinotic/continuum-client@3.0.1(reflect-metadata@0.2.2))
       '@kinotic/structures-cli':
-        specifier: ^3.6.0
-        version: 3.6.0(@types/node@25.1.0)
+        specifier: ^3.6.2
+        version: 3.6.2(@types/node@25.1.0)
       '@opentelemetry/api':
         specifier: 1.9.0
         version: 1.9.0
@@ -580,8 +577,8 @@ packages:
     peerDependencies:
       '@kinotic/continuum-client': ^3.0.1
 
-  '@kinotic/structures-cli@3.6.0':
-    resolution: {integrity: sha512-orq5jaU8Q018Ei+ZHa56e6XZlu/WE4hbrx9GmFcUX2/Ao1BLMZWepeQx/30/xpjrU0H3tIMs9dKjRnTUPlJnLA==}
+  '@kinotic/structures-cli@3.6.2':
+    resolution: {integrity: sha512-RcYskZdAhQ/6Eshxbv3HzDFSJ8MnaNza6ugcIkBsvNA+eDC3Sugo5Syw+oy9+JD/lI8j0vR3bqbg4XiD6p8ABA==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -2864,7 +2861,7 @@ snapshots:
       reflect-metadata: 0.2.2
       rxjs: 7.8.2
 
-  '@kinotic/structures-cli@3.6.0(@types/node@25.1.0)':
+  '@kinotic/structures-cli@3.6.2(@types/node@25.1.0)':
     dependencies:
       '@inquirer/prompts': 8.1.0(@types/node@25.1.0)
       '@kinotic/continuum-client': 3.0.1(reflect-metadata@0.2.2)
