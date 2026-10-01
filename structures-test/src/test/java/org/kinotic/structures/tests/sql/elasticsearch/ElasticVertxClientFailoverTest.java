@@ -25,12 +25,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.kinotic.continuum.core.api.crud.CursorPage;
 import org.kinotic.continuum.core.api.crud.Page;
 import org.kinotic.continuum.core.api.crud.Pageable;
 import org.kinotic.structures.api.config.ElasticConnectionInfo;
@@ -216,16 +216,50 @@ class ElasticVertxClientFailoverTest {
     }
 
     @Test
-    void aNodeThatStopsAnsweringAltogetherIsFailedOverAfterTheTimeout() throws Exception {
+    void aDroppedConnectionMovesToTheNextNodeWithoutBenchingIt() throws Exception {
+        AtomicInteger dropped = new AtomicInteger();
         AtomicInteger otherRequests = new AtomicInteger();
-        DefaultElasticVertxClient client = client(Duration.ofMillis(300),
-                                                  blackHoleNode(),
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1),
+                                                  droppingNode(dropped),
                                                   respondingNode(otherRequests, 200, SQL_RESPONSE));
 
-        assertEquals(List.of(Map.of("one", 1)), selectOne(client), "the query moved on once the node failed its probe");
-        assertEquals(List.of(Map.of("one", 1)), selectOne(client));
-        assertEquals(List.of(Map.of("one", 1)), selectOne(client));
-        assertEquals(3, otherRequests.get(), "the silent node was taken out of the rotation");
+        for (int i = 0; i < 3; i++) {
+            assertEquals(List.of(Map.of("one", 1)), selectOne(client));
+        }
+
+        assertEquals(2, dropped.get(), "the node that dropped a connection stayed in the rotation");
+        assertEquals(3, otherRequests.get());
+    }
+
+    @Test
+    void aShorterRequestTimeoutDoesNotCutTheWait() throws Exception {
+        DefaultElasticVertxClient client = client(Duration.ofSeconds(10), delayedNode(new AtomicInteger(), Duration.ofSeconds(7)));
+
+        // One second plus the grace is six, but Elasticsearch may still be combining results, so the default stands
+        assertEquals(List.of(Map.of("one", 1)), selectOne(client, requestTimeout(1)));
+    }
+
+    @Test
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void elasticsearchPagesThroughACursorWithTheRequestTimeoutOnEveryPage() throws Exception {
+        createIndex("failover_paging");
+        indexDocuments("failover_paging", "{\"a\":1}", "{\"a\":2}", "{\"a\":3}");
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1), elasticsearchNode());
+
+        List<Object> groups = new ArrayList<>();
+        String cursor = null;
+        int pages = 0;
+        do {
+            CursorPage<Map> page = (CursorPage<Map>) client.querySql("SELECT a, COUNT(*) AS c FROM failover_paging GROUP BY a",
+                                                                     null, null, requestTimeout(30),
+                                                                     Pageable.create(cursor, 1, null), Map.class)
+                                                           .get(30, TimeUnit.SECONDS);
+            page.getContent().forEach(row -> groups.add(row.get("a")));
+            cursor = page.getCursor();
+            pages++;
+        } while (cursor != null && pages < 10);
+
+        assertEquals(List.of(1, 2, 3), groups);
     }
 
     @Test
@@ -313,6 +347,20 @@ class ElasticVertxClientFailoverTest {
         return client;
     }
 
+    private static void indexDocuments(String index, String... documents) throws Exception {
+        StringBuilder bulk = new StringBuilder();
+        for (String document : documents) {
+            bulk.append("{\"index\":{}}\n").append(document).append('\n');
+        }
+        HttpRequest request = HttpRequest.newBuilder(URI.create(ElasticsearchTestConfiguration.getElasticsearchUrl() + "/" + index + "/_bulk?refresh=true"))
+                                         .header("content-type", "application/x-ndjson")
+                                         .POST(HttpRequest.BodyPublishers.ofString(bulk.toString()))
+                                         .build();
+        try (HttpClient httpClient = HttpClient.newHttpClient()) {
+            assertEquals(200, httpClient.send(request, HttpResponse.BodyHandlers.discarding()).statusCode());
+        }
+    }
+
     private static void createIndex(String name) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create(ElasticsearchTestConfiguration.getElasticsearchUrl() + "/" + name))
                                          .PUT(HttpRequest.BodyPublishers.noBody())
@@ -364,32 +412,20 @@ class ElasticVertxClientFailoverTest {
     }
 
     /**
-     * Never answers a query, but answers a probe at once, like a healthy node working on a slow query
+     * Never answers, like a healthy node working on a slow query
      */
     private ElasticConnectionInfo slowQueryNode(AtomicInteger queries) {
-        return node(vertx.createHttpServer().requestHandler(request -> {
-            if (request.method() == HttpMethod.GET) {
-                request.response().putHeader("content-type", "application/json").end("{\"tagline\":\"You Know, for Search\"}");
-            } else {
-                queries.incrementAndGet();
-            }
-        }));
+        return node(vertx.createHttpServer().requestHandler(request -> queries.incrementAndGet()));
     }
 
     /**
-     * Accepts connections and never says anything on them, like a node that vanished without closing its connections
+     * Closes the connection on every request, like a proxy closing an idle connection just as it is reused
      */
-    private ElasticConnectionInfo blackHoleNode() {
-        try {
-            int port = vertx.createNetServer()
-                            .connectHandler(socket -> { })
-                            .listen(0, "127.0.0.1")
-                            .await(10, TimeUnit.SECONDS)
-                            .actualPort();
-            return new ElasticConnectionInfo("127.0.0.1", port, "http");
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
+    private ElasticConnectionInfo droppingNode(AtomicInteger requests) {
+        return node(vertx.createHttpServer().requestHandler(request -> {
+            requests.incrementAndGet();
+            request.connection().close();
+        }));
     }
 
     private ElasticConnectionInfo capturingNode(AtomicReference<JsonObject> sent) {

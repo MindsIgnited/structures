@@ -223,7 +223,7 @@ Elasticsearch runs the query. They are not passed to the statement.
 | `QueryOptions` field | Parameter name | Type | Meaning |
 |---|---|---|---|
 | `timeZone` | `queryTimeZone` | `string` | Time zone dates are read and written in, such as `Europe/Paris` or `Z` |
-| `requestTimeout` | `queryRequestTimeout` | `number` | Seconds Elasticsearch may spend on the query before it gives up. Defaults to 90 |
+| `requestTimeout` | `queryRequestTimeout` | `number` | Seconds Elasticsearch may spend searching each shard before the query fails. Defaults to 90 |
 | `pageTimeout` | `queryPageTimeout` | `string` | How long the cursor for the next page stays alive, with its unit, such as `2m`. Defaults to `2m` |
 
 ```typescript
@@ -236,8 +236,10 @@ public averageAgeByDepartment(minimumAge: number, queryRequestTimeout: number): 
 await service.averageAgeByDepartment(18, 300)
 ```
 
-A `requestTimeout` longer than the server's `elasticNamedQueryTimeout` is honoured: the server waits for the query's own
-timeout instead. See [Structures Server Configuration](./structures-server-config.md).
+A `requestTimeout` longer than the server's `elasticNamedQueryTimeout` is honoured: the server waits that many seconds
+plus 5 instead. A shorter one does not shorten the server's wait, because Elasticsearch applies it to the search on each
+shard but not to combining the results afterwards, so a query can run somewhat past it. See
+[Structures Server Configuration](./structures-server-config.md).
 
 ## Multi-tenancy Decorators
 

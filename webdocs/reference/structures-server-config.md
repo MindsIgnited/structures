@@ -122,26 +122,32 @@ Below are the available options, their types, and default values. When you see a
   - `port` (`int`, default: `9200`)
   - `scheme` (`String`, default: `http`)
 
-  List every node you want Structures to use. Requests are spread round robin over them. A node that refuses or drops
-  connections, sits behind a proxy answering `502`/`503`, or stops answering altogether is skipped for a minute
-  (doubling on each failed retry, up to 30 minutes) while the request moves on to the next node. When every node is
-  skipped, each request tries only the one due back first. Errors from Elasticsearch itself, `504`s and slow queries
-  are not retried, since another node would answer them the same way. Use host names rather than IP addresses where you
-  can, so a node that restarts with a new address is picked up again once DNS has the new one.
+  List every node you want Structures to use. Requests are spread round robin over them.
+  - A node that refuses connections, cannot be resolved, or sits behind a proxy answering `502`/`503` is skipped for a
+    minute (doubling on each failed retry, up to 30 minutes) while the request moves on to the next node. When every
+    node is skipped, each request tries only the one due back first.
+  - A connection that drops mid-request moves the request to the next node, without skipping the node.
+  - Errors from Elasticsearch itself, `504`s and slow queries are not retried, since another node would answer them the
+    same way.
+
+  Use host names rather than IP addresses where you can: connections are retired every 5 minutes, so a node that
+  restarts with a new address is followed once DNS has it. A node that vanishes without closing its connections is
+  only noticed within seconds when Vert.x runs on a native transport (epoll); otherwise its in-flight named queries
+  wait out `elasticNamedQueryTimeout`. The server logs at startup when it runs without one.
 - **elasticUsername** (`String`, default: `null`):
   Username for Elasticsearch (optional).
 - **elasticPassword** (`String`, default: `null`):
   Password for Elasticsearch (optional).
 - **elasticConnectionTimeout** (`Duration`, default: `5s`):
   Connection timeout for Elasticsearch. This is how long a request waits on a node that has gone away before moving on
-  to the next one, and how long a node that timed out a named query gets to answer a fresh connection before it is
-  considered gone, so keep it short.
+  to the next one, so keep it short.
 - **elasticSocketTimeout** (`Duration`, default: `1m`):
   Socket timeout for every Elasticsearch call except SQL ones (named queries and SQL translation).
 - **elasticNamedQueryTimeout** (`Duration`, default: `2m`):
-  The longest a named query, or an SQL translation, waits for Elasticsearch to answer. A query that runs longer fails, and is not retried on
-  another node. A named query given its own `requestTimeout` waits that many seconds plus 5 instead. The default sits
-  above the 90 seconds Elasticsearch allows an SQL query, so Elasticsearch normally gives up first and says why.
+  The longest a named query, or an SQL translation, waits for Elasticsearch to answer. A query that runs longer fails,
+  and is not retried on another node. A named query given a longer `requestTimeout` of its own waits that many seconds
+  plus 5 instead; a shorter one does not shorten the wait, since Elasticsearch bounds only the search on each shard
+  with it, not combining the results afterwards.
 - **elasticHealthCheckInterval** (`Duration`, default: `1m`):
   Interval for health checks on the Elasticsearch cluster.
 

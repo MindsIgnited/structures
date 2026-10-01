@@ -11,9 +11,10 @@ export class QueryOptions {
      */
     public timeZone!: string
     /**
-     * How many seconds Elasticsearch may spend on the query before it gives up.
-     * Defaults to 90 seconds in Elasticsearch, and the server waits up to `structures.elastic-named-query-timeout`
-     * (2 minutes by default) for an answer unless this is set.
+     * How many seconds Elasticsearch may spend searching each shard before the query fails. Defaults to 90 seconds in
+     * Elasticsearch. Combining the results afterwards is not bounded by it, so a query can run somewhat past it.
+     * The server waits up to `structures.elastic-named-query-timeout` (2 minutes by default) for an answer, or this many seconds plus 5 when that is
+     * longer.
      */
     public requestTimeout!: number
     /**

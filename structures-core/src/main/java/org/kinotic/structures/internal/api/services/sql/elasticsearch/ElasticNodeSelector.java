@@ -79,7 +79,9 @@ public class ElasticNodeSelector<N> {
      * @return true if the node was dead before this call
      */
     public boolean markAlive(N node) {
-        return deadStates.getAndSet(indexOf(node), null) != null;
+        int index = indexOf(node);
+        // Called on every answer, nearly always for a node that is alive, so read before writing the shared slot
+        return deadStates.get(index) != null && deadStates.getAndSet(index, null) != null;
     }
 
     /**

@@ -41,7 +41,10 @@ import org.springframework.stereotype.Component;
 import jakarta.annotation.PreDestroy;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import javax.net.ssl.SSLException;
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.UnknownHostException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -49,7 +52,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 /**
@@ -66,11 +69,25 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
      * How much longer than a named query's own request timeout we wait, so Elasticsearch can report that it timed out
      */
     private static final Duration REQUEST_TIMEOUT_GRACE = Duration.ofSeconds(5);
+    /**
+     * Pooled connections are retired after this long, so a host name that now resolves elsewhere is followed within
+     * this time, even while its old address still answers
+     */
+    private static final Duration CONNECTION_MAX_LIFETIME = Duration.ofMinutes(5);
+    /**
+     * How long the kernel lets data we sent go unacknowledged before closing the connection. A node that is gone stops
+     * acknowledging at once, while a live one acknowledges within milliseconds however long its query runs, so this
+     * ends a request stuck on a dead connection without ever cutting off a slow query.
+     */
+    private static final int TCP_USER_TIMEOUT_MILLIS = 20_000;
+    // Keepalive probes on a quiet connection, so one whose node is gone is closed in ~25s rather than ~2 hours
+    private static final int TCP_KEEPALIVE_IDLE_SECONDS = 10;
+    private static final int TCP_KEEPALIVE_INTERVAL_SECONDS = 5;
+    private static final int TCP_KEEPALIVE_COUNT = 3;
     private final ObjectMapper objectMapper;
     private final ElasticNodeSelector<ElasticNode> nodeSelector;
     private final WebClient webClient;
-    // Never reuses a connection, so a probe always tells whether the node can be reached now
-    private final WebClient probeClient;
+    private final long namedQueryTimeoutMillis;
     private final Cache<String, List<ElasticColumn>> columnsCache;
 
 
@@ -90,10 +107,21 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                 .setTcpNoDelay(true)
                 .setTcpKeepAlive(true)
                 .setTracingPolicy(TracingPolicy.IGNORE);
+        // These four only take effect on a native transport (epoll or io_uring); NIO ignores them
+        options.setTcpUserTimeout(TCP_USER_TIMEOUT_MILLIS)
+               .setTcpKeepAliveIdleSeconds(TCP_KEEPALIVE_IDLE_SECONDS)
+               .setTcpKeepAliveIntervalSeconds(TCP_KEEPALIVE_INTERVAL_SECONDS)
+               .setTcpKeepAliveCount(TCP_KEEPALIVE_COUNT);
 
-        this.webClient = WebClient.create(vertx, options, new PoolOptions().setHttp1MaxSize(500));
-        this.probeClient = WebClient.create(vertx, new WebClientOptions(options).setKeepAlive(false));
-        long connectionTimeout = structuresProperties.getElasticConnectionTimeout().toMillis();
+        this.webClient = WebClient.create(vertx, options, new PoolOptions()
+                .setHttp1MaxSize(500)
+                .setMaxLifetime((int) CONNECTION_MAX_LIFETIME.toSeconds())
+                .setMaxLifetimeUnit(TimeUnit.SECONDS));
+        this.namedQueryTimeoutMillis = structuresProperties.getElasticNamedQueryTimeout().toMillis();
+        if(!vertx.isNativeTransportEnabled()){
+            log.info("Vert.x runs without a native transport, so a connection to an Elasticsearch node that vanished without closing it is only noticed when the named query times out. Cause: {}",
+                     vertx.unavailableNativeTransportCause() != null ? vertx.unavailableNativeTransportCause().toString() : "not requested");
+        }
 
         Validate.notEmpty(structuresProperties.getElasticConnections(), "No Elastic connections defined");
 
@@ -102,23 +130,17 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
             HttpRequest<Buffer> sqlQueryRequest = webClient.post(elasticConnectionInfo.getPort(),
                                                                  elasticConnectionInfo.getHost(), "/_sql")
                     // Without it a request sent on a pooled connection to a node that vanished never completes
-                    .idleTimeout(structuresProperties.getElasticNamedQueryTimeout().toMillis());
-            HttpRequest<Buffer> probeRequest = probeClient.get(elasticConnectionInfo.getPort(),
-                                                               elasticConnectionInfo.getHost(), "/")
-                    .idleTimeout(connectionTimeout);
-            for(HttpRequest<Buffer> request : List.of(sqlQueryRequest, probeRequest)){
-                if(elasticConnectionInfo.getScheme().equalsIgnoreCase("https")){
-                    request.ssl(true);
-                }
-                if(structuresProperties.hasElasticUsernameAndPassword()){
-                    request.basicAuthentication(structuresProperties.getElasticUsername(),
-                                                structuresProperties.getElasticPassword());
-                }
+                    .idleTimeout(namedQueryTimeoutMillis);
+            if(elasticConnectionInfo.getScheme().equalsIgnoreCase("https")){
+                sqlQueryRequest.ssl(true);
+            }
+            if(structuresProperties.hasElasticUsernameAndPassword()){
+                sqlQueryRequest.basicAuthentication(structuresProperties.getElasticUsername(),
+                                                    structuresProperties.getElasticPassword());
             }
             nodes.add(new ElasticNode(elasticConnectionInfo.toHostAndPort(),
                                       sqlQueryRequest,
-                                      sqlQueryRequest.copy().uri("/_sql/translate"),
-                                      probeRequest));
+                                      sqlQueryRequest.copy().uri("/_sql/translate")));
         }
         this.nodeSelector = new ElasticNodeSelector<>(nodes);
     }
@@ -126,7 +148,6 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     @PreDestroy
     public void destroy(){
         webClient.close();
-        probeClient.close();
     }
 
     @WithSpan
@@ -189,10 +210,12 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
 
         // Completed from the WebClient's handler, on a Vert.x context, so dependent stages already run there
         CompletableFuture<Page<T>> fut = new CompletableFuture<>();
-        // A query given its own timeout is waited on for that long, rather than for the named query default
-        Long idleTimeoutOverride = requestTimeout != null
+        // A query given a longer timeout of its own is waited on for that long. A shorter one never cuts the wait,
+        // since Elasticsearch only bounds the search on each shard, not the work that combines the results
+        long requestTimeoutWait = requestTimeout != null
                 ? Duration.ofSeconds(requestTimeout).plus(REQUEST_TIMEOUT_GRACE).toMillis()
-                : null;
+                : 0;
+        Long idleTimeoutOverride = requestTimeoutWait > namedQueryTimeoutMillis ? requestTimeoutWait : null;
         send(ElasticNode::sqlQueryRequest, json, idleTimeoutOverride)
                        .onComplete(ar -> {
                            if(ar.succeeded()){
@@ -280,11 +303,13 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     }
 
     /**
-     * Sends the request to the next node in the rotation, moving on to the following node when one cannot be reached.
-     * Everything this client sends is a read, so sending a request twice is harmless.
-     * A request that times out is only sent elsewhere when the node no longer answers a fresh connection either, since a
-     * slow query is no reason to think the node is gone and running it again would only double the load it puts on the
-     * cluster. See {@link #probe(ElasticNode)}.
+     * Sends the request to the next node in the rotation, moving on to the following node when one cannot be reached
+     * or the connection drops. Everything this client sends is a read, so sending a request twice is harmless.
+     * Only a node that cannot be connected to is taken out of the rotation: a dropped connection may just be an idle
+     * one a proxy closed, and a node that is really gone refuses the next connection anyway.
+     * A request that times out is not sent elsewhere, since a slow query is no reason to think the node is gone and
+     * running it again would only double the load it puts on the cluster. A connection whose node vanished without
+     * closing it is ended by the kernel instead, see {@link #TCP_USER_TIMEOUT_MILLIS}.
      */
     private Future<HttpResponse<Buffer>> send(Function<ElasticNode, HttpRequest<Buffer>> requestForNode,
                                               JsonObject body,
@@ -323,7 +348,9 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                               if(ar.succeeded()){
                                   HttpResponse<Buffer> response = ar.result();
                                   if(isProxyUnavailable(response)){
-                                      nodeUnavailable(index, unavailable(node, response));
+                                      Exception failure = unavailable(node, response);
+                                      markDead(node, failure.getMessage());
+                                      tryNextNode(index, failure);
                                   }else{
                                       if(nodeSelector.markAlive(node)){
                                           log.info("Elasticsearch node {} is answering again, it is back in the rotation",
@@ -334,19 +361,13 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                                   }
                               }else{
                                   Throwable cause = ar.cause();
-                                  if(isNodeFailure(cause)){
-                                      nodeUnavailable(index, cause);
-                                  }else if(cause instanceof TimeoutException){
-                                      // A slow query, or a connection to a node that vanished without closing it
-                                      probe(node).onComplete(probe -> {
-                                          if(probe.succeeded()){
-                                              promise.fail(cause);
-                                          }else{
-                                              log.warn("Elasticsearch node {} timed out and does not answer a new connection either ({})",
-                                                       node.hostAndPort(), probe.cause().toString());
-                                              nodeUnavailable(index, cause);
-                                          }
-                                      });
+                                  if(isConnectFailure(cause)){
+                                      markDead(node, cause.toString());
+                                      tryNextNode(index, cause);
+                                  }else if(isConnectionLost(cause)){
+                                      log.debug("Connection to Elasticsearch node {} was lost ({}), trying the next node",
+                                                node.hostAndPort(), cause.toString());
+                                      tryNextNode(index, cause);
                                   }else{
                                       promise.fail(cause);
                                   }
@@ -354,8 +375,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                           });
         }
 
-        private void nodeUnavailable(int index, Throwable failure){
-            markDead(nodes.get(index), failure.toString());
+        private void tryNextNode(int index, Throwable failure){
             nodeFailures.add(failure);
             if(index + 1 < nodes.size()){
                 send(index + 1);
@@ -365,18 +385,6 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                 promise.fail(failure);
             }
         }
-    }
-
-    /**
-     * Asks the node for its banner over a connection of its own, so a pooled connection to a node that is gone cannot
-     * answer for it. Fails unless the node itself answers within the connection timeout.
-     */
-    private Future<Void> probe(ElasticNode node){
-        return node.probeRequest()
-                   .send()
-                   .compose(response -> isProxyUnavailable(response)
-                           ? Future.failedFuture(unavailable(node, response))
-                           : Future.succeededFuture());
     }
 
     private void markDead(ElasticNode node, String reason){
@@ -427,11 +435,18 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     }
 
     /**
-     * True for failures that mean the node could not be reached or dropped the connection: refused or timed out
-     * connects, unresolvable hosts, resets and TLS failures are all {@link IOException}s.
+     * True when no connection to the node could be made: refused or timed out connects, host names that do not resolve
+     * (including DNS timeouts, which Netty reports as an {@link UnknownHostException}) and failed TLS handshakes
+     */
+    static boolean isConnectFailure(Throwable cause){
+        return cause instanceof ConnectException || cause instanceof UnknownHostException || cause instanceof SSLException;
+    }
+
+    /**
+     * True when an established connection closed or reset before the response arrived.
      * Timeouts waiting for a response and a full local connection pool say nothing about the node, so they are not.
      */
-    static boolean isNodeFailure(Throwable cause){
+    static boolean isConnectionLost(Throwable cause){
         return cause instanceof IOException || cause instanceof HttpClosedException;
     }
 
@@ -448,8 +463,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
 
     private record ElasticNode(String hostAndPort,
                                HttpRequest<Buffer> sqlQueryRequest,
-                               HttpRequest<Buffer> sqlTranslateRequest,
-                               HttpRequest<Buffer> probeRequest) {
+                               HttpRequest<Buffer> sqlTranslateRequest) {
     }
 
     private Page<Map<String, Object>> processBufferToMap(Buffer buffer, String cursorProvided) throws Exception {
