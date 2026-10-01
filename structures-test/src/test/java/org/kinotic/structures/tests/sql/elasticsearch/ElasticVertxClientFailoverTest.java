@@ -25,12 +25,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.kinotic.continuum.core.api.crud.Page;
+import org.kinotic.continuum.core.api.crud.Pageable;
 import org.kinotic.structures.api.config.ElasticConnectionInfo;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.QueryOptions;
@@ -47,8 +49,15 @@ import tools.jackson.databind.json.JsonMapper;
 class ElasticVertxClientFailoverTest {
 
     private static final String SQL_RESPONSE = "{\"columns\":[{\"name\":\"one\",\"type\":\"integer\"}],\"rows\":[[1]]}";
+    /**
+     * What Elasticsearch itself answers when the shards are unavailable, which every node would answer alike
+     */
     private static final String UNAVAILABLE_RESPONSE =
             "{\"error\":{\"type\":\"unavailable_shards_exception\",\"reason\":\"no shards\"},\"status\":503}";
+    /**
+     * What a proxy or load balancer answers when the node behind it is gone
+     */
+    private static final String PROXY_UNAVAILABLE_RESPONSE = "<html><body><h1>503 Service Unavailable</h1></body></html>";
 
     private Vertx vertx;
     private final List<DefaultElasticVertxClient> clients = new ArrayList<>();
@@ -85,7 +94,7 @@ class ElasticVertxClientFailoverTest {
     void queriesSucceedWhileNodesAreUnavailable() throws Exception {
         AtomicInteger unavailableRequests = new AtomicInteger();
         DefaultElasticVertxClient client = client(Duration.ofMinutes(1),
-                                                  respondingNode(unavailableRequests, 503, UNAVAILABLE_RESPONSE),
+                                                  respondingNode(unavailableRequests, 503, PROXY_UNAVAILABLE_RESPONSE),
                                                   refusingNode(),
                                                   elasticsearchNode());
 
@@ -122,6 +131,32 @@ class ElasticVertxClientFailoverTest {
     }
 
     @Test
+    void aProxyUnavailableResponseIsPartOfTheError() {
+        ElasticConnectionInfo unavailable = respondingNode(new AtomicInteger(), 503, PROXY_UNAVAILABLE_RESPONSE);
+        ElasticConnectionInfo refusing = refusingNode();
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1), unavailable, refusing);
+
+        ExecutionException e = assertThrows(ExecutionException.class, () -> selectOne(client));
+
+        IllegalStateException cause = assertInstanceOf(IllegalStateException.class, e.getCause());
+        assertInstanceOf(ConnectException.class, cause.getCause());
+        assertEquals(1, cause.getSuppressed().length);
+        assertTrue(cause.getSuppressed()[0].getMessage().contains(unavailable.toHostAndPort() + " is unavailable, it answered HTTP 503"),
+                   cause.getSuppressed()[0].getMessage());
+    }
+
+    @Test
+    void aSingleProxyUnavailableNodeSaysSo() {
+        ElasticConnectionInfo unavailable = respondingNode(new AtomicInteger(), 502, PROXY_UNAVAILABLE_RESPONSE);
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1), unavailable);
+
+        ExecutionException e = assertThrows(ExecutionException.class, () -> selectOne(client));
+
+        assertEquals("Elasticsearch node " + unavailable.toHostAndPort() + " is unavailable, it answered HTTP 502",
+                     e.getCause().getMessage());
+    }
+
+    @Test
     void aSingleUnreachableNodeFailsWithTheOriginalCause() {
         DefaultElasticVertxClient client = client(Duration.ofMinutes(1), refusingNode());
 
@@ -131,21 +166,44 @@ class ElasticVertxClientFailoverTest {
     }
 
     @Test
-    void theLastNodesUnavailableResponseIsReportedAsElasticsearchSentIt() {
-        AtomicInteger requests = new AtomicInteger();
-        DefaultElasticVertxClient client = client(Duration.ofMinutes(1), respondingNode(requests, 503, UNAVAILABLE_RESPONSE));
+    void anElasticsearch503IsTheQuerysAnswerNotADeadNode() {
+        AtomicInteger first = new AtomicInteger();
+        AtomicInteger second = new AtomicInteger();
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1),
+                                                  respondingNode(first, 503, UNAVAILABLE_RESPONSE),
+                                                  respondingNode(second, 503, UNAVAILABLE_RESPONSE));
 
-        ExecutionException e = assertThrows(ExecutionException.class, () -> selectOne(client));
+        for (int i = 0; i < 3; i++) {
+            ExecutionException e = assertThrows(ExecutionException.class, () -> selectOne(client));
+            assertEquals("SQL unavailable_shards_exception no shards", e.getCause().getMessage());
+        }
 
-        assertEquals("SQL unavailable_shards_exception no shards", e.getCause().getMessage());
+        assertEquals(List.of(2, 1), List.of(first.get(), second.get()),
+                     "each query went to one node, and both stayed in the rotation");
     }
 
     @Test
-    void aRequestThatTimesOutIsNotRetriedAndTheNodeStaysInTheRotation() throws Exception {
+    void aGatewayTimeoutIsNotRetriedOnAnotherNode() throws Exception {
+        AtomicInteger timedOut = new AtomicInteger();
+        AtomicInteger other = new AtomicInteger();
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1),
+                                                  respondingNode(timedOut, 504, "<html>504 Gateway Time-out</html>"),
+                                                  respondingNode(other, 200, SQL_RESPONSE));
+
+        assertThrows(ExecutionException.class, () -> selectOne(client));
+        assertEquals(0, other.get(), "a query a proxy gave up on is not run a second time");
+
+        selectOne(client);
+        assertThrows(ExecutionException.class, () -> selectOne(client));
+        assertEquals(2, timedOut.get(), "the node stayed in the rotation");
+    }
+
+    @Test
+    void aSlowQueryIsNotRetriedAndTheNodeStaysInTheRotation() throws Exception {
         AtomicInteger slowRequests = new AtomicInteger();
         AtomicInteger otherRequests = new AtomicInteger();
         DefaultElasticVertxClient client = client(Duration.ofMillis(300),
-                                                  silentNode(slowRequests),
+                                                  slowQueryNode(slowRequests),
                                                   respondingNode(otherRequests, 200, SQL_RESPONSE));
 
         ExecutionException e = assertThrows(ExecutionException.class, () -> selectOne(client));
@@ -158,6 +216,34 @@ class ElasticVertxClientFailoverTest {
     }
 
     @Test
+    void aNodeThatStopsAnsweringAltogetherIsFailedOverAfterTheTimeout() throws Exception {
+        AtomicInteger otherRequests = new AtomicInteger();
+        DefaultElasticVertxClient client = client(Duration.ofMillis(300),
+                                                  blackHoleNode(),
+                                                  respondingNode(otherRequests, 200, SQL_RESPONSE));
+
+        assertEquals(List.of(Map.of("one", 1)), selectOne(client), "the query moved on once the node failed its probe");
+        assertEquals(List.of(Map.of("one", 1)), selectOne(client));
+        assertEquals(List.of(Map.of("one", 1)), selectOne(client));
+        assertEquals(3, otherRequests.get(), "the silent node was taken out of the rotation");
+    }
+
+    @Test
+    void cursorPagesCarryTheRequestTimeoutToo() throws Exception {
+        AtomicReference<JsonObject> sent = new AtomicReference<>();
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1), capturingNode(sent));
+
+        // The page itself fails, since this client never served the first page, but the request is what matters
+        assertThrows(ExecutionException.class,
+                     () -> client.querySql("SELECT 1 AS one", null, null, requestTimeout(20),
+                                           Pageable.create("a-cursor", 10, null), Map.class)
+                                 .get(30, TimeUnit.SECONDS));
+
+        assertEquals("a-cursor", sent.get().getString("cursor"));
+        assertEquals("20s", sent.get().getString("request_timeout"));
+    }
+
+    @Test
     void elasticsearchAcceptsTheRequestTimeoutInSeconds() throws Exception {
         DefaultElasticVertxClient client = client(Duration.ofMinutes(1), elasticsearchNode());
 
@@ -167,11 +253,7 @@ class ElasticVertxClientFailoverTest {
     @Test
     void theRequestTimeoutIsSentWithItsUnit() throws Exception {
         AtomicReference<JsonObject> sent = new AtomicReference<>();
-        DefaultElasticVertxClient client = client(Duration.ofMinutes(1), node(vertx.createHttpServer().requestHandler(
-                request -> request.body().onSuccess(body -> {
-                    sent.set(body.toJsonObject());
-                    request.response().putHeader("content-type", "application/json").end(SQL_RESPONSE);
-                }))));
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1), capturingNode(sent));
 
         selectOne(client, requestTimeout(300));
 
@@ -282,10 +364,39 @@ class ElasticVertxClientFailoverTest {
     }
 
     /**
-     * Accepts requests and never answers them, like a node that hangs on a query
+     * Never answers a query, but answers a probe at once, like a healthy node working on a slow query
      */
-    private ElasticConnectionInfo silentNode(AtomicInteger requests) {
-        return node(vertx.createHttpServer().requestHandler(request -> requests.incrementAndGet()));
+    private ElasticConnectionInfo slowQueryNode(AtomicInteger queries) {
+        return node(vertx.createHttpServer().requestHandler(request -> {
+            if (request.method() == HttpMethod.GET) {
+                request.response().putHeader("content-type", "application/json").end("{\"tagline\":\"You Know, for Search\"}");
+            } else {
+                queries.incrementAndGet();
+            }
+        }));
+    }
+
+    /**
+     * Accepts connections and never says anything on them, like a node that vanished without closing its connections
+     */
+    private ElasticConnectionInfo blackHoleNode() {
+        try {
+            int port = vertx.createNetServer()
+                            .connectHandler(socket -> { })
+                            .listen(0, "127.0.0.1")
+                            .await(10, TimeUnit.SECONDS)
+                            .actualPort();
+            return new ElasticConnectionInfo("127.0.0.1", port, "http");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private ElasticConnectionInfo capturingNode(AtomicReference<JsonObject> sent) {
+        return node(vertx.createHttpServer().requestHandler(request -> request.body().onSuccess(body -> {
+            sent.set(body.toJsonObject());
+            request.response().putHeader("content-type", "application/json").end(SQL_RESPONSE);
+        })));
     }
 
     private static ElasticConnectionInfo node(HttpServer server) {

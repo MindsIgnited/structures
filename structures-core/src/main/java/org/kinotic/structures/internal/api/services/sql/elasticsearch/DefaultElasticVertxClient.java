@@ -49,6 +49,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
 /**
@@ -68,6 +69,8 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     private final ObjectMapper objectMapper;
     private final ElasticNodeSelector<ElasticNode> nodeSelector;
     private final WebClient webClient;
+    // Never reuses a connection, so a probe always tells whether the node can be reached now
+    private final WebClient probeClient;
     private final Cache<String, List<ElasticColumn>> columnsCache;
 
 
@@ -89,6 +92,8 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                 .setTracingPolicy(TracingPolicy.IGNORE);
 
         this.webClient = WebClient.create(vertx, options, new PoolOptions().setHttp1MaxSize(500));
+        this.probeClient = WebClient.create(vertx, new WebClientOptions(options).setKeepAlive(false));
+        long connectionTimeout = structuresProperties.getElasticConnectionTimeout().toMillis();
 
         Validate.notEmpty(structuresProperties.getElasticConnections(), "No Elastic connections defined");
 
@@ -98,16 +103,22 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                                                                  elasticConnectionInfo.getHost(), "/_sql")
                     // Without it a request sent on a pooled connection to a node that vanished never completes
                     .idleTimeout(structuresProperties.getElasticNamedQueryTimeout().toMillis());
-            if(elasticConnectionInfo.getScheme().equalsIgnoreCase("https")){
-                sqlQueryRequest.ssl(true);
-            }
-            if(structuresProperties.hasElasticUsernameAndPassword()){
-                sqlQueryRequest.basicAuthentication(structuresProperties.getElasticUsername(),
-                                                    structuresProperties.getElasticPassword());
+            HttpRequest<Buffer> probeRequest = probeClient.get(elasticConnectionInfo.getPort(),
+                                                               elasticConnectionInfo.getHost(), "/")
+                    .idleTimeout(connectionTimeout);
+            for(HttpRequest<Buffer> request : List.of(sqlQueryRequest, probeRequest)){
+                if(elasticConnectionInfo.getScheme().equalsIgnoreCase("https")){
+                    request.ssl(true);
+                }
+                if(structuresProperties.hasElasticUsernameAndPassword()){
+                    request.basicAuthentication(structuresProperties.getElasticUsername(),
+                                                structuresProperties.getElasticPassword());
+                }
             }
             nodes.add(new ElasticNode(elasticConnectionInfo.toHostAndPort(),
                                       sqlQueryRequest,
-                                      sqlQueryRequest.copy().uri("/_sql/translate")));
+                                      sqlQueryRequest.copy().uri("/_sql/translate"),
+                                      probeRequest));
         }
         this.nodeSelector = new ElasticNodeSelector<>(nodes);
     }
@@ -115,6 +126,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     @PreDestroy
     public void destroy(){
         webClient.close();
+        probeClient.close();
     }
 
     @WithSpan
@@ -168,11 +180,11 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                 }else{
                     json.put("page_timeout", "2m");
                 }
-                if (requestTimeout != null) {
-                    // Elasticsearch only takes a time value with its unit
-                    json.put("request_timeout", requestTimeout + "s");
-                }
             }
+        }
+        if (requestTimeout != null) {
+            // Every page, so Elasticsearch gives up on a page when we do. It only takes a time value with its unit
+            json.put("request_timeout", requestTimeout + "s");
         }
 
         // Completed from the WebClient's handler, on a Vert.x context, so dependent stages already run there
@@ -268,10 +280,11 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     }
 
     /**
-     * Sends the request to the next node in the rotation, moving on to the following node when one cannot be reached or
-     * answers that it is unavailable. Everything this client sends is a read, so sending a request twice is harmless.
-     * A request that times out is not retried, since a slow query is no reason to think the node is gone and running
-     * it again elsewhere would only double the load it puts on the cluster.
+     * Sends the request to the next node in the rotation, moving on to the following node when one cannot be reached.
+     * Everything this client sends is a read, so sending a request twice is harmless.
+     * A request that times out is only sent elsewhere when the node no longer answers a fresh connection either, since a
+     * slow query is no reason to think the node is gone and running it again would only double the load it puts on the
+     * cluster. See {@link #probe(ElasticNode)}.
      */
     private Future<HttpResponse<Buffer>> send(Function<ElasticNode, HttpRequest<Buffer>> requestForNode,
                                               JsonObject body,
@@ -279,52 +292,91 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         Function<ElasticNode, HttpRequest<Buffer>> request = idleTimeoutOverride == null
                 ? requestForNode
                 : node -> requestForNode.apply(node).copy().idleTimeout(idleTimeoutOverride);
-        Promise<HttpResponse<Buffer>> promise = Promise.promise();
-        send(request, body, nodeSelector.nodesForRequest(), 0, new ArrayList<>(), promise);
-        return promise.future();
+        Attempt attempt = new Attempt(request, body, nodeSelector.nodesForRequest());
+        attempt.send(0);
+        return attempt.promise.future();
     }
 
-    private void send(Function<ElasticNode, HttpRequest<Buffer>> requestForNode,
-                      JsonObject body,
-                      List<ElasticNode> nodes,
-                      int index,
-                      List<Throwable> nodeFailures,
-                      Promise<HttpResponse<Buffer>> promise){
-        ElasticNode node = nodes.get(index);
-        boolean hasNextNode = index + 1 < nodes.size();
-        requestForNode.apply(node)
-                      .sendJsonObject(body)
-                      .onComplete(ar -> {
-                          if(ar.succeeded()){
-                              int statusCode = ar.result().statusCode();
-                              if(isUnavailableStatus(statusCode)){
-                                  markDead(node, "HTTP " + statusCode);
-                                  if(hasNextNode){
-                                      send(requestForNode, body, nodes, index + 1, nodeFailures, promise);
-                                      return;
+    /**
+     * One request making its way through the nodes it was handed
+     */
+    private final class Attempt {
+        private final Function<ElasticNode, HttpRequest<Buffer>> requestForNode;
+        private final JsonObject body;
+        private final List<ElasticNode> nodes;
+        private final List<Throwable> nodeFailures = new ArrayList<>();
+        private final Promise<HttpResponse<Buffer>> promise = Promise.promise();
+
+        private Attempt(Function<ElasticNode, HttpRequest<Buffer>> requestForNode,
+                        JsonObject body,
+                        List<ElasticNode> nodes) {
+            this.requestForNode = requestForNode;
+            this.body = body;
+            this.nodes = nodes;
+        }
+
+        private void send(int index){
+            ElasticNode node = nodes.get(index);
+            requestForNode.apply(node)
+                          .sendJsonObject(body)
+                          .onComplete(ar -> {
+                              if(ar.succeeded()){
+                                  HttpResponse<Buffer> response = ar.result();
+                                  if(isProxyUnavailable(response)){
+                                      nodeUnavailable(index, unavailable(node, response));
+                                  }else{
+                                      if(nodeSelector.markAlive(node)){
+                                          log.info("Elasticsearch node {} is answering again, it is back in the rotation",
+                                                   node.hostAndPort());
+                                      }
+                                      // Includes Elasticsearch's own errors, which the caller reports as it sent them
+                                      promise.complete(response);
                                   }
-                              }else if(nodeSelector.markAlive(node)){
-                                  log.info("Elasticsearch node {} is answering again, it is back in the rotation", node.hostAndPort());
+                              }else{
+                                  Throwable cause = ar.cause();
+                                  if(isNodeFailure(cause)){
+                                      nodeUnavailable(index, cause);
+                                  }else if(cause instanceof TimeoutException){
+                                      // A slow query, or a connection to a node that vanished without closing it
+                                      probe(node).onComplete(probe -> {
+                                          if(probe.succeeded()){
+                                              promise.fail(cause);
+                                          }else{
+                                              log.warn("Elasticsearch node {} timed out and does not answer a new connection either ({})",
+                                                       node.hostAndPort(), probe.cause().toString());
+                                              nodeUnavailable(index, cause);
+                                          }
+                                      });
+                                  }else{
+                                      promise.fail(cause);
+                                  }
                               }
-                              // The last node's error response is passed on, so the caller reports what Elasticsearch said
-                              promise.complete(ar.result());
-                          }else{
-                              Throwable cause = ar.cause();
-                              if(isNodeFailure(cause)){
-                                  markDead(node, cause.toString());
-                                  nodeFailures.add(cause);
-                                  if(hasNextNode){
-                                      send(requestForNode, body, nodes, index + 1, nodeFailures, promise);
-                                      return;
-                                  }
-                                  if(nodeFailures.size() > 1){
-                                      promise.fail(allNodesFailed(nodes, nodeFailures));
-                                      return;
-                                  }
-                              }
-                              promise.fail(cause);
-                          }
-                      });
+                          });
+        }
+
+        private void nodeUnavailable(int index, Throwable failure){
+            markDead(nodes.get(index), failure.toString());
+            nodeFailures.add(failure);
+            if(index + 1 < nodes.size()){
+                send(index + 1);
+            }else if(nodeFailures.size() > 1){
+                promise.fail(allNodesFailed(nodes, nodeFailures));
+            }else{
+                promise.fail(failure);
+            }
+        }
+    }
+
+    /**
+     * Asks the node for its banner over a connection of its own, so a pooled connection to a node that is gone cannot
+     * answer for it. Fails unless the node itself answers within the connection timeout.
+     */
+    private Future<Void> probe(ElasticNode node){
+        return node.probeRequest()
+                   .send()
+                   .compose(response -> isProxyUnavailable(response)
+                           ? Future.failedFuture(unavailable(node, response))
+                           : Future.succeededFuture());
     }
 
     private void markDead(ElasticNode node, String reason){
@@ -334,6 +386,11 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         }else{
             log.debug("Elasticsearch node {} is still unavailable ({})", node.hostAndPort(), reason);
         }
+    }
+
+    private static Exception unavailable(ElasticNode node, HttpResponse<Buffer> response){
+        return new IllegalStateException("Elasticsearch node " + node.hostAndPort() + " is unavailable, it answered HTTP "
+                                         + response.statusCode());
     }
 
     private static Exception allNodesFailed(List<ElasticNode> nodes, List<Throwable> nodeFailures){
@@ -348,10 +405,25 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     }
 
     /**
-     * The same statuses the Elasticsearch RestClient treats as the node, or a proxy in front of it, being unavailable
+     * True when a proxy or load balancer in front of the node says the node is unavailable.
+     * A 502 or 503 carrying an Elasticsearch error was sent by Elasticsearch itself, such as unavailable shards or a
+     * cluster block, which every node would answer the same way, so it is the query's answer rather than a dead node.
+     * A 504 means a proxy gave up waiting, which is a slow query rather than a dead node, so it is not one either.
      */
-    static boolean isUnavailableStatus(int statusCode){
-        return statusCode == 502 || statusCode == 503 || statusCode == 504;
+    static boolean isProxyUnavailable(HttpResponse<Buffer> response){
+        int statusCode = response.statusCode();
+        return (statusCode == 502 || statusCode == 503) && !isElasticsearchError(response.body());
+    }
+
+    private static boolean isElasticsearchError(Buffer body){
+        if(body == null || body.length() == 0){
+            return false;
+        }
+        try {
+            return body.toJsonObject().getValue("error") instanceof JsonObject error && error.containsKey("type");
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -376,7 +448,8 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
 
     private record ElasticNode(String hostAndPort,
                                HttpRequest<Buffer> sqlQueryRequest,
-                               HttpRequest<Buffer> sqlTranslateRequest) {
+                               HttpRequest<Buffer> sqlTranslateRequest,
+                               HttpRequest<Buffer> probeRequest) {
     }
 
     private Page<Map<String, Object>> processBufferToMap(Buffer buffer, String cursorProvided) throws Exception {

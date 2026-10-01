@@ -29,23 +29,28 @@ class ElasticNodeSelectorTest {
     }
 
     @Test
-    void aDeadNodeIsOnlyTriedAfterEveryLiveOne() {
+    void aDeadNodeIsLeftOutWhileAnyNodeIsAlive() {
         assertTrue(selector.markDead("a"));
 
-        assertEquals(List.of("b", "c", "a"), selector.nodesForRequest());
-        assertEquals(List.of("c", "b", "a"), selector.nodesForRequest());
+        assertEquals(List.of("b", "c"), selector.nodesForRequest());
+        assertEquals(List.of("c", "b"), selector.nodesForRequest());
         assertTrue(selector.isDead("a"));
     }
 
     @Test
-    void whenEveryNodeIsDeadTheyAreTriedInTheOrderTheyAreDueBack() {
+    void whenEveryNodeIsDeadOnlyTheOneDueBackFirstIsTried() {
         selector.markDead("b");
         advance(Duration.ofSeconds(10));
         selector.markDead("c");
         advance(Duration.ofSeconds(10));
         selector.markDead("a");
 
-        assertEquals(List.of("b", "c", "a"), selector.nodesForRequest());
+        assertEquals(List.of("b"), selector.nodesForRequest());
+
+        // b failed its revival and now has two minutes to sit out, so c is due back first
+        advance(Duration.ofSeconds(40));
+        selector.markDead("b");
+        assertEquals(List.of("c"), selector.nodesForRequest());
     }
 
     @Test
@@ -56,7 +61,7 @@ class ElasticNodeSelectorTest {
 
         advance(Duration.ofNanos(1));
         assertFalse(selector.isDead("a"));
-        assertTrue(selector.nodesForRequest().subList(0, 3).contains("a"));
+        assertTrue(selector.nodesForRequest().contains("a"));
     }
 
     @Test

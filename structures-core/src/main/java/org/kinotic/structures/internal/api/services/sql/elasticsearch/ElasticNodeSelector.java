@@ -4,7 +4,6 @@ import org.apache.commons.lang3.Validate;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -17,8 +16,8 @@ import java.util.function.LongSupplier;
  * <p>
  * A node that fails is skipped for {@link #MIN_DEAD_TIME}, doubling on every failed revival up to {@link #MAX_DEAD_TIME}.
  * Once its back-off expires it rejoins the rotation, and the next request it serves either revives it or sends it back.
- * Dead nodes are never dropped: when every live node fails, or none are live, they are tried in the order they are due
- * to be revived, so a request is only lost when no configured node can answer it.
+ * Like the RestClient, a request is only offered the live nodes, and when there are none, just the dead node closest to
+ * being revived, so an outage of the whole cluster costs each request one attempt rather than one per node.
  */
 public class ElasticNodeSelector<N> {
 
@@ -46,36 +45,32 @@ public class ElasticNodeSelector<N> {
     }
 
     /**
-     * @return every node in the order a request should try them: the live nodes, starting one further along than the
-     * previous request did, followed by the dead nodes in the order they are due to be revived
+     * @return the nodes a request should try, in order: the live nodes, starting one further along than the previous
+     * request did, or when every node is dead, only the one closest to being revived
      */
     public List<N> nodesForRequest() {
         long now = nanoTime.getAsLong();
         List<N> alive = new ArrayList<>(nodes.size());
-        List<Integer> dead = new ArrayList<>();
+        int closestToRevival = -1;
+        long closestDeadUntil = 0;
         for (int i = 0; i < nodes.size(); i++) {
             DeadState state = deadStates.get(i);
             if (state == null || state.isExpired(now)) {
                 alive.add(nodes.get(i));
-            } else {
-                dead.add(i);
+            } else if (closestToRevival == -1 || state.deadUntilNanos - closestDeadUntil < 0) {
+                closestToRevival = i;
+                closestDeadUntil = state.deadUntilNanos;
             }
         }
 
-        List<N> ret = new ArrayList<>(nodes.size());
-        if (!alive.isEmpty()) {
-            int start = Math.floorMod(rotation.getAndIncrement(), alive.size());
-            for (int i = 0; i < alive.size(); i++) {
-                ret.add(alive.get((start + i) % alive.size()));
-            }
+        if (alive.isEmpty()) {
+            return List.of(nodes.get(closestToRevival));
         }
-        dead.stream()
-            .sorted(Comparator.comparingLong(i -> {
-                DeadState state = deadStates.get(i);
-                // revived by a concurrent request since the loop above, so it is the most deserving of another try
-                return state != null ? state.deadUntilNanos - now : Long.MIN_VALUE;
-            }))
-            .forEach(i -> ret.add(nodes.get(i)));
+        int start = Math.floorMod(rotation.getAndIncrement(), alive.size());
+        List<N> ret = new ArrayList<>(alive.size());
+        for (int i = 0; i < alive.size(); i++) {
+            ret.add(alive.get((start + i) % alive.size()));
+        }
         return ret;
     }
 

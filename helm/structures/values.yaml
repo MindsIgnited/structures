@@ -52,7 +52,7 @@ properties:
         - host: "minds-test-elasticsearch.es.centralus.azure.elastic-cloud.com"
           port: 443
           scheme: "https"
-      connectionTimeout: "1M"
+      connectionTimeout: "5s"
       socketTimeout: "1M"
       namedQueryTimeout: "2m"
       username: "structures"
