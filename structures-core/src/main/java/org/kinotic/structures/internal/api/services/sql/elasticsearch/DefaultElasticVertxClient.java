@@ -10,13 +10,17 @@ import tools.jackson.core.JsonGenerator;
 import tools.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClosedException;
 import io.vertx.core.http.PoolOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.tracing.TracingPolicy;
 import io.vertx.ext.web.client.HttpRequest;
+import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import org.apache.commons.lang3.Validate;
@@ -37,6 +41,7 @@ import org.springframework.stereotype.Component;
 import jakarta.annotation.PreDestroy;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -44,18 +49,24 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 /**
  * Provides access to ElasticSearch via Vertx.
  * This was done because the ElasticSearch Java client is missing functionality that we need.
+ * Requests are spread round robin over every configured Elasticsearch connection, and a request that cannot reach a
+ * node is retried on the next one, see {@link ElasticNodeSelector}.
  * Created by Navíd Mitchell 🤪 on 4/29/24.
  */
 @Component
 public class DefaultElasticVertxClient implements ElasticVertxClient {
     private static final Logger log = LoggerFactory.getLogger(DefaultElasticVertxClient.class);
+    /**
+     * How much longer than a named query's own request timeout we wait, so Elasticsearch can report that it timed out
+     */
+    private static final Duration REQUEST_TIMEOUT_GRACE = Duration.ofSeconds(5);
     private final ObjectMapper objectMapper;
-    private final HttpRequest<Buffer> sqlQueryRequest;
-    private final HttpRequest<Buffer> sqlTranslateRequest;
+    private final ElasticNodeSelector<ElasticNode> nodeSelector;
     private final WebClient webClient;
     private final Cache<String, List<ElasticColumn>> columnsCache;
 
@@ -81,20 +92,24 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
 
         Validate.notEmpty(structuresProperties.getElasticConnections(), "No Elastic connections defined");
 
-        ElasticConnectionInfo elasticConnectionInfo = structuresProperties.getElasticConnections().getFirst();
-
-        sqlQueryRequest = webClient.post(elasticConnectionInfo.getPort(),
-                                         elasticConnectionInfo.getHost(), "/_sql");
-        if(elasticConnectionInfo.getScheme().equalsIgnoreCase("https")){
-            sqlQueryRequest.ssl(true);
+        List<ElasticNode> nodes = new ArrayList<>();
+        for(ElasticConnectionInfo elasticConnectionInfo : structuresProperties.getElasticConnections()){
+            HttpRequest<Buffer> sqlQueryRequest = webClient.post(elasticConnectionInfo.getPort(),
+                                                                 elasticConnectionInfo.getHost(), "/_sql")
+                    // Without it a request sent on a pooled connection to a node that vanished never completes
+                    .idleTimeout(structuresProperties.getElasticNamedQueryTimeout().toMillis());
+            if(elasticConnectionInfo.getScheme().equalsIgnoreCase("https")){
+                sqlQueryRequest.ssl(true);
+            }
+            if(structuresProperties.hasElasticUsernameAndPassword()){
+                sqlQueryRequest.basicAuthentication(structuresProperties.getElasticUsername(),
+                                                    structuresProperties.getElasticPassword());
+            }
+            nodes.add(new ElasticNode(elasticConnectionInfo.toHostAndPort(),
+                                      sqlQueryRequest,
+                                      sqlQueryRequest.copy().uri("/_sql/translate")));
         }
-        if(structuresProperties.hasElasticUsernameAndPassword()){
-            sqlQueryRequest.basicAuthentication(structuresProperties.getElasticUsername(),
-                                                structuresProperties.getElasticPassword());
-        }
-
-        sqlTranslateRequest = sqlQueryRequest.copy().uri("/_sql/translate");
-
+        this.nodeSelector = new ElasticNodeSelector<>(nodes);
     }
 
     @PreDestroy
@@ -110,6 +125,10 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                                                    QueryOptions options,
                                                    Pageable pageable,
                                                    Class<T> type) {
+        Integer requestTimeout = options != null ? options.getRequestTimeout() : null;
+        if(requestTimeout != null && requestTimeout <= 0){
+            return CompletableFuture.failedFuture(new IllegalArgumentException("requestTimeout is a number of seconds and must be greater than 0, got " + requestTimeout));
+        }
         JsonObject json = new JsonObject();
         boolean foundCursor = false;
         MutableObject<String> cursorProvided = new MutableObject<>(null);
@@ -149,15 +168,20 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                 }else{
                     json.put("page_timeout", "2m");
                 }
-                if (options.getRequestTimeout() != null) {
-                    json.put("request_timeout", options.getRequestTimeout());
+                if (requestTimeout != null) {
+                    // Elasticsearch only takes a time value with its unit
+                    json.put("request_timeout", requestTimeout + "s");
                 }
             }
         }
 
         // Completed from the WebClient's handler, on a Vert.x context, so dependent stages already run there
         CompletableFuture<Page<T>> fut = new CompletableFuture<>();
-        sqlQueryRequest.sendJsonObject(json)
+        // A query given its own timeout is waited on for that long, rather than for the named query default
+        Long idleTimeoutOverride = requestTimeout != null
+                ? Duration.ofSeconds(requestTimeout).plus(REQUEST_TIMEOUT_GRACE).toMillis()
+                : null;
+        send(ElasticNode::sqlQueryRequest, json, idleTimeoutOverride)
                        .onComplete(ar -> {
                            if(ar.succeeded()){
                                if(ar.result().statusCode() == 200) {
@@ -208,7 +232,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
             }
             json.put("params", paramsJson);
         }
-        sqlTranslateRequest.sendJsonObject(json)
+        send(ElasticNode::sqlTranslateRequest, json, null)
                            .onComplete(ar -> {
                                if(ar.succeeded()){
                                    InputStream input = new ByteArrayInputStream(ar.result()
@@ -243,6 +267,102 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         return responseFuture;
     }
 
+    /**
+     * Sends the request to the next node in the rotation, moving on to the following node when one cannot be reached or
+     * answers that it is unavailable. Everything this client sends is a read, so sending a request twice is harmless.
+     * A request that times out is not retried, since a slow query is no reason to think the node is gone and running
+     * it again elsewhere would only double the load it puts on the cluster.
+     */
+    private Future<HttpResponse<Buffer>> send(Function<ElasticNode, HttpRequest<Buffer>> requestForNode,
+                                              JsonObject body,
+                                              Long idleTimeoutOverride){
+        Function<ElasticNode, HttpRequest<Buffer>> request = idleTimeoutOverride == null
+                ? requestForNode
+                : node -> requestForNode.apply(node).copy().idleTimeout(idleTimeoutOverride);
+        Promise<HttpResponse<Buffer>> promise = Promise.promise();
+        send(request, body, nodeSelector.nodesForRequest(), 0, new ArrayList<>(), promise);
+        return promise.future();
+    }
+
+    private void send(Function<ElasticNode, HttpRequest<Buffer>> requestForNode,
+                      JsonObject body,
+                      List<ElasticNode> nodes,
+                      int index,
+                      List<Throwable> nodeFailures,
+                      Promise<HttpResponse<Buffer>> promise){
+        ElasticNode node = nodes.get(index);
+        boolean hasNextNode = index + 1 < nodes.size();
+        requestForNode.apply(node)
+                      .sendJsonObject(body)
+                      .onComplete(ar -> {
+                          if(ar.succeeded()){
+                              int statusCode = ar.result().statusCode();
+                              if(isUnavailableStatus(statusCode)){
+                                  markDead(node, "HTTP " + statusCode);
+                                  if(hasNextNode){
+                                      send(requestForNode, body, nodes, index + 1, nodeFailures, promise);
+                                      return;
+                                  }
+                              }else if(nodeSelector.markAlive(node)){
+                                  log.info("Elasticsearch node {} is answering again, it is back in the rotation", node.hostAndPort());
+                              }
+                              // The last node's error response is passed on, so the caller reports what Elasticsearch said
+                              promise.complete(ar.result());
+                          }else{
+                              Throwable cause = ar.cause();
+                              if(isNodeFailure(cause)){
+                                  markDead(node, cause.toString());
+                                  nodeFailures.add(cause);
+                                  if(hasNextNode){
+                                      send(requestForNode, body, nodes, index + 1, nodeFailures, promise);
+                                      return;
+                                  }
+                                  if(nodeFailures.size() > 1){
+                                      promise.fail(allNodesFailed(nodes, nodeFailures));
+                                      return;
+                                  }
+                              }
+                              promise.fail(cause);
+                          }
+                      });
+    }
+
+    private void markDead(ElasticNode node, String reason){
+        if(nodeSelector.markDead(node)){
+            log.warn("Elasticsearch node {} is unavailable ({}), it is out of the rotation until it recovers",
+                     node.hostAndPort(), reason);
+        }else{
+            log.debug("Elasticsearch node {} is still unavailable ({})", node.hostAndPort(), reason);
+        }
+    }
+
+    private static Exception allNodesFailed(List<ElasticNode> nodes, List<Throwable> nodeFailures){
+        List<String> hosts = nodes.stream().map(ElasticNode::hostAndPort).toList();
+        Throwable last = nodeFailures.getLast();
+        IllegalStateException e = new IllegalStateException("No Elasticsearch node could be reached, tried " + hosts
+                                                             + ", last failure: " + last, last);
+        for(Throwable failure : nodeFailures.subList(0, nodeFailures.size() - 1)){
+            e.addSuppressed(failure);
+        }
+        return e;
+    }
+
+    /**
+     * The same statuses the Elasticsearch RestClient treats as the node, or a proxy in front of it, being unavailable
+     */
+    static boolean isUnavailableStatus(int statusCode){
+        return statusCode == 502 || statusCode == 503 || statusCode == 504;
+    }
+
+    /**
+     * True for failures that mean the node could not be reached or dropped the connection: refused or timed out
+     * connects, unresolvable hosts, resets and TLS failures are all {@link IOException}s.
+     * Timeouts waiting for a response and a full local connection pool say nothing about the node, so they are not.
+     */
+    static boolean isNodeFailure(Throwable cause){
+        return cause instanceof IOException || cause instanceof HttpClosedException;
+    }
+
     private Exception convertErrorResponse(InputStream input) {
         ErrorResponse errorResponse = ErrorResponse.of(builder -> {
             JsonpMapper mapper = SimpleJsonpMapper.INSTANCE; // We don't want to fail on unknown fields
@@ -252,6 +372,11 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         ErrorCause cause = errorResponse.error();
         log.debug("Exception from Elastic SQL: {} {} \n{}", cause.type(), cause.reason(), cause.stackTrace());
         return new IllegalArgumentException("SQL " + cause.type() + " " + cause.reason());
+    }
+
+    private record ElasticNode(String hostAndPort,
+                               HttpRequest<Buffer> sqlQueryRequest,
+                               HttpRequest<Buffer> sqlTranslateRequest) {
     }
 
     private Page<Map<String, Object>> processBufferToMap(Buffer buffer, String cursorProvided) throws Exception {

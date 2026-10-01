@@ -36,6 +36,16 @@ public class StructuresProperties {
     private Duration elasticSocketTimeout = Duration.ofMinutes(1);
 
     /**
+     * How long a named query waits for Elasticsearch to answer, kept apart from {@link #elasticSocketTimeout} since
+     * aggregate queries can legitimately run far longer than any other Elasticsearch call.
+     * A named query given a request timeout of its own waits that long instead, plus a few seconds for Elasticsearch
+     * to report the timeout. The default sits above the 90 seconds Elasticsearch gives an SQL query when none is given,
+     * so Elasticsearch gives up first and says why.
+     */
+    @NotNull
+    private Duration elasticNamedQueryTimeout = Duration.ofMinutes(2);
+
+    /**
      * The interval to check the health of the elastic cluster
      */
     @NotNull

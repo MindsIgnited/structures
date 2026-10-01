@@ -121,14 +121,24 @@ Below are the available options, their types, and default values. When you see a
   - `host` (`String`, default: `localhost`)
   - `port` (`int`, default: `9200`)
   - `scheme` (`String`, default: `http`)
+
+  List every node you want Structures to use. Requests are spread round robin over them, and a node that refuses
+  connections, drops them, or answers `502`/`503`/`504` is skipped for a minute (doubling on each failed retry, up to
+  30 minutes) while the request moves on to the next node. Use host names rather than IP addresses where you can, so a
+  node that restarts with a new address is picked up again once DNS has the new one.
 - **elasticUsername** (`String`, default: `null`):
   Username for Elasticsearch (optional).
 - **elasticPassword** (`String`, default: `null`):
   Password for Elasticsearch (optional).
 - **elasticConnectionTimeout** (`Duration`, default: `5s`):
-  Connection timeout for Elasticsearch.
+  Connection timeout for Elasticsearch. This is how long a request waits on a node that has gone away before moving on
+  to the next one, so keep it short.
 - **elasticSocketTimeout** (`Duration`, default: `1m`):
-  Socket timeout for Elasticsearch.
+  Socket timeout for every Elasticsearch call except named queries.
+- **elasticNamedQueryTimeout** (`Duration`, default: `2m`):
+  The longest a named query waits for Elasticsearch to answer. A query that runs longer fails, and is not retried on
+  another node. A named query given its own `requestTimeout` waits that many seconds plus 5 instead. The default sits
+  above the 90 seconds Elasticsearch allows an SQL query, so Elasticsearch normally gives up first and says why.
 - **elasticHealthCheckInterval** (`Duration`, default: `1m`):
   Interval for health checks on the Elasticsearch cluster.
 
@@ -143,6 +153,7 @@ structures:
   elasticPassword: "pass"
   elasticConnectionTimeout: 5s
   elasticSocketTimeout: 1m
+  elasticNamedQueryTimeout: 2m
   elasticHealthCheckInterval: 1m
 ```
 

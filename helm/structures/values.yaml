@@ -54,6 +54,7 @@ properties:
           scheme: "https"
       connectionTimeout: "1M"
       socketTimeout: "1M"
+      namedQueryTimeout: "2m"
       username: "structures"
       password: "asdfsda898u7fsad8sfa@sdfa"
     ai:
