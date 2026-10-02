@@ -4,11 +4,11 @@ import org.kinotic.structures.api.domain.EntityContext;
 import org.kinotic.structures.api.domain.Structure;
 import org.kinotic.structures.api.domain.idl.decorators.TenantIdDecorator;
 import org.kinotic.structures.internal.api.hooks.UpsertFieldPreProcessor;
-import org.kinotic.structures.internal.api.hooks.UpsertPreProcessor;
 import org.springframework.stereotype.Component;
 
 /**
- * This pretty much does nothing but the other logic in the {@link UpsertPreProcessor} already work with concept for the time being it will stay here.
+ * Resolves the value of a {@link TenantIdDecorator} field on save. The data names the tenant the entity belongs
+ * to, and a value that is not set is filled with the tenant of the participant performing the save.
  * Created by Navíd Mitchell 🤪 on 5/9/23.
  */
 @Component
@@ -26,6 +26,13 @@ public class TenantIdUpsertFieldPreProcessor implements UpsertFieldPreProcessor<
 
     @Override
     public String process(Structure structure, String fieldName, TenantIdDecorator decorator, String fieldValue, EntityContext context) {
-        return fieldValue;
+        String ret;
+        if(fieldValue == null || fieldValue.isBlank()){
+            // clients default the field to an empty string, so a blank value means the entity is the participant's own
+            ret = context.getParticipant() != null ? context.getParticipant().getTenantId() : null;
+        }else{
+            ret = fieldValue;
+        }
+        return ret;
     }
 }
