@@ -4,6 +4,7 @@ import org.apache.commons.lang3.Validate;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -66,22 +67,31 @@ public class ElasticNodeSelector<N> {
         if (alive.isEmpty()) {
             return List.of(nodes.get(closestToRevival));
         }
-        int start = Math.floorMod(rotation.getAndIncrement(), alive.size());
-        List<N> ret = new ArrayList<>(alive.size());
-        for (int i = 0; i < alive.size(); i++) {
-            ret.add(alive.get((start + i) % alive.size()));
-        }
-        return ret;
+        Collections.rotate(alive, -Math.floorMod(rotation.getAndIncrement(), alive.size()));
+        return alive;
     }
 
     /**
-     * Records that the node answered, putting it back in the rotation if it was dead
-     * @return true if the node was dead before this call
+     * @return the current time on the clock the back-offs use, for stamping when a request was sent
      */
-    public boolean markAlive(N node) {
+    public long now() {
+        return nanoTime.getAsLong();
+    }
+
+    /**
+     * Records that the node answered, putting it back in the rotation if it was dead.
+     * Only an answer to a request sent after the node was marked dead counts. A node that is draining still answers
+     * the requests it already had while it refuses new connections, and those answers say nothing about recovery.
+     * @param requestSentAt when the answered request was sent, from {@link #now()}
+     * @return true if this brought the node back into the rotation
+     */
+    public boolean markAlive(N node, long requestSentAt) {
         int index = indexOf(node);
         // Called on every answer, nearly always for a node that is alive, so read before writing the shared slot
-        return deadStates.get(index) != null && deadStates.getAndSet(index, null) != null;
+        DeadState state = deadStates.get(index);
+        return state != null
+                && requestSentAt - state.markedAtNanos >= 0
+                && deadStates.compareAndSet(index, state, null);
     }
 
     /**
@@ -122,10 +132,12 @@ public class ElasticNodeSelector<N> {
 
     private static final class DeadState {
         private final int failedAttempts;
+        private final long markedAtNanos;
         private final long deadUntilNanos;
 
         private DeadState(int failedAttempts, long now) {
             this.failedAttempts = failedAttempts;
+            this.markedAtNanos = now;
             this.deadUntilNanos = now + deadTime(failedAttempts).toNanos();
         }
 

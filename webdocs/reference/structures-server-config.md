@@ -130,8 +130,10 @@ Below are the available options, their types, and default values. When you see a
   - Errors from Elasticsearch itself, `504`s and slow queries are not retried, since another node would answer them the
     same way.
 
-  Use host names rather than IP addresses where you can: connections are retired every 5 minutes, so a node that
-  restarts with a new address is followed once DNS has it. A node that vanishes without closing its connections is
+  Use host names rather than IP addresses where you can. Host names are looked up again within a couple of seconds of
+  the DNS record changing (the DNS TTL governs how long an answer is cached), new connections go to the new address,
+  and pooled connections to the old one are retired within 5 minutes, or at once if the old node closes them. A node
+  that is skipped is retried after its back-off with a fresh lookup. A node that vanishes without closing its connections is
   only noticed within seconds when Vert.x runs on a native transport (epoll); otherwise its in-flight named queries
   wait out `elasticNamedQueryTimeout`. The server logs at startup when it runs without one.
 - **elasticUsername** (`String`, default: `null`):

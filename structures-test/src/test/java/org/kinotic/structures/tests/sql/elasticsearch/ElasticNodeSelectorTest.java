@@ -98,13 +98,34 @@ class ElasticNodeSelectorTest {
         advance(Duration.ofMinutes(1));
         selector.markDead("a"); // failed revival, now two minutes
 
-        assertTrue(selector.markAlive("a"));
+        assertTrue(selector.markAlive("a", selector.now()));
         assertFalse(selector.isDead("a"));
-        assertFalse(selector.markAlive("a"), "already alive");
+        assertFalse(selector.markAlive("a", selector.now()), "already alive");
 
         selector.markDead("a");
         advance(Duration.ofMinutes(1));
         assertFalse(selector.isDead("a"), "the back-off started over at one minute");
+    }
+
+    @Test
+    void anAnswerToARequestSentBeforeTheNodeWasMarkedDeadDoesNotReviveIt() {
+        long sentBefore = selector.now();
+        advance(Duration.ofSeconds(1));
+        selector.markDead("a");
+        advance(Duration.ofSeconds(30));
+
+        // a draining node finishing a query it already had
+        assertFalse(selector.markAlive("a", sentBefore));
+        assertTrue(selector.isDead("a"));
+
+        // its revival attempt after the back-off failing still doubles the back-off
+        advance(Duration.ofSeconds(30));
+        selector.markDead("a");
+        advance(Duration.ofMinutes(2).minusNanos(1));
+        assertTrue(selector.isDead("a"), "two minutes, not one");
+
+        // a request sent after it was marked dead does revive it
+        assertTrue(selector.markAlive("a", selector.now()));
     }
 
     @Test

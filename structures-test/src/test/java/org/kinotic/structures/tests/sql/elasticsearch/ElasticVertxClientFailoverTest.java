@@ -1,6 +1,7 @@
 package org.kinotic.structures.tests.sql.elasticsearch;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -8,6 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.SocketException;
+import java.net.UnknownHostException;
+import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLHandshakeException;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -25,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpClosedException;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import org.junit.jupiter.api.AfterEach;
@@ -229,6 +236,38 @@ class ElasticVertxClientFailoverTest {
 
         assertEquals(2, dropped.get(), "the node that dropped a connection stayed in the rotation");
         assertEquals(3, otherRequests.get());
+    }
+
+    @Test
+    void aConnectionDroppedAfterTheQueryHadTimeToRunIsNotRetried() throws Exception {
+        AtomicInteger otherRequests = new AtomicInteger();
+        // The test clients' connection timeout is 2s, so a drop after 2.5s looks like a proxy cutting off a slow query
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1),
+                                                  node(vertx.createHttpServer().requestHandler(
+                                                          request -> vertx.setTimer(2500, id -> request.connection().close()))),
+                                                  respondingNode(otherRequests, 200, SQL_RESPONSE));
+
+        ExecutionException e = assertThrows(ExecutionException.class, () -> selectOne(client));
+
+        assertInstanceOf(HttpClosedException.class, e.getCause());
+        assertEquals(0, otherRequests.get(), "the query was not run a second time");
+    }
+
+    @Test
+    void failuresAreToldApartByWhatTheySayAboutTheNode() {
+        // no connection could be made: the node is benched
+        assertTrue(DefaultElasticVertxClient.isConnectFailure(new ConnectException("Connection refused")));
+        assertTrue(DefaultElasticVertxClient.isConnectFailure(new NoRouteToHostException("No route to host")));
+        assertTrue(DefaultElasticVertxClient.isConnectFailure(new UnknownHostException("es-node")));
+        assertTrue(DefaultElasticVertxClient.isConnectFailure(new SSLHandshakeException("bad certificate")));
+        // an established connection broke: retried elsewhere, the node stays
+        SSLException midStream = new SSLException("closing inbound before receiving peer's close_notify");
+        assertFalse(DefaultElasticVertxClient.isConnectFailure(midStream));
+        assertTrue(DefaultElasticVertxClient.isConnectionLost(midStream));
+        assertTrue(DefaultElasticVertxClient.isConnectionLost(new SocketException("Connection reset")));
+        // the kernel gave up on a peer that stopped acknowledging: safe to retry however late
+        assertTrue(DefaultElasticVertxClient.isPeerUnresponsive(new SocketException("Connection timed out")));
+        assertFalse(DefaultElasticVertxClient.isPeerUnresponsive(new SocketException("Connection reset by peer")));
     }
 
     @Test
