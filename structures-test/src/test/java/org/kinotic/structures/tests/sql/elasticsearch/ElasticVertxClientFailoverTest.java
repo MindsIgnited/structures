@@ -9,11 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.net.ConnectException;
-import java.net.NoRouteToHostException;
-import java.net.SocketException;
-import java.net.UnknownHostException;
-import javax.net.ssl.SSLException;
-import javax.net.ssl.SSLHandshakeException;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -239,35 +234,29 @@ class ElasticVertxClientFailoverTest {
     }
 
     @Test
-    void aConnectionDroppedAfterTheQueryHadTimeToRunIsNotRetried() throws Exception {
+    void aNodeThatCrashesMidQueryFailsOver() throws Exception {
         AtomicInteger otherRequests = new AtomicInteger();
-        // The test clients' connection timeout is 2s, so a drop after 2.5s looks like a proxy cutting off a slow query
         DefaultElasticVertxClient client = client(Duration.ofMinutes(1),
-                                                  node(vertx.createHttpServer().requestHandler(
-                                                          request -> vertx.setTimer(2500, id -> request.connection().close()))),
+                                                  crashingNode(Duration.ofMillis(2500)),
+                                                  respondingNode(otherRequests, 200, SQL_RESPONSE));
+
+        assertEquals(List.of(Map.of("one", 1)), selectOne(client));
+        assertEquals(1, otherRequests.get());
+    }
+
+    @Test
+    void aLostConnectionIsRetriedOnOneMoreNodeOnly() {
+        AtomicInteger otherRequests = new AtomicInteger();
+        // a proxy cutting off a slow query looks the same on every node it is sent to
+        DefaultElasticVertxClient client = client(Duration.ofMinutes(1),
+                                                  crashingNode(Duration.ofMillis(500)),
+                                                  crashingNode(Duration.ofMillis(500)),
                                                   respondingNode(otherRequests, 200, SQL_RESPONSE));
 
         ExecutionException e = assertThrows(ExecutionException.class, () -> selectOne(client));
 
         assertInstanceOf(HttpClosedException.class, e.getCause());
-        assertEquals(0, otherRequests.get(), "the query was not run a second time");
-    }
-
-    @Test
-    void failuresAreToldApartByWhatTheySayAboutTheNode() {
-        // no connection could be made: the node is benched
-        assertTrue(DefaultElasticVertxClient.isConnectFailure(new ConnectException("Connection refused")));
-        assertTrue(DefaultElasticVertxClient.isConnectFailure(new NoRouteToHostException("No route to host")));
-        assertTrue(DefaultElasticVertxClient.isConnectFailure(new UnknownHostException("es-node")));
-        assertTrue(DefaultElasticVertxClient.isConnectFailure(new SSLHandshakeException("bad certificate")));
-        // an established connection broke: retried elsewhere, the node stays
-        SSLException midStream = new SSLException("closing inbound before receiving peer's close_notify");
-        assertFalse(DefaultElasticVertxClient.isConnectFailure(midStream));
-        assertTrue(DefaultElasticVertxClient.isConnectionLost(midStream));
-        assertTrue(DefaultElasticVertxClient.isConnectionLost(new SocketException("Connection reset")));
-        // the kernel gave up on a peer that stopped acknowledging: safe to retry however late
-        assertTrue(DefaultElasticVertxClient.isPeerUnresponsive(new SocketException("Connection timed out")));
-        assertFalse(DefaultElasticVertxClient.isPeerUnresponsive(new SocketException("Connection reset by peer")));
+        assertEquals(0, otherRequests.get(), "the query ran on two nodes, not three");
     }
 
     @Test
@@ -455,6 +444,14 @@ class ElasticVertxClientFailoverTest {
      */
     private ElasticConnectionInfo slowQueryNode(AtomicInteger queries) {
         return node(vertx.createHttpServer().requestHandler(request -> queries.incrementAndGet()));
+    }
+
+    /**
+     * Takes the query, then drops the connection after the delay, like a node that crashes while running it
+     */
+    private ElasticConnectionInfo crashingNode(Duration after) {
+        return node(vertx.createHttpServer().requestHandler(
+                request -> vertx.setTimer(after.toMillis(), id -> request.connection().close())));
     }
 
     /**

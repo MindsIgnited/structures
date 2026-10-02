@@ -123,19 +123,21 @@ Below are the available options, their types, and default values. When you see a
   - `scheme` (`String`, default: `http`)
 
   List every node you want Structures to use. Requests are spread round robin over them.
-  - A node that refuses connections, cannot be resolved, or sits behind a proxy answering `502`/`503` is skipped for a
-    minute (doubling on each failed retry, up to 30 minutes) while the request moves on to the next node. When every
-    node is skipped, each request tries only the one due back first.
-  - A connection that drops mid-request moves the request to the next node, without skipping the node.
+  - A node that refuses connections, has no route to it, cannot be resolved, fails the TLS handshake, or sits behind a
+    proxy answering `502`/`503` is skipped for a minute (doubling on each failed retry, up to 30 minutes) while the
+    request moves on to the next node. When every node is skipped, each request tries only the one due back first.
+  - A connection that drops mid-request moves the request to one more node, without skipping the node: the node may
+    have crashed, but a proxy may also have cut off a slow query, which should not run on every node.
   - Errors from Elasticsearch itself, `504`s and slow queries are not retried, since another node would answer them the
     same way.
 
-  Use host names rather than IP addresses where you can. Host names are looked up again within a couple of seconds of
-  the DNS record changing (the DNS TTL governs how long an answer is cached), new connections go to the new address,
-  and pooled connections to the old one are retired within 5 minutes, or at once if the old node closes them. A node
-  that is skipped is retried after its back-off with a fresh lookup. A node that vanishes without closing its connections is
-  only noticed within seconds when Vert.x runs on a native transport (epoll); otherwise its in-flight named queries
-  wait out `elasticNamedQueryTimeout`. The server logs at startup when it runs without one.
+  Use host names rather than IP addresses where you can. A host name's addresses are kept for up to 30 seconds, then
+  looked up again, so a node that moves is followed within the DNS TTL plus 30 seconds. New connections go to the new
+  address, and pooled connections to the old one are retired within 5 minutes, or at once if the old node closes
+  them. A node that is skipped is retried after its back-off with a fresh lookup. A DNS outage shorter than the TTL
+  plus 30 seconds goes unnoticed. A node that vanishes without closing its connections is noticed within about 20
+  seconds when Vert.x runs on a native transport (epoll); otherwise its in-flight named queries wait out
+  `elasticNamedQueryTimeout`. The server logs at startup which transport it uses.
 - **elasticUsername** (`String`, default: `null`):
   Username for Elasticsearch (optional).
 - **elasticPassword** (`String`, default: `null`):

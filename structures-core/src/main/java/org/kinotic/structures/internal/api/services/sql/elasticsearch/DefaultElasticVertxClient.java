@@ -25,6 +25,7 @@ import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientConfig;
+import io.netty.handler.ssl.NotSslRecordException;
 import io.vertx.ext.web.client.WebClientOptions;
 import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.mutable.MutableObject;
@@ -90,16 +91,17 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     private static final int TCP_KEEPALIVE_INTERVAL_SECONDS = 5;
     private static final int TCP_KEEPALIVE_COUNT = 3;
     /**
-     * How long the HTTP client keeps the addresses it resolved for a host. Vert.x otherwise reuses them for up to five
-     * minutes regardless of the DNS TTL, so a node that moved would be tried at its old address. Its pooled connections
-     * outlive a refresh, and lookups go through the DNS cache, which honours the TTL, so the DNS TTL is what governs.
+     * How long the HTTP client keeps the addresses it resolved for a host before looking the name up again. Vert.x
+     * otherwise keeps them for up to five minutes regardless of the DNS TTL, so a node that moved would be tried at its
+     * old address for that long. Pooled connections outlive a refresh. It is not shorter because a request has to
+     * resolve the name again once this passes, so a DNS outage longer than the TTL plus this fails requests even to
+     * nodes with healthy pooled connections.
      */
-    private static final Duration RESOLVED_ADDRESS_MAX_AGE = Duration.ofSeconds(1);
+    private static final Duration RESOLVED_ADDRESS_MAX_AGE = Duration.ofSeconds(30);
     private final ObjectMapper objectMapper;
     private final ElasticNodeSelector<ElasticNode> nodeSelector;
     private final WebClient webClient;
     private final long namedQueryTimeoutMillis;
-    private final long connectionTimeoutNanos;
     private final Cache<String, List<ElasticColumn>> columnsCache;
 
 
@@ -135,7 +137,6 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                 .setHttp1MaxSize(500)
                 .setMaxLifetime((int) CONNECTION_MAX_LIFETIME.toSeconds())
                 .setMaxLifetimeUnit(TimeUnit.SECONDS));
-        this.connectionTimeoutNanos = structuresProperties.getElasticConnectionTimeout().toNanos();
         this.namedQueryTimeoutMillis = structuresProperties.getElasticNamedQueryTimeout().toMillis();
         if(!vertx.isNativeTransportEnabled()){
             log.info("Vert.x runs without a native transport, so a connection to an Elasticsearch node that vanished without closing it is only noticed when the named query times out. Cause: {}",
@@ -326,8 +327,8 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
      * or the connection drops. Everything this client sends is a read, so sending a request twice is harmless.
      * Only a node that cannot be connected to is taken out of the rotation: a dropped connection may just be an idle
      * one a proxy closed, and a node that is really gone refuses the next connection anyway.
-     * A connection that drops only after the query has had time to start running is not retried either, since a proxy
-     * may have cut off a slow query, unless the kernel gave up on a peer that stopped acknowledging altogether.
+     * A lost connection is retried on one more node only: the node may have crashed, but a proxy may also have cut off
+     * a slow query, which should not run on every node.
      * A request that times out is not sent elsewhere, since a slow query is no reason to think the node is gone and
      * running it again would only double the load it puts on the cluster. A connection whose node vanished without
      * closing it is ended by the kernel instead, see {@link #TCP_USER_TIMEOUT_MILLIS}.
@@ -351,6 +352,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         private final JsonObject body;
         private final List<ElasticNode> nodes;
         private final List<Throwable> nodeFailures = new ArrayList<>();
+        private boolean retriedLostConnection;
         private final Promise<HttpResponse<Buffer>> promise = Promise.promise();
 
         private Attempt(Function<ElasticNode, HttpRequest<Buffer>> requestForNode,
@@ -371,7 +373,7 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                                   HttpResponse<Buffer> response = ar.result();
                                   if(isProxyUnavailable(response)){
                                       Exception failure = unavailable(node, response);
-                                      markDead(node, failure.getMessage());
+                                      markDead(node, sentAt, failure.getMessage());
                                       tryNextNode(index, failure);
                                   }else{
                                       if(nodeSelector.markAlive(node, sentAt)){
@@ -384,12 +386,12 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
                               }else{
                                   Throwable cause = ar.cause();
                                   if(isConnectFailure(cause)){
-                                      markDead(node, cause.toString());
+                                      markDead(node, sentAt, cause.toString());
                                       tryNextNode(index, cause);
-                                  }else if(isConnectionLost(cause)
-                                          && (nodeSelector.now() - sentAt < connectionTimeoutNanos || isPeerUnresponsive(cause))){
+                                  }else if(isConnectionLost(cause) && !retriedLostConnection){
                                       log.debug("Connection to Elasticsearch node {} was lost ({}), trying the next node",
                                                 node.hostAndPort(), cause.toString());
+                                      retriedLostConnection = true;
                                       tryNextNode(index, cause);
                                   }else{
                                       promise.fail(cause);
@@ -410,8 +412,8 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
         }
     }
 
-    private void markDead(ElasticNode node, String reason){
-        if(nodeSelector.markDead(node)){
+    private void markDead(ElasticNode node, long requestSentAt, String reason){
+        if(nodeSelector.markDead(node, requestSentAt)){
             log.warn("Elasticsearch node {} is unavailable ({}), it is out of the rotation until it recovers",
                      node.hostAndPort(), reason);
         }else{
@@ -460,30 +462,23 @@ public class DefaultElasticVertxClient implements ElasticVertxClient {
     /**
      * True when no connection to the node could be made: refused or timed out connects, addresses with no route to them
      * (how an address that is gone usually shows), host names that do not resolve (including DNS timeouts, which Netty
-     * reports as an {@link UnknownHostException}) and failed TLS handshakes
+     * reports as an {@link UnknownHostException}) and failed TLS handshakes, including timed out ones
      */
-    public static boolean isConnectFailure(Throwable cause){
+    static boolean isConnectFailure(Throwable cause){
         return cause instanceof ConnectException
                 || cause instanceof NoRouteToHostException
                 || cause instanceof UnknownHostException
-                || cause instanceof SSLHandshakeException;
+                || cause instanceof SSLHandshakeException
+                // the node answered a TLS connection in plaintext
+                || cause instanceof NotSslRecordException;
     }
 
     /**
      * True when an established connection closed or reset before the response arrived.
      * Timeouts waiting for a response and a full local connection pool say nothing about the node, so they are not.
      */
-    public static boolean isConnectionLost(Throwable cause){
+    static boolean isConnectionLost(Throwable cause){
         return cause instanceof IOException || cause instanceof HttpClosedException;
-    }
-
-    /**
-     * True when the kernel closed the connection because the peer stopped acknowledging, via TCP_USER_TIMEOUT or failed
-     * keepalive probes. The peer never took the request, or is gone, so sending it elsewhere is safe however late.
-     * Both the JDK and Netty's native transport report ETIMEDOUT with this message.
-     */
-    public static boolean isPeerUnresponsive(Throwable cause){
-        return cause instanceof IOException && cause.getMessage() != null && cause.getMessage().contains("Connection timed out");
     }
 
     private Exception convertErrorResponse(InputStream input) {

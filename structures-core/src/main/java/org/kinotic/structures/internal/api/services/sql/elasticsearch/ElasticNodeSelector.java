@@ -96,18 +96,20 @@ public class ElasticNodeSelector<N> {
 
     /**
      * Records that the node could not be reached and takes it out of the rotation.
-     * Failures of requests that were already in flight when the node was marked dead do not extend its back-off,
-     * only a failed revival does, so a burst of concurrent failures counts once.
+     * Only a request sent once the node was due back counts as a failed revival and lengthens its back-off. Failures of
+     * requests sent earlier, still in flight when the node was marked dead or answering late, count once at most.
+     * @param requestSentAt when the failed request was sent, from {@link #now()}
      * @return true if the node was alive before this call
      */
-    public boolean markDead(N node) {
+    public boolean markDead(N node, long requestSentAt) {
         int index = indexOf(node);
         long now = nanoTime.getAsLong();
         DeadState previous = deadStates.getAndUpdate(index, current -> {
             if (current == null) {
                 return new DeadState(1, now);
             }
-            return current.isExpired(now) ? new DeadState(current.failedAttempts + 1, now) : current;
+            boolean failedRevival = current.isExpired(now) && requestSentAt - current.deadUntilNanos >= 0;
+            return failedRevival ? new DeadState(current.failedAttempts + 1, now) : current;
         });
         return previous == null;
     }
