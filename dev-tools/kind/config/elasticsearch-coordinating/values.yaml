@@ -1,0 +1,44 @@
+# Coordinating-only Elasticsearch node, deployed with `kind-cluster.sh deploy --with-es-coordinator`.
+# It joins the two-node cluster from ../elasticsearch, so it can restart, and come back on a new pod IP,
+# without the cluster losing quorum - as a production coordinator does during patching. The named query
+# chaos test (structures-e2e test/k8s/k8s-named-query-chaos.test.ts) restarts it under load.
+clusterName: "elasticsearch"
+nodeGroup: "coordinating"
+masterService: "elasticsearch-master"
+replicas: 1
+image: "docker.elastic.co/elasticsearch/elasticsearch"
+imageTag: "8.19.13"
+imagePullPolicy: IfNotPresent
+protocol: http
+createCert: false
+secret:
+  enabled: false
+roles: []
+# The chart's readiness probe exits unless this is set, even with security off; same as ../elasticsearch
+extraEnvs:
+  - name: ELASTIC_PASSWORD
+    value: "-"
+esConfig:
+  elasticsearch.yml: |
+    node.roles: []
+    xpack:
+      security:
+        enabled: false
+        http.ssl.enabled: false
+        transport.ssl.enabled: false
+    discovery:
+      seed_hosts: ["elasticsearch-master-headless"]
+esJavaOpts: "-Xms512m -Xmx512m"
+resources:
+  requests:
+    cpu: "250m"
+    memory: "2Gi"
+  limits:
+    memory: "2Gi"
+persistence:
+  enabled: false
+service:
+  type: ClusterIP
+clusterHealthCheckParams: "wait_for_status=yellow&timeout=1s"
+antiAffinity: "soft"
+sysctlVmMaxMapCount: 262144
