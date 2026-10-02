@@ -196,10 +196,31 @@ third section), same four generators for 3,600 s from an empty index:
   2 GiB limit, after which the two-node cluster could not recover (see Assumptions). The limit is
   4 GiB now, and the reset procedure is written down.
 
+## Elasticsearch node restart (named query chaos test)
+
+`structures-js/structures-e2e/test/k8s/k8s-named-query-chaos.test.ts` checks that named queries
+survive an Elasticsearch node restarting, the failure behind the 3.6.3 fix: a coordinator came back on
+a new IP after patching and every named query failed. It pages a `GROUP BY` named query, following its
+cursors, from ten workers, restarts the coordinating node twice, and fails if any named query fails
+(`CHAOS_RESTART_ERROR_BUDGET` allows some during a restart; the default is none), if p95 iteration
+latency exceeds `CHAOS_P95_BOUND_MS` (2000 ms), or if the server logs show the node was never taken
+out of the rotation and brought back. It needs the coordinating node and one connection per node,
+which the default KinD deploy does not have:
+
+```sh
+./dev-tools/kind/kind-cluster.sh deploy --with-es-coordinator   # add --build-local for a candidate built from source
+cd structures-js/structures-e2e
+K8S_TEST_ENABLED=true VITE_USE_STRUCTURES_DOCKER=false npx vitest run test/k8s/k8s-named-query-chaos.test.ts
+```
+
+It takes about seven minutes. The KinD data nodes cannot lose one of two without losing quorum, so
+the coordinating-only node is the one restarted; that is also the production case.
+
 ## What a release run should add
 
 - The same four processes, same rates, on the candidate image, compared against the previous
   record's table.
 - A longer soak (an hour) at least once per major dependency change, for the memory question.
   Done for 3.6.0; the next one is due with the next such change.
+- The named query chaos test above, on the candidate image deployed with `--with-es-coordinator`.
 - Any new transport or hot path gets a workload here before it ships.

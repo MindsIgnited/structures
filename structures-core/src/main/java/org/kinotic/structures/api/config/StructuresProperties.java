@@ -36,6 +36,16 @@ public class StructuresProperties {
     private Duration elasticSocketTimeout = Duration.ofMinutes(1);
 
     /**
+     * How long a named query waits for Elasticsearch to answer, kept apart from {@link #elasticSocketTimeout} since
+     * aggregate queries can legitimately run far longer than any other Elasticsearch call.
+     * A named query given a longer request timeout of its own waits that long instead, plus a few seconds; a shorter
+     * one does not shorten the wait. Elasticsearch applies a request timeout to the search on each shard, 90 seconds
+     * unless one is given, but not to combining the results afterwards, so a query can run somewhat past it.
+     */
+    @NotNull
+    private Duration elasticNamedQueryTimeout = Duration.ofMinutes(2);
+
+    /**
      * The interval to check the health of the elastic cluster
      */
     @NotNull
