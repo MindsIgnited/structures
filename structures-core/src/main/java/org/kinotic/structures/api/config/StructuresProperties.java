@@ -36,10 +36,35 @@ public class StructuresProperties {
     private Duration elasticSocketTimeout = Duration.ofMinutes(1);
 
     /**
+     * How long a named query waits for Elasticsearch to answer, kept apart from {@link #elasticSocketTimeout} since
+     * aggregate queries can legitimately run far longer than any other Elasticsearch call.
+     * A named query given a longer request timeout of its own waits that long instead, plus a few seconds; a shorter
+     * one does not shorten the wait. Elasticsearch applies a request timeout to the search on each shard, 90 seconds
+     * unless one is given, but not to combining the results afterwards, so a query can run somewhat past it.
+     */
+    @NotNull
+    private Duration elasticNamedQueryTimeout = Duration.ofMinutes(2);
+
+    /**
      * The interval to check the health of the elastic cluster
      */
     @NotNull
     private Duration elasticHealthCheckInterval = Duration.ofMinutes(1);
+
+    /**
+     * What a single entity save or update asks of Elasticsearch before returning: force a refresh so the change is
+     * searchable straight away ({@code true}), wait for the next scheduled refresh ({@code wait_for}), or neither
+     * ({@code false}), in which case the change is searchable after the next scheduled refresh or a syncIndex call.
+     * Bulk saves and updates never refresh.
+     */
+    @NotNull
+    private ElasticRefreshPolicy elasticRefreshAfterMutation = ElasticRefreshPolicy.TRUE;
+
+    /**
+     * The same as {@link #elasticRefreshAfterMutation}, for deleting an entity by id. Delete by query never refreshes.
+     */
+    @NotNull
+    private ElasticRefreshPolicy elasticRefreshAfterDelete = ElasticRefreshPolicy.TRUE;
 
     @NotNull
     private List<ElasticConnectionInfo> elasticConnections = List.of(new ElasticConnectionInfo());

@@ -18,7 +18,7 @@
 #    ./gradlew :structures-server:bootBuildImage
 #
 # 2. Load into KinD cluster:
-#    kind load docker-image mindsignited/structures-server:3.5.3-SNAPSHOT --name structures-cluster
+#    kind load docker-image mindsignited/structures-server:3.7.0-SNAPSHOT --name structures-cluster
 #
 # OR use the helper script:
 #    ./dev-tools/kind/kind-cluster.sh build --load
@@ -47,7 +47,7 @@ image:
   repository: mindsignited/structures-server
   # Published tag pulled from Docker Hub. Overridden by deploy --tag, or by
   # deploy --build-local which uses the locally built gradle.properties version.
-  tag: 3.5.8-pr7.023aa91
+  tag: 3.7.0
   # Pull from Docker Hub by default; deploy --build-local overrides this to Never
   pullPolicy: IfNotPresent
   sha: ""
@@ -61,7 +61,7 @@ migration:
   image:
     repository: mindsignited/structures-migration
     # Keep in sync with image.tag above; deploy --tag sets both
-    tag: 3.5.8-pr7.023aa91
+    tag: 3.7.0
     # Pull from Docker Hub by default; deploy --build-local overrides this to Never
     pullPolicy: IfNotPresent
     sha: ""

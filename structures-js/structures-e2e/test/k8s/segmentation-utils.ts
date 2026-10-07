@@ -1,4 +1,5 @@
-import { execSync } from 'child_process'
+import { exec, execSync } from 'child_process'
+import { promisify } from 'util'
 
 /**
  * Utilities for reproducing the split brain condition Ignite cannot detect on its own.
@@ -286,4 +287,45 @@ export function scaleDeployment(context: string,
  */
 export function deletePod(context: string, namespace: string, podName: string): void {
     kubectl(context, `delete pod ${podName} -n ${namespace} --wait=false`)
+}
+
+const execAsync = promisify(exec)
+
+async function kubectlAsync(context: string, args: string): Promise<string> {
+    const { stdout } = await execAsync(`kubectl --context ${context} ${args}`, { encoding: 'utf-8' })
+    return stdout.trim()
+}
+
+/**
+ * Restart a StatefulSet pod (it comes back under the same name) and wait for it to report Ready, without
+ * blocking the event loop, so load the test is generating keeps flowing meanwhile.
+ * @return how long the pod took to come back Ready, in milliseconds
+ */
+export async function restartStatefulPodAsync(context: string,
+                                              namespace: string,
+                                              podName: string,
+                                              timeoutSeconds = 300): Promise<number> {
+    const started = Date.now()
+    await kubectlAsync(context, `delete pod ${podName} -n ${namespace} --wait=true --timeout=${timeoutSeconds}s`)
+    const deadline = started + timeoutSeconds * 1000
+    // "kubectl wait" fails on a pod that does not exist yet, so wait for the replacement to be created first
+    while (Date.now() < deadline) {
+        try {
+            await kubectlAsync(context, `get pod ${podName} -n ${namespace}`)
+            break
+        } catch {
+            await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+    }
+    const remaining = Math.max(1, Math.round((deadline - Date.now()) / 1000))
+    await kubectlAsync(context, `wait --for=condition=Ready pod/${podName} -n ${namespace} --timeout=${remaining}s`)
+    return Date.now() - started
+}
+
+export async function getPodIpAsync(context: string, namespace: string, podName: string): Promise<string> {
+    return kubectlAsync(context, `get pod ${podName} -n ${namespace} -o jsonpath={.status.podIP}`)
+}
+
+export async function kubectlGetAsync(context: string, args: string): Promise<string> {
+    return kubectlAsync(context, `get ${args}`)
 }

@@ -1,0 +1,18 @@
+# Applied on top of values.yaml by `kind-cluster.sh deploy --with-es-coordinator`.
+# Three connections, one per Elasticsearch node by its stable pod DNS name, as production configures them,
+# with the coordinating node first. A restarted pod keeps its name and gets a new IP, which is what the
+# named query failover has to follow. The migration job uses the first connection, so the coordinating
+# node is deployed and ready before structures-server.
+properties:
+  structures:
+    elastic:
+      connections:
+        - host: "elasticsearch-coordinating-0.elasticsearch-coordinating-headless"
+          port: 9200
+          scheme: "http"
+        - host: "elasticsearch-master-0.elasticsearch-master-headless"
+          port: 9200
+          scheme: "http"
+        - host: "elasticsearch-master-1.elasticsearch-master-headless"
+          port: 9200
+          scheme: "http"

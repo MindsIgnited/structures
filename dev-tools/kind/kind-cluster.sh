@@ -74,6 +74,7 @@ Environment Variables:
   SKIP_CHECKS              Skip prerequisite checks (0/1)
   DEPLOY_DEPS              Deploy Elasticsearch dependency (0/1, default: 1)
   DEPLOY_KEYCLOAK          Deploy Keycloak + PostgreSQL (0/1, default: 0)
+  DEPLOY_ES_COORDINATOR    Coordinating Elasticsearch node, one connection per node (0/1, default: 0)
   DEPLOY_OBSERVABILITY     Deploy observability stack (0/1, default: 0)
   DEPLOY_LOAD_GENERATOR    Run load generator post-deploy (0/1, default: 0)
 
@@ -328,6 +329,10 @@ cmd_deploy() {
                 deploy_keycloak_override="1"
                 shift
                 ;;
+            --with-es-coordinator)
+                DEPLOY_ES_COORDINATOR="1"
+                shift
+                ;;
             --with-observability)
                 deploy_observability_override="1"
                 shift
@@ -362,6 +367,9 @@ Options:
   --with-deps              Deploy dependencies (Elasticsearch) - default
   --no-deps                Skip dependencies (deploy only structures-server)
   --with-keycloak, -k      Deploy Keycloak + PostgreSQL and enable OIDC authentication
+  --with-es-coordinator    Add a coordinating-only Elasticsearch node and give structures-server one
+                           connection per node, coordinator first, as production does; needed by the
+                           named query chaos test
   --with-observability     Deploy observability stack (OTEL, Prometheus, Grafana)
   --with-load-generator    Run load generator after deployment (generates schemas/test data)
   --build-local            Build structures-server/migration images from source and load
@@ -397,8 +405,8 @@ Examples:
   # Deploy with inline override
   $(basename "$0") deploy --set replicaCount=3
 
-  # Deploy a specific published tag (e.g. a PR image)
-  $(basename "$0") deploy --tag 3.5.8-pr7.023aa91
+  # Deploy a specific published tag: the develop snapshot, or a PR image (3.7.0-pr<N>.<sha>)
+  $(basename "$0") deploy --tag 3.7.0-SNAPSHOT
 
   # Build from source and load into the cluster instead of pulling
   $(basename "$0") deploy --build-local
@@ -484,6 +492,13 @@ EOF
         if ! deploy_elasticsearch "${CLUSTER_NAME}"; then
             return "${EXIT_DEPLOYMENT_FAILED}"
         fi
+
+        # Before structures-server: its migration job uses the first connection, which is this node
+        if [[ "${DEPLOY_ES_COORDINATOR}" == "1" ]]; then
+            if ! deploy_elasticsearch_coordinating "${CLUSTER_NAME}"; then
+                return "${EXIT_DEPLOYMENT_FAILED}"
+            fi
+        fi
         
         blank_line
     fi
@@ -525,6 +540,11 @@ EOF
     
     # Deploy structures-server
     section "Deploying structures-server"
+
+    if [[ "${DEPLOY_ES_COORDINATOR}" == "1" ]]; then
+        progress "One Elasticsearch connection per node, coordinator first"
+        helm_sets+=("-f" "${CONFIG_STRUCTURES_SERVER_DIR}/values-es-coordinator.yaml")
+    fi
 
     # Add OIDC configuration if Keycloak is deployed
     if [[ "${DEPLOY_KEYCLOAK}" == "1" ]]; then
@@ -778,7 +798,7 @@ Examples:
   $(basename "$0") load
 
   # Load specific image
-  $(basename "$0") load --image mindsignited/structures-server:3.5.7
+  $(basename "$0") load --image mindsignited/structures-server:3.7.0
 
   # Load into specific cluster
   $(basename "$0") load --name test-cluster

@@ -26,6 +26,15 @@ data:
   {{ end }}
   STRUCTURES_ELASTIC_CONNECTION_TIMEOUT: "{{ .Values.properties.structures.elastic.connectionTimeout }}"
   STRUCTURES_ELASTIC_SOCKET_TIMEOUT: "{{ .Values.properties.structures.elastic.socketTimeout }}"
+  {{- with .Values.properties.structures.elastic.namedQueryTimeout }}
+  STRUCTURES_ELASTIC_NAMED_QUERY_TIMEOUT: "{{ . }}"
+  {{- end }}
+  {{- if hasKey .Values.properties.structures.elastic "refreshAfterMutation" }}
+  STRUCTURES_ELASTIC_REFRESH_AFTER_MUTATION: "{{ .Values.properties.structures.elastic.refreshAfterMutation }}"
+  {{- end }}
+  {{- if hasKey .Values.properties.structures.elastic "refreshAfterDelete" }}
+  STRUCTURES_ELASTIC_REFRESH_AFTER_DELETE: "{{ .Values.properties.structures.elastic.refreshAfterDelete }}"
+  {{- end }}
   STRUCTURES_ELASTIC_USERNAME: "{{ .Values.properties.structures.elastic.username }}"
   STRUCTURES_ELASTIC_PASSWORD: "{{ .Values.properties.structures.elastic.password }}"
   STRUCTURES_OPEN_API_SECURITY_TYPE: "{{ .Values.properties.structures.openApiSecurityType }}"

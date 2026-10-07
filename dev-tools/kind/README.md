@@ -17,6 +17,10 @@ cd /path/to/structures
 # OR: Deploy with Keycloak for OIDC authentication
 ./dev-tools/kind/kind-cluster.sh deploy --with-keycloak
 
+# OR: Add a coordinating-only Elasticsearch node and one connection per node, as production configures
+# them (used by the named query chaos test in structures-e2e test/k8s)
+./dev-tools/kind/kind-cluster.sh deploy --with-es-coordinator
+
 # Check status
 ./dev-tools/kind/kind-cluster.sh status
 
@@ -250,7 +254,7 @@ Load a locally built Docker image into KinD cluster nodes.
 ./kind-cluster.sh load
 
 # Load specific image
-./kind-cluster.sh load --image mindsignited/structures-server:3.5.7
+./kind-cluster.sh load --image mindsignited/structures-server:3.7.0
 
 # Load into specific cluster
 ./kind-cluster.sh load --name test-cluster

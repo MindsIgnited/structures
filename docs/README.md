@@ -19,6 +19,7 @@ OpenID Connect authentication implementation and provider configuration.
 Data path performance work and plans.
 
 - [JSON Ingest Path](./performance/JSON_INGEST_PATH.md) - Plan to remove the payload copies on entity ingest (4.0.0)
+- [Working well with Elasticsearch](./performance/ELASTICSEARCH_WORKLOAD.md) - Write throttling so bulk ingest stops slowing reads, and other Elasticsearch load changes
 
 ### 🔄 [Clustering & High Availability](./clustering/)
 

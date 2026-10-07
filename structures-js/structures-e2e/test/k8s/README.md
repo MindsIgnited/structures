@@ -413,3 +413,18 @@ jobs:
 - [../../docker-compose/CLUSTER_TESTING.md](../../docker-compose/CLUSTER_TESTING.md) - Docker Compose cluster testing
 - [../../dev-tools/kind/README.md](../../dev-tools/kind/README.md) - KinD cluster setup
 - [structures-auth/EvictionEventRecorder.java](../../../structures-auth/src/main/java/org/kinotic/structures/auth/internal/services/EvictionEventRecorder.java) - CSV recorder implementation
+
+## Named query chaos test
+
+`k8s-named-query-chaos.test.ts` pages a named query from several workers while the coordinating
+Elasticsearch node restarts twice. It asserts no named query fails, p95 latency stays within
+`CHAOS_P95_BOUND_MS`, and the server logs show the node taken out of the rotation and brought back.
+It needs the cluster deployed with `kind-cluster.sh deploy --with-es-coordinator`, which adds a
+coordinating-only node and gives structures-server one connection per node, coordinator first, and
+it checks for both before it starts:
+
+```bash
+K8S_TEST_ENABLED=true VITE_USE_STRUCTURES_DOCKER=false npx vitest run test/k8s/k8s-named-query-chaos.test.ts
+```
+
+See `LOAD_TESTING.md` at the repository root for where it fits in a release run.

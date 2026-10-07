@@ -23,6 +23,7 @@ readonly DEFAULT_DEPLOY_TIMEOUT="5m"
 
 # Service-specific config directories (Helm values files)
 readonly CONFIG_ELASTICSEARCH_DIR="${DEFAULT_CONFIG_DIR}/elasticsearch"
+readonly CONFIG_ELASTICSEARCH_COORDINATING_DIR="${DEFAULT_CONFIG_DIR}/elasticsearch-coordinating"
 readonly CONFIG_POSTGRESQL_DIR="${DEFAULT_CONFIG_DIR}/postgresql"
 readonly CONFIG_KEYCLOAK_DIR="${DEFAULT_CONFIG_DIR}/keycloak"
 readonly CONFIG_INGRESS_NGINX_DIR="${DEFAULT_CONFIG_DIR}/ingress-nginx"
@@ -45,6 +46,7 @@ K8S_VERSION=""
 SKIP_CHECKS=""
 DEPLOY_DEPS="1"
 DEPLOY_KEYCLOAK="0"       # Deploy Keycloak + PostgreSQL (default: disabled)
+DEPLOY_ES_COORDINATOR="0" # Add a coordinating-only Elasticsearch node and one connection per node (default: disabled)
 DEPLOY_OBSERVABILITY="0"
 DEPLOY_LOAD_GENERATOR="0"  # Run load generator post-deploy (default: disabled)
 DEPLOY_TIMEOUT=""
@@ -74,6 +76,7 @@ load_config() {
     SKIP_CHECKS="${SKIP_CHECKS:-0}"
     DEPLOY_DEPS="${DEPLOY_DEPS:-1}"
     DEPLOY_KEYCLOAK="${DEPLOY_KEYCLOAK:-0}"
+    DEPLOY_ES_COORDINATOR="${DEPLOY_ES_COORDINATOR:-0}"
     DEPLOY_OBSERVABILITY="${DEPLOY_OBSERVABILITY:-0}"
     
     # OIDC is enabled when Keycloak is deployed
@@ -170,6 +173,9 @@ get_service_values_path() {
         elasticsearch)
             config_dir="${CONFIG_ELASTICSEARCH_DIR}"
             ;;
+        elasticsearch-coordinating)
+            config_dir="${CONFIG_ELASTICSEARCH_COORDINATING_DIR}"
+            ;;
         postgresql)
             config_dir="${CONFIG_POSTGRESQL_DIR}"
             ;;
@@ -245,13 +251,13 @@ get_coredns_template_path() {
 #
 # Read version from gradle.properties
 # Returns:
-#   Version string (e.g., "3.5.3-SNAPSHOT")
+#   Version string (e.g., "3.7.0-SNAPSHOT")
 # Example:
 #   version=$(get_structures_version)
 #
 get_structures_version() {
     # Explicit override wins, e.g. deploying the released image from a release
-    # checkout: structuresVersion=3.5.8 ./kind-cluster.sh deploy
+    # checkout: structuresVersion=3.7.0 ./kind-cluster.sh deploy
     if [[ -n "${structuresVersion:-}" ]]; then
         echo "${structuresVersion}"
         return 0
@@ -285,7 +291,7 @@ get_structures_version() {
 #
 # Get image name for structures-server
 # Returns:
-#   Full image name (e.g., "mindsignited/structures-server:3.5.3-SNAPSHOT")
+#   Full image name (e.g., "mindsignited/structures-server:3.7.0-SNAPSHOT")
 # Example:
 #   image=$(get_image_name)
 #
@@ -300,7 +306,7 @@ get_image_name() {
 #
 # Get image name for structures-migration
 # Returns:
-#   Full image name (e.g., "mindsignited/structures-migration:3.5.3-SNAPSHOT")
+#   Full image name (e.g., "mindsignited/structures-migration:3.7.0-SNAPSHOT")
 # Example:
 #   migration_image=$(get_migration_image_name)
 #

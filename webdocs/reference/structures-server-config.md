@@ -121,16 +121,66 @@ Below are the available options, their types, and default values. When you see a
   - `host` (`String`, default: `localhost`)
   - `port` (`int`, default: `9200`)
   - `scheme` (`String`, default: `http`)
+
+  List every node you want Structures to use. Requests are spread round robin over them.
+  - A node that refuses connections, has no route to it, cannot be resolved, fails the TLS handshake, or sits behind a
+    proxy answering `502`/`503` is skipped for a minute (doubling on each failed retry, up to 30 minutes) while the
+    request moves on to the next node. When every node is skipped, each request tries only the one due back first.
+  - A connection that drops mid-request moves the request to one more node, without skipping the node: the node may
+    have crashed, but a proxy may also have cut off a slow query, which should not run on every node.
+  - Errors from Elasticsearch itself, `504`s and slow queries are not retried, since another node would answer them the
+    same way.
+
+  Use host names rather than IP addresses where you can. A host name's addresses are kept for up to 30 seconds, then
+  looked up again, so a node that moves is followed within the DNS TTL plus 30 seconds. New connections go to the new
+  address, and pooled connections to the old one are retired within 5 minutes, or at once if the old node closes
+  them. A node that is skipped is retried after its back-off with a fresh lookup. A DNS outage shorter than the TTL
+  plus 30 seconds goes unnoticed. A node that vanishes without closing its connections is noticed within about 20
+  seconds when Vert.x runs on a native transport (epoll); otherwise its in-flight named queries wait out
+  `elasticNamedQueryTimeout`. The server logs at startup which transport it uses.
 - **elasticUsername** (`String`, default: `null`):
   Username for Elasticsearch (optional).
 - **elasticPassword** (`String`, default: `null`):
   Password for Elasticsearch (optional).
 - **elasticConnectionTimeout** (`Duration`, default: `5s`):
-  Connection timeout for Elasticsearch.
+  Connection timeout for Elasticsearch. This is how long a request waits on a node that has gone away before moving on
+  to the next one, so keep it short.
 - **elasticSocketTimeout** (`Duration`, default: `1m`):
-  Socket timeout for Elasticsearch.
+  Socket timeout for every Elasticsearch call except SQL ones (named queries and SQL translation).
+- **elasticNamedQueryTimeout** (`Duration`, default: `2m`):
+  The longest a named query, or an SQL translation, waits for Elasticsearch to answer. A query that runs longer fails,
+  and is not retried on another node. A named query given a longer `requestTimeout` of its own waits that many seconds
+  plus 5 instead; a shorter one does not shorten the wait, since Elasticsearch bounds only the search on each shard
+  with it, not combining the results afterwards.
 - **elasticHealthCheckInterval** (`Duration`, default: `1m`):
   Interval for health checks on the Elasticsearch cluster.
+- **elasticRefreshAfterMutation** (`true` | `false` | `wait_for`, default: `true`):
+  What a single entity `save` or `update` asks of Elasticsearch before returning, so the change shows up in searches.
+  Elasticsearch makes new changes searchable in batches, by default once a second; each batch is a refresh.
+
+  | Value | The call returns | Searchable when it returns | Cost |
+  |-------|------------------|----------------------------|------|
+  | `true` | after forcing a refresh | yes | each forced refresh writes a new small segment, which costs merges and cache churn when writes are heavy, and slows searches down |
+  | `wait_for` | after the next scheduled refresh | yes | usually no extra work for Elasticsearch, but the call takes up to the index's refresh interval longer |
+  | `false` | straight away | no, after the next scheduled refresh or a `syncIndex` call | none |
+
+  Finding an entity by id sees the change straight away whatever the value. Bulk saves and updates never refresh.
+
+  With `wait_for`, a write holds its connection to Elasticsearch while it waits, and reads share the same connections
+  (10 per Elasticsearch host). Many concurrent `wait_for` writes queue behind each other and can hold up reads, so it
+  suits occasional single writes, not high-volume ones. An index whose refresh is disabled (`refresh_interval: -1`)
+  makes `wait_for` writes wait until something else refreshes it. Elasticsearch also lets at most 1,000 writes wait on
+  one shard (`index.max_refresh_listeners`); past that it forces a refresh so they can return, so under heavy
+  concurrent writes `wait_for` costs the same as `true`.
+
+  On structures with a `@Version` field, search results carry the version an entity had at the last refresh. With
+  `false`, an entity found by search (`search`, `findAll`, named queries) straight after it was updated still has
+  its old version, and updating it fails with a version conflict. Read the entity with `findById` before updating
+  it, since that always returns the current version, or call `syncIndex` first. `true` and `wait_for` don't have
+  this problem.
+- **elasticRefreshAfterDelete** (`true` | `false` | `wait_for`, default: `true`):
+  The same, for deleting an entity by id. With `false`, the entity drops out of searches after the next scheduled
+  refresh, or once `syncIndex` is called. Delete by query never refreshes.
 
 #### Example (`application.yml`):
 ```yaml
@@ -143,7 +193,10 @@ structures:
   elasticPassword: "pass"
   elasticConnectionTimeout: 5s
   elasticSocketTimeout: 1m
+  elasticNamedQueryTimeout: 2m
   elasticHealthCheckInterval: 1m
+  elasticRefreshAfterMutation: true
+  elasticRefreshAfterDelete: true
 ```
 
 ### CORS (Cross-Origin Resource Sharing)

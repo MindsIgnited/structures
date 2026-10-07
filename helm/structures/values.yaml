@@ -11,7 +11,7 @@ nameOverride: ""
 image:
   repository: mindsignited/structures-server
   pullPolicy: Always
-  tag: "3.5.7"
+  tag: "3.7.0"
   sha: ""
 
 # Migration configuration
@@ -22,7 +22,7 @@ migration:
   activeDeadlineSeconds: 300
   image:
     repository: mindsignited/structures-migration
-    tag: "3.5.7"
+    tag: "3.7.0"
     pullPolicy: Always
     sha: ""
 
@@ -52,8 +52,15 @@ properties:
         - host: "minds-test-elasticsearch.es.centralus.azure.elastic-cloud.com"
           port: 443
           scheme: "https"
-      connectionTimeout: "1M"
+      connectionTimeout: "5s"
       socketTimeout: "1M"
+      namedQueryTimeout: "2m"
+      # What a single save/update, and a delete by id, ask of Elasticsearch before returning:
+      #   true      force a refresh, so the change is searchable straight away (the default when left unset)
+      #   wait_for  wait for the next scheduled refresh, so the change is searchable without forcing one
+      #   false     neither; the change is searchable after the next scheduled refresh or a syncIndex call
+      # refreshAfterMutation: true
+      # refreshAfterDelete: true
       username: "structures"
       password: "asdfsda898u7fsad8sfa@sdfa"
     ai:

@@ -809,6 +809,50 @@ deploy_elasticsearch() {
 }
 
 #
+# Deploy a coordinating-only Elasticsearch node that joins the cluster deploy_elasticsearch created
+# Args:
+#   $1: Cluster name
+# Returns:
+#   0 on success, 1 on failure
+# Example:
+#   deploy_elasticsearch_coordinating "structures-cluster"
+#
+deploy_elasticsearch_coordinating() {
+    local cluster_name="$1"
+    local context="kind-${cluster_name}"
+
+    progress "Deploying the coordinating-only Elasticsearch node..."
+
+    local values_flags
+    values_flags=$(get_service_helm_flags "elasticsearch-coordinating") || return 1
+
+    progress "Using configuration from: $(get_service_values_path elasticsearch-coordinating)"
+
+    local helm_output
+    # shellcheck disable=SC2086
+    helm_output=$(helm upgrade --install elasticsearch-coordinating elastic/elasticsearch \
+        --kube-context "${context}" \
+        --version 8.5.1 \
+        ${values_flags} \
+        --wait --timeout 10m 2>&1)
+
+    if [[ $? -ne 0 ]]; then
+        error "Failed to deploy the coordinating Elasticsearch node"
+        echo ""
+        echo "Helm output:"
+        echo "${helm_output}"
+        echo ""
+        echo "Check pod status:"
+        echo "  kubectl get pods -l app=elasticsearch-coordinating --context ${context}"
+        echo ""
+        return 1
+    fi
+
+    success "Coordinating Elasticsearch node deployed"
+    return 0
+}
+
+#
 # Deploy structures-server via Helm
 # Args:
 #   $1: Cluster name
