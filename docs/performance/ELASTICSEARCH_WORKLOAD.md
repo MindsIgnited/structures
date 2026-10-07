@@ -1,6 +1,6 @@
 # Working well with Elasticsearch
 
-**Status:** switches for forced refreshes done; write throttling planned. This is the place to
+**Status:** refresh settings for single writes done; write throttling planned. This is the place to
 record changes that make Structures easier on Elasticsearch. The first entry is throttling writes
 so they stop slowing reads.
 
@@ -48,11 +48,11 @@ is busy, writes should wait, not fail.
   and 30 in total, per pod. A burst of bulk calls can take every connection, and reads then wait
   inside Structures before Elasticsearch even sees them. No connection request timeout is set
   either, so a request waiting for a connection has no time limit.
-- **Single writes force a refresh.** `DefaultEntityService.save` and `update`, and deletes through
-  `ReadPreProcessor.beforeDelete`, all ask Elasticsearch to refresh before returning
-  (`Refresh.True`). Each forced refresh writes a new small segment on every copy of the shard it
-  touched, which adds merging and clears caches. Bulk calls don't force a refresh, so with mostly
-  bulk traffic this matters less, but it is still a cost.
+- **Single writes force a refresh.** By default, `DefaultEntityService.save`, `update` and
+  `deleteById` ask Elasticsearch to refresh before returning. Each forced refresh writes a new
+  small segment on every copy of the shard it touched, which adds merging and clears caches. Bulk
+  calls don't force a refresh, so with mostly bulk traffic this matters less, but it is still a
+  cost. This is now configurable; see "Done: refresh settings for single writes" below.
 - **`syncIndex` refreshes the whole index.** If clients that need to search their own writes call
   it after every bulk call, every bulk call pays for a full refresh.
 - **`bulkUpdate` costs more than `bulkSave`.** `bulkUpdate` sends partial updates, so
@@ -111,46 +111,78 @@ blunt, put a limiter in front of the writer client:
   latency protects reads directly, instead of relying on a number tuned once.
 - If one tenant turns out to use the whole budget, add per-tenant fairness.
 
-#### Done: switches for forced refreshes
+#### Done: refresh settings for single writes
 
-Two settings, both `true` by default so nothing changes unless they are set:
+Two settings decide what a single write asks of Elasticsearch before returning. Both default to
+`true`, which is what Structures always did, so nothing changes unless they are set:
 
-- `structures.elasticRefreshAfterMutation`: whether a single `save` or `update` forces a refresh.
-- `structures.elasticRefreshAfterDelete`: whether a delete by id forces a refresh.
+- `structures.elasticRefreshAfterMutation`: for a single `save` or `update`.
+- `structures.elasticRefreshAfterDelete`: for a delete by id.
 
 In Helm they are `properties.structures.elastic.refreshAfterMutation` and `refreshAfterDelete`.
-The plan is to turn them off in test environments first. Clients that need to search their own
-writes then call `syncIndex` only when they actually need to, instead of every write paying for a
-refresh. With a setting off, a change becomes searchable at the next scheduled refresh (within 1 s
-by default) or after a `syncIndex` call. Find by id sees the change straight away either way,
-because Elasticsearch reads a single document by id without waiting for a refresh.
+Each takes one of three values, the same ones Elasticsearch's own `refresh` parameter takes:
 
-**Watch out for optimistic locking.** On structures with a version field, search results carry
-the version an entity had at the last refresh. With refresh after save and update off, an entity
-found by search straight after it was updated still has its old version, and updating it fails
-with a version conflict. Clients should read an entity by id before updating it, since that always
-returns the current version, or call `syncIndex` first.
+| Value | The call returns | Searchable when it returns | Cost to Elasticsearch |
+|-------|------------------|----------------------------|-----------------------|
+| `true` (default) | after forcing a refresh | yes | a new small segment for every write |
+| `wait_for` | after the next scheduled refresh (within 1 s by default) | yes | none extra; the caller waits instead |
+| `false` | straight away | no: after the next scheduled refresh, or a `syncIndex` call | none |
+
+Find by id sees a change straight away whatever the value, because Elasticsearch reads a single
+document by id without waiting for a refresh. Bulk calls and delete by query never refresh.
+
+The values are an enum, `ElasticRefreshPolicy`. Spring Boot matches enum values ignoring case and
+punctuation, so `true`, `TRUE`, `wait_for` and `wait-for` all work, from YAML, Helm or environment
+variables.
+
+**Which value to use.** `wait_for` keeps the old guarantee (search sees a change as soon as the
+call returns) without the forced refresh, so it's the natural replacement for `true` where callers
+search their own writes. `false` is cheapest. It suits callers that don't search their own writes,
+or that call `syncIndex` only when they actually need to. The plan is to try both in test
+environments first.
+
+**`wait_for` holds a connection while it waits.** Reads and writes still share one pool of 10
+connections per Elasticsearch host (step 1 above would separate them). A `wait_for` write keeps
+its connection for up to the refresh interval, so many concurrent ones queue behind each other and
+can hold up reads. The test suite shows it: `testMultiTenantSearch` saves about 50 entities at once
+in each of 10 rounds and takes about 60 s with `wait_for`, against about 1 s with `true`. Until
+reads and writes have separate pools, `wait_for` suits occasional single writes, not high-volume
+ones. Two more interactions:
+
+- **Refresh interval.** The wait is up to the index's refresh interval. If busy indexes move to a
+  5-10 s interval (see below), `wait_for` writes to them wait that long.
+- **Disabled refresh.** An index with `refresh_interval: -1` makes `wait_for` writes wait until
+  something else refreshes it.
+
+**Watch out for optimistic locking with `false`.** On structures with a version field, search
+results carry the version an entity had at the last refresh. With `false`, an entity found by
+search straight after it was updated still has its old version, and updating it fails with a
+version conflict. Clients should read an entity by id before updating it, since that always
+returns the current version, or call `syncIndex` first. `true` and `wait_for` don't have this
+problem.
 
 Tests:
 
-- `EntityRefreshAfterMutationDisabledTests` and `EntityRefreshAfterDeleteDisabledTests` turn one
-  setting off each. They switch scheduled refreshes off on the index, so they can check exactly
-  when each change becomes searchable, and that the version conflict above happens only when
-  refresh after save and update is off.
-- `EntityCrudRefreshDisabledTests` and `BulkUpdateRefreshDisabledTests` run every entity service
-  test again with both settings off. They pass because those tests already call `syncIndex`
-  before searching, which is what clients should do.
+- `EntityRefreshAfterMutationDisabledTests`, `EntityRefreshAfterDeleteDisabledTests` and
+  `EntityRefreshWaitForTests` check exactly when each change becomes searchable, and that the
+  version conflict above happens only with `false`. For `true` and `false` they switch scheduled
+  refreshes off on the index, so nothing else can make a change searchable. For `wait_for` they
+  leave them on, since a `wait_for` write would otherwise never return.
+- `EntityCrudRefreshDisabledTests`, `BulkUpdateRefreshDisabledTests`, `EntityCrudWaitForTests` and
+  `BulkUpdateWaitForTests` run every entity service test again with both settings `false`, and
+  again with both `wait_for`. They pass because those tests already call `syncIndex` before
+  searching, which is what clients using `false` should do.
 
 Follow-ups, not done yet:
 
-- **Add a `wait_for` value.** Make the settings an enum (`true`, `false`, `wait_for`) instead of
-  booleans, keeping `true` and `false` working so existing configuration doesn't break. With
-  `wait_for`, a single write waits for the next scheduled refresh (within 1 s by default) instead
-  of forcing one. Callers can still search their own writes as soon as the call returns, without
-  the cost of a forced refresh.
-- **Per-structure control.** The settings apply to every structure at once. A structure-level
-  option would let only the busiest indexes stop forcing refreshes, while structures used by
-  interactive apps keep searching their own writes straight away.
+- **A setting for bulk calls.** `elasticRefreshAfterBulk`, defaulting to `false` (today's
+  behaviour), would let bulk writers that search their own data use `wait_for` instead of
+  `syncIndex`, which refreshes the whole index. Best left until the metrics are in, and until
+  reads and writes have separate pools.
+- **Per-structure or per-call control.** The settings apply to every structure at once. A
+  structure-level option, or a per-request one, could override them, so only the busiest indexes
+  stop forcing refreshes while structures used by interactive apps keep the default. The enum
+  already fits this.
 
 #### Other changes worth making
 

@@ -7,10 +7,12 @@ import java.util.concurrent.CompletionException;
 
 import org.elasticsearch.client.ResponseException;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.kinotic.continuum.core.api.crud.Pageable;
 import org.kinotic.continuum.idl.api.schema.ObjectC3Type;
 import org.kinotic.continuum.idl.api.schema.StringC3Type;
+import org.kinotic.structures.api.config.ElasticRefreshPolicy;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.EntityContext;
 import org.kinotic.structures.api.domain.RawJson;
@@ -41,8 +43,8 @@ import tools.jackson.databind.util.TokenBuffer;
 
 /**
  * Checks when single saves, updates and deletes become searchable, given the elasticRefreshAfterMutation and
- * elasticRefreshAfterDelete settings a subclass runs with. Scheduled refreshes are switched off on each structure's
- * index, so a change is only searchable once a forced refresh or syncIndex has made it so.
+ * elasticRefreshAfterDelete settings a subclass runs with. See {@link #prepareIndex(Structure)} for how scheduled
+ * refreshes are kept out of the way.
  */
 public abstract class AbstractEntityRefreshTests extends ElasticTestBase {
 
@@ -65,8 +67,8 @@ public abstract class AbstractEntityRefreshTests extends ElasticTestBase {
 
     @Test
     public void testChangesAreSearchableOnlyAfterARefresh() throws IOException {
-        boolean refreshesAfterMutation = structuresProperties.isElasticRefreshAfterMutation();
-        boolean refreshesAfterDelete = structuresProperties.isElasticRefreshAfterDelete();
+        boolean refreshesAfterMutation = searchableOnReturn(structuresProperties.getElasticRefreshAfterMutation());
+        boolean refreshesAfterDelete = searchableOnReturn(structuresProperties.getElasticRefreshAfterDelete());
         EntityContext context = new DefaultEntityContext(new DummyParticipant());
         StructureAndPersonHolder holder = testHelper.createAndVerify(1,
                                                                      true,
@@ -74,7 +76,7 @@ public abstract class AbstractEntityRefreshTests extends ElasticTestBase {
                                                                      "_" + System.currentTimeMillis());
         Structure structure = holder.getStructure();
 
-        disableScheduledRefresh(structure);
+        prepareIndex(structure);
         syncIndex(structure, context);
         Assertions.assertEquals(1L, count(structure, context));
 
@@ -99,17 +101,17 @@ public abstract class AbstractEntityRefreshTests extends ElasticTestBase {
     }
 
     /**
-     * Search results carry the version a document had at the last refresh. Without a forced refresh after an
-     * update, an entity found by searching straight afterwards still has its old version, so updating it fails
+     * Search results carry the version a document had at the last refresh. When an update returns before a
+     * refresh, an entity found by searching straight afterwards still has its old version, so updating it fails
      * with a version conflict. Finding the entity by id returns the current version either way.
      */
     @Test
     public void testOptimisticLockingVersionFromSearch() throws IOException {
-        boolean refreshesAfterMutation = structuresProperties.isElasticRefreshAfterMutation();
+        boolean refreshesAfterMutation = searchableOnReturn(structuresProperties.getElasticRefreshAfterMutation());
         EntityContext context = new DefaultEntityContext(new DummyParticipant());
         Structure structure = createVersionedPersonStructure("_" + System.currentTimeMillis());
 
-        disableScheduledRefresh(structure);
+        prepareIndex(structure);
         VersionedPerson saved = save(structure,
                                      new VersionedPerson().setFirstName("Ada").setLastName("Lovelace"),
                                      context,
@@ -178,9 +180,28 @@ public abstract class AbstractEntityRefreshTests extends ElasticTestBase {
         return false;
     }
 
-    private void disableScheduledRefresh(Structure structure) throws IOException {
-        client.indices().putSettings(b -> b.index(structure.getItemIndex())
-                                           .settings(s -> s.refreshInterval(t -> t.time("-1"))));
+    /**
+     * @return true if a write made with the given policy is searchable as soon as the call returns
+     */
+    private static boolean searchableOnReturn(ElasticRefreshPolicy policy) {
+        return policy != ElasticRefreshPolicy.FALSE;
+    }
+
+    /**
+     * Switches scheduled refreshes off on the structure's index, so only a refresh a write asks for, or syncIndex,
+     * makes a change searchable. With wait_for they stay on, since a wait_for write would otherwise never return,
+     * and a write made with false could then become searchable at any moment, so the two can't be checked together.
+     */
+    private void prepareIndex(Structure structure) throws IOException {
+        List<ElasticRefreshPolicy> policies = List.of(structuresProperties.getElasticRefreshAfterMutation(),
+                                                      structuresProperties.getElasticRefreshAfterDelete());
+        if(policies.contains(ElasticRefreshPolicy.WAIT_FOR)){
+            Assumptions.assumeFalse(policies.contains(ElasticRefreshPolicy.FALSE),
+                                    "wait_for and false can't be checked together");
+        }else{
+            client.indices().putSettings(b -> b.index(structure.getItemIndex())
+                                               .settings(s -> s.refreshInterval(t -> t.time("-1"))));
+        }
     }
 
     private long count(Structure structure, EntityContext context) {

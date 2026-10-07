@@ -2,7 +2,6 @@ package org.kinotic.structures.internal.api.services.impl;
 
 import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.elasticsearch._types.OpType;
-import co.elastic.clients.elasticsearch._types.Refresh;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.UpdateRequest;
@@ -160,7 +159,10 @@ public class DefaultEntityService implements EntityService {
                 .thenCompose(composedId -> crudServiceTemplate
                         .deleteById(structure.getItemIndex(),
                                     composedId,
-                                    builder -> readPreProcessor.beforeDelete(structure, builder, context))
+                                    builder -> {
+                                        builder.refresh(structuresProperties.getElasticRefreshAfterDelete().toRefresh());
+                                        readPreProcessor.beforeDelete(structure, builder, context);
+                                    })
                         .thenApply(deleteResponse -> null));
     }
 
@@ -176,7 +178,10 @@ public class DefaultEntityService implements EntityService {
                 .thenCompose(composedId -> crudServiceTemplate
                         .deleteById(structure.getItemIndex(),
                                     composedId,
-                                    builder -> readPreProcessor.beforeDelete(structure, builder, context))
+                                    builder -> {
+                                        builder.refresh(structuresProperties.getElasticRefreshAfterDelete().toRefresh());
+                                        readPreProcessor.beforeDelete(structure, builder, context);
+                                    })
                         .thenApply(deleteResponse -> null));
     }
 
@@ -322,11 +327,8 @@ public class DefaultEntityService implements EntityService {
                              i.routing(entityHolder.tenantId())
                               .index(structure.getItemIndex())
                               .id(entityHolder.getDocumentId())
-                              .document(entityHolder.entity());
-
-                             if(structuresProperties.isElasticRefreshAfterMutation()){
-                                 i.refresh(Refresh.True);
-                             }
+                              .document(entityHolder.entity())
+                              .refresh(structuresProperties.getElasticRefreshAfterMutation().toRefresh());
 
                              // When optimistic locking is enabled and no version is present we use create
                              // We do this since there is no way to set an initial primary_term / seq_no combination
@@ -436,11 +438,8 @@ public class DefaultEntityService implements EntityService {
                                  u.routing(entityHolder.tenantId())
                                   .index(structure.getItemIndex())
                                   .id(entityHolder.getDocumentId())
-                                  .doc(entityHolder.entity());
-
-                                 if(structuresProperties.isElasticRefreshAfterMutation()){
-                                     u.refresh(Refresh.True);
-                                 }
+                                  .doc(entityHolder.entity())
+                                  .refresh(structuresProperties.getElasticRefreshAfterMutation().toRefresh());
 
                                  ElasticVersion elasticVersion = entityHolder.getElasticVersionIfPresent();
                                  if(structure.isOptimisticLockingEnabled()
