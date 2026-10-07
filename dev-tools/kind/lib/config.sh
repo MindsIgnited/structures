@@ -251,13 +251,13 @@ get_coredns_template_path() {
 #
 # Read version from gradle.properties
 # Returns:
-#   Version string (e.g., "3.5.3-SNAPSHOT")
+#   Version string (e.g., "3.7.0-SNAPSHOT")
 # Example:
 #   version=$(get_structures_version)
 #
 get_structures_version() {
     # Explicit override wins, e.g. deploying the released image from a release
-    # checkout: structuresVersion=3.5.8 ./kind-cluster.sh deploy
+    # checkout: structuresVersion=3.7.0 ./kind-cluster.sh deploy
     if [[ -n "${structuresVersion:-}" ]]; then
         echo "${structuresVersion}"
         return 0
@@ -291,7 +291,7 @@ get_structures_version() {
 #
 # Get image name for structures-server
 # Returns:
-#   Full image name (e.g., "mindsignited/structures-server:3.5.3-SNAPSHOT")
+#   Full image name (e.g., "mindsignited/structures-server:3.7.0-SNAPSHOT")
 # Example:
 #   image=$(get_image_name)
 #
@@ -306,7 +306,7 @@ get_image_name() {
 #
 # Get image name for structures-migration
 # Returns:
-#   Full image name (e.g., "mindsignited/structures-migration:3.5.3-SNAPSHOT")
+#   Full image name (e.g., "mindsignited/structures-migration:3.7.0-SNAPSHOT")
 # Example:
 #   migration_image=$(get_migration_image_name)
 #
