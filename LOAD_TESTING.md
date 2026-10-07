@@ -199,7 +199,7 @@ third section), same four generators for 3,600 s from an empty index:
 ## Elasticsearch node restart (named query chaos test)
 
 `structures-js/structures-e2e/test/k8s/k8s-named-query-chaos.test.ts` checks that named queries
-survive an Elasticsearch node restarting, the failure behind the 3.6.3 fix: a coordinator came back on
+survive an Elasticsearch node restarting, the failure behind the 3.7.0 fix: a coordinator came back on
 a new IP after patching and every named query failed. It pages a `GROUP BY` named query, following its
 cursors, from ten workers, restarts the coordinating node twice, and fails if any named query fails
 (`CHAOS_RESTART_ERROR_BUDGET` allows some during a restart; the default is none), if p95 iteration
