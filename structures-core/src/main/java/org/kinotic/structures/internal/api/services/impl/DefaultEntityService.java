@@ -4,6 +4,7 @@ import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.elasticsearch._types.OpType;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
+import co.elastic.clients.elasticsearch.core.DeleteRequest;
 import co.elastic.clients.elasticsearch.core.UpdateRequest;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
@@ -159,10 +160,7 @@ public class DefaultEntityService implements EntityService {
                 .thenCompose(composedId -> crudServiceTemplate
                         .deleteById(structure.getItemIndex(),
                                     composedId,
-                                    builder -> {
-                                        builder.refresh(structuresProperties.getElasticRefreshAfterDelete().toRefresh());
-                                        readPreProcessor.beforeDelete(structure, builder, context);
-                                    })
+                                    builder -> beforeDelete(builder, context))
                         .thenApply(deleteResponse -> null));
     }
 
@@ -178,10 +176,7 @@ public class DefaultEntityService implements EntityService {
                 .thenCompose(composedId -> crudServiceTemplate
                         .deleteById(structure.getItemIndex(),
                                     composedId,
-                                    builder -> {
-                                        builder.refresh(structuresProperties.getElasticRefreshAfterDelete().toRefresh());
-                                        readPreProcessor.beforeDelete(structure, builder, context);
-                                    })
+                                    builder -> beforeDelete(builder, context))
                         .thenApply(deleteResponse -> null));
     }
 
@@ -831,6 +826,11 @@ public class DefaultEntityService implements EntityService {
             case null, default -> throw new IllegalArgumentException("Pojo Not Supported for Version");
         }
         return entity;
+    }
+
+    private void beforeDelete(DeleteRequest.Builder builder, EntityContext context){
+        builder.refresh(structuresProperties.getElasticRefreshAfterDelete().toRefresh());
+        readPreProcessor.beforeDelete(structure, builder, context);
     }
 
     private CompletableFuture<Void> validateContext(final EntityContext context){

@@ -76,7 +76,7 @@ public class EntityCrudTests extends ElasticTestBase {
     public void testCreateAndDeleteByQuery() {
         EntityContext context = new DefaultEntityContext(new DummyParticipant("tenant", "user"));
 
-        StructureAndPersonHolder holder = testHelper.createAndVerify(20, false, context, structureSuffix("_testFindByIds"));
+        StructureAndPersonHolder holder = testHelper.createAndVerify(20, false, context, structureSuffix("_testCreateAndDeleteByQuery"));
 
         Assertions.assertNotNull(holder);
 

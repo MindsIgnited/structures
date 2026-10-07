@@ -125,7 +125,7 @@ Each takes one of three values, the same ones Elasticsearch's own `refresh` para
 | Value | The call returns | Searchable when it returns | Cost to Elasticsearch |
 |-------|------------------|----------------------------|-----------------------|
 | `true` (default) | after forcing a refresh | yes | a new small segment for every write |
-| `wait_for` | after the next scheduled refresh (within 1 s by default) | yes | none extra; the caller waits instead |
+| `wait_for` | after the next scheduled refresh (within 1 s by default) | yes | usually none extra; the caller waits instead (see the limit below) |
 | `false` | straight away | no: after the next scheduled refresh, or a `syncIndex` call | none |
 
 Find by id sees a change straight away whatever the value, because Elasticsearch reads a single
@@ -147,12 +147,16 @@ its connection for up to the refresh interval, so many concurrent ones queue beh
 can hold up reads. The test suite shows it: `testMultiTenantSearch` saves about 50 entities at once
 in each of 10 rounds and takes about 60 s with `wait_for`, against about 1 s with `true`. Until
 reads and writes have separate pools, `wait_for` suits occasional single writes, not high-volume
-ones. Two more interactions:
+ones. Three more interactions:
 
 - **Refresh interval.** The wait is up to the index's refresh interval. If busy indexes move to a
   5-10 s interval (see below), `wait_for` writes to them wait that long.
 - **Disabled refresh.** An index with `refresh_interval: -1` makes `wait_for` writes wait until
   something else refreshes it.
+- **A limit on waiting writes.** Elasticsearch lets at most 1,000 writes wait on one shard
+  (`index.max_refresh_listeners`). Past that, it forces a refresh so they can return, so under
+  heavy concurrent writes `wait_for` costs the same as `true`. It only saves Elasticsearch work
+  while waiting writes stay below that limit.
 
 **Watch out for optimistic locking with `false`.** On structures with a version field, search
 results carry the version an entity had at the last refresh. With `false`, an entity found by
@@ -168,10 +172,10 @@ Tests:
   version conflict above happens only with `false`. For `true` and `false` they switch scheduled
   refreshes off on the index, so nothing else can make a change searchable. For `wait_for` they
   leave them on, since a `wait_for` write would otherwise never return.
-- `EntityCrudRefreshDisabledTests`, `BulkUpdateRefreshDisabledTests`, `EntityCrudWaitForTests` and
-  `BulkUpdateWaitForTests` run every entity service test again with both settings `false`, and
-  again with both `wait_for`. They pass because those tests already call `syncIndex` before
-  searching, which is what clients using `false` should do.
+- `EntityCrudRefreshDisabledTests` and `EntityCrudWaitForTests` run every `EntityCrudTests` test
+  again with both settings `false`, and again with both `wait_for`. They pass because those tests
+  already call `syncIndex` before searching, which is what clients using `false` should do. The
+  bulk tests aren't rerun, since bulk calls don't use these settings.
 
 Follow-ups, not done yet:
 
