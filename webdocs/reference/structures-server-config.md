@@ -154,6 +154,15 @@ Below are the available options, their types, and default values. When you see a
   with it, not combining the results afterwards.
 - **elasticHealthCheckInterval** (`Duration`, default: `1m`):
   Interval for health checks on the Elasticsearch cluster.
+- **elasticRefreshAfterMutation** (`boolean`, default: `true`):
+  Whether a single entity `save` or `update` forces Elasticsearch to refresh the shards it touched before returning,
+  so the change shows up in searches as soon as the call returns. Each forced refresh writes a new small segment,
+  which costs Elasticsearch merges and cache churn when writes are heavy, and slows searches down. When `false`, the
+  change shows up after the index's next scheduled refresh (every second by default), or once `syncIndex` is called.
+  Finding an entity by id sees it straight away either way. Bulk saves and updates never force a refresh.
+- **elasticRefreshAfterDelete** (`boolean`, default: `true`):
+  The same, for deleting an entity by id. When `false`, the entity drops out of searches after the next scheduled
+  refresh, or once `syncIndex` is called. Delete by query never forces a refresh.
 
 #### Example (`application.yml`):
 ```yaml
@@ -168,6 +177,8 @@ structures:
   elasticSocketTimeout: 1m
   elasticNamedQueryTimeout: 2m
   elasticHealthCheckInterval: 1m
+  elasticRefreshAfterMutation: true
+  elasticRefreshAfterDelete: true
 ```
 
 ### CORS (Cross-Origin Resource Sharing)

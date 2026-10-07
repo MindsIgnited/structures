@@ -48,7 +48,9 @@ public class ReadPreProcessor {
                              DeleteRequest.Builder builder,
                              EntityContext context) {
 
-        builder.refresh(Refresh.True);
+        if(structuresProperties.isElasticRefreshAfterDelete()){
+            builder.refresh(Refresh.True);
+        }
 
         // add multi tenancy filters if needed
         if(structure.getMultiTenancyType() == MultiTenancyType.SHARED){

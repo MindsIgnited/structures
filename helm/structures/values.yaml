@@ -55,6 +55,11 @@ properties:
       connectionTimeout: "5s"
       socketTimeout: "1M"
       namedQueryTimeout: "2m"
+      # Force an Elasticsearch refresh after each single save/update, and after each delete by id.
+      # Turning these off makes writes cheaper for Elasticsearch, but changes only show up in searches after the
+      # next scheduled refresh or a syncIndex call. Both default to true when left unset.
+      # refreshAfterMutation: true
+      # refreshAfterDelete: true
       username: "structures"
       password: "asdfsda898u7fsad8sfa@sdfa"
     ai:

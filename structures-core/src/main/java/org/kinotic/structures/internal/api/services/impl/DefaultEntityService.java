@@ -322,8 +322,11 @@ public class DefaultEntityService implements EntityService {
                              i.routing(entityHolder.tenantId())
                               .index(structure.getItemIndex())
                               .id(entityHolder.getDocumentId())
-                              .document(entityHolder.entity())
-                              .refresh(Refresh.True);
+                              .document(entityHolder.entity());
+
+                             if(structuresProperties.isElasticRefreshAfterMutation()){
+                                 i.refresh(Refresh.True);
+                             }
 
                              // When optimistic locking is enabled and no version is present we use create
                              // We do this since there is no way to set an initial primary_term / seq_no combination
@@ -433,8 +436,11 @@ public class DefaultEntityService implements EntityService {
                                  u.routing(entityHolder.tenantId())
                                   .index(structure.getItemIndex())
                                   .id(entityHolder.getDocumentId())
-                                  .doc(entityHolder.entity())
-                                  .refresh(Refresh.True);
+                                  .doc(entityHolder.entity());
+
+                                 if(structuresProperties.isElasticRefreshAfterMutation()){
+                                     u.refresh(Refresh.True);
+                                 }
 
                                  ElasticVersion elasticVersion = entityHolder.getElasticVersionIfPresent();
                                  if(structure.isOptimisticLockingEnabled()

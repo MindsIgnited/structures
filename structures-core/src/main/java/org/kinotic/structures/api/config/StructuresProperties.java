@@ -51,6 +51,21 @@ public class StructuresProperties {
     @NotNull
     private Duration elasticHealthCheckInterval = Duration.ofMinutes(1);
 
+    /**
+     * If true a single entity save or update forces Elasticsearch to refresh the shards it touched before returning,
+     * so the change shows up in searches straight away. Each forced refresh writes a new small segment, which costs
+     * merges and cache churn under heavy writes. When false the change shows up after the next scheduled refresh,
+     * or once syncIndex is called. Bulk saves and updates never force a refresh.
+     */
+    private boolean elasticRefreshAfterMutation = true;
+
+    /**
+     * If true a delete by id forces Elasticsearch to refresh the shards it touched before returning, so the entity
+     * drops out of searches straight away. When false it drops out after the next scheduled refresh, or once
+     * syncIndex is called. Delete by query never forces a refresh.
+     */
+    private boolean elasticRefreshAfterDelete = true;
+
     @NotNull
     private List<ElasticConnectionInfo> elasticConnections = List.of(new ElasticConnectionInfo());
 
