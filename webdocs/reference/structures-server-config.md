@@ -154,6 +154,33 @@ Below are the available options, their types, and default values. When you see a
   with it, not combining the results afterwards.
 - **elasticHealthCheckInterval** (`Duration`, default: `1m`):
   Interval for health checks on the Elasticsearch cluster.
+- **elasticRefreshAfterMutation** (`true` | `false` | `wait_for`, default: `true`):
+  What a single entity `save` or `update` asks of Elasticsearch before returning, so the change shows up in searches.
+  Elasticsearch makes new changes searchable in batches, by default once a second; each batch is a refresh.
+
+  | Value | The call returns | Searchable when it returns | Cost |
+  |-------|------------------|----------------------------|------|
+  | `true` | after forcing a refresh | yes | each forced refresh writes a new small segment, which costs merges and cache churn when writes are heavy, and slows searches down |
+  | `wait_for` | after the next scheduled refresh | yes | usually no extra work for Elasticsearch, but the call takes up to the index's refresh interval longer |
+  | `false` | straight away | no, after the next scheduled refresh or a `syncIndex` call | none |
+
+  Finding an entity by id sees the change straight away whatever the value. Bulk saves and updates never refresh.
+
+  With `wait_for`, a write holds its connection to Elasticsearch while it waits, and reads share the same connections
+  (10 per Elasticsearch host). Many concurrent `wait_for` writes queue behind each other and can hold up reads, so it
+  suits occasional single writes, not high-volume ones. An index whose refresh is disabled (`refresh_interval: -1`)
+  makes `wait_for` writes wait until something else refreshes it. Elasticsearch also lets at most 1,000 writes wait on
+  one shard (`index.max_refresh_listeners`); past that it forces a refresh so they can return, so under heavy
+  concurrent writes `wait_for` costs the same as `true`.
+
+  On structures with a `@Version` field, search results carry the version an entity had at the last refresh. With
+  `false`, an entity found by search (`search`, `findAll`, named queries) straight after it was updated still has
+  its old version, and updating it fails with a version conflict. Read the entity with `findById` before updating
+  it, since that always returns the current version, or call `syncIndex` first. `true` and `wait_for` don't have
+  this problem.
+- **elasticRefreshAfterDelete** (`true` | `false` | `wait_for`, default: `true`):
+  The same, for deleting an entity by id. With `false`, the entity drops out of searches after the next scheduled
+  refresh, or once `syncIndex` is called. Delete by query never refreshes.
 
 #### Example (`application.yml`):
 ```yaml
@@ -168,6 +195,8 @@ structures:
   elasticSocketTimeout: 1m
   elasticNamedQueryTimeout: 2m
   elasticHealthCheckInterval: 1m
+  elasticRefreshAfterMutation: true
+  elasticRefreshAfterDelete: true
 ```
 
 ### CORS (Cross-Origin Resource Sharing)

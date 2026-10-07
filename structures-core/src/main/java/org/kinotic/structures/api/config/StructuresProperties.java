@@ -51,6 +51,21 @@ public class StructuresProperties {
     @NotNull
     private Duration elasticHealthCheckInterval = Duration.ofMinutes(1);
 
+    /**
+     * What a single entity save or update asks of Elasticsearch before returning: force a refresh so the change is
+     * searchable straight away ({@code true}), wait for the next scheduled refresh ({@code wait_for}), or neither
+     * ({@code false}), in which case the change is searchable after the next scheduled refresh or a syncIndex call.
+     * Bulk saves and updates never refresh.
+     */
+    @NotNull
+    private ElasticRefreshPolicy elasticRefreshAfterMutation = ElasticRefreshPolicy.TRUE;
+
+    /**
+     * The same as {@link #elasticRefreshAfterMutation}, for deleting an entity by id. Delete by query never refreshes.
+     */
+    @NotNull
+    private ElasticRefreshPolicy elasticRefreshAfterDelete = ElasticRefreshPolicy.TRUE;
+
     @NotNull
     private List<ElasticConnectionInfo> elasticConnections = List.of(new ElasticConnectionInfo());
 

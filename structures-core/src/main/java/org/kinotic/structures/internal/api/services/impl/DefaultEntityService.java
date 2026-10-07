@@ -2,9 +2,9 @@ package org.kinotic.structures.internal.api.services.impl;
 
 import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.elasticsearch._types.OpType;
-import co.elastic.clients.elasticsearch._types.Refresh;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
+import co.elastic.clients.elasticsearch.core.DeleteRequest;
 import co.elastic.clients.elasticsearch.core.UpdateRequest;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
@@ -160,7 +160,7 @@ public class DefaultEntityService implements EntityService {
                 .thenCompose(composedId -> crudServiceTemplate
                         .deleteById(structure.getItemIndex(),
                                     composedId,
-                                    builder -> readPreProcessor.beforeDelete(structure, builder, context))
+                                    builder -> beforeDelete(builder, context))
                         .thenApply(deleteResponse -> null));
     }
 
@@ -176,7 +176,7 @@ public class DefaultEntityService implements EntityService {
                 .thenCompose(composedId -> crudServiceTemplate
                         .deleteById(structure.getItemIndex(),
                                     composedId,
-                                    builder -> readPreProcessor.beforeDelete(structure, builder, context))
+                                    builder -> beforeDelete(builder, context))
                         .thenApply(deleteResponse -> null));
     }
 
@@ -323,7 +323,7 @@ public class DefaultEntityService implements EntityService {
                               .index(structure.getItemIndex())
                               .id(entityHolder.getDocumentId())
                               .document(entityHolder.entity())
-                              .refresh(Refresh.True);
+                              .refresh(structuresProperties.getElasticRefreshAfterMutation().toRefresh());
 
                              // When optimistic locking is enabled and no version is present we use create
                              // We do this since there is no way to set an initial primary_term / seq_no combination
@@ -434,7 +434,7 @@ public class DefaultEntityService implements EntityService {
                                   .index(structure.getItemIndex())
                                   .id(entityHolder.getDocumentId())
                                   .doc(entityHolder.entity())
-                                  .refresh(Refresh.True);
+                                  .refresh(structuresProperties.getElasticRefreshAfterMutation().toRefresh());
 
                                  ElasticVersion elasticVersion = entityHolder.getElasticVersionIfPresent();
                                  if(structure.isOptimisticLockingEnabled()
@@ -826,6 +826,11 @@ public class DefaultEntityService implements EntityService {
             case null, default -> throw new IllegalArgumentException("Pojo Not Supported for Version");
         }
         return entity;
+    }
+
+    private void beforeDelete(DeleteRequest.Builder builder, EntityContext context){
+        builder.refresh(structuresProperties.getElasticRefreshAfterDelete().toRefresh());
+        readPreProcessor.beforeDelete(structure, builder, context);
     }
 
     private CompletableFuture<Void> validateContext(final EntityContext context){
