@@ -11,7 +11,7 @@ nameOverride: ""
 image:
   repository: mindsignited/structures-server
   pullPolicy: Always
-  tag: "3.5.7"
+  tag: "3.7.0"
   sha: ""
 
 # Migration configuration
@@ -22,7 +22,7 @@ migration:
   activeDeadlineSeconds: 300
   image:
     repository: mindsignited/structures-migration
-    tag: "3.5.7"
+    tag: "3.7.0"
     pullPolicy: Always
     sha: ""
 
