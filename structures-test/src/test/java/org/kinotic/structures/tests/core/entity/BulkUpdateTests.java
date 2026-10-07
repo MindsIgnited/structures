@@ -38,6 +38,14 @@ public class BulkUpdateTests extends ElasticTestBase {
     @Autowired
     private TestDataService testDataService;
 
+    /**
+     * Returns the suffix used to name the structures this test creates. Subclasses that run these tests again
+     * against the same Elasticsearch change it, so the two runs don't share structures.
+     */
+    protected String structureSuffix(String suffix) {
+        return suffix;
+    }
+
     private StructureAndPersonHolder createAndVerifyBulk(int numberOfPeopleToCreate,
                                                          boolean randomPeople,
                                                          EntityContext entityContext,
@@ -68,11 +76,11 @@ public class BulkUpdateTests extends ElasticTestBase {
         EntityContext context1 = new DefaultEntityContext(new DummyParticipant("tenant1", "user1"));
         EntityContext context2 = new DefaultEntityContext(new DummyParticipant("tenant2", "user2"));
 
-        StructureAndPersonHolder holder1 = createAndVerifyBulk(numberOfPeopleToCreate, true, context1, "_testBulk");
+        StructureAndPersonHolder holder1 = createAndVerifyBulk(numberOfPeopleToCreate, true, context1, structureSuffix("_testBulk"));
 
         Assertions.assertNotNull(holder1);
 
-        StructureAndPersonHolder holder2 = createAndVerifyBulk(numberOfPeopleToCreate, true, context2, "_testBulk");
+        StructureAndPersonHolder holder2 = createAndVerifyBulk(numberOfPeopleToCreate, true, context2, structureSuffix("_testBulk"));
 
         Assertions.assertNotNull(holder2);
 
@@ -103,7 +111,7 @@ public class BulkUpdateTests extends ElasticTestBase {
     @Test
     public void bulkSaveObjectWithMultipleIds() throws Exception{
         EntityContext entityContext = new DefaultEntityContext(new DummyParticipant());
-        CompletableFuture<Pair<Structure, Boolean>> createStructure = testDataService.createCarStructureIfNotExists("_bulkSaveMultipleIds");
+        CompletableFuture<Pair<Structure, Boolean>> createStructure = testDataService.createCarStructureIfNotExists(structureSuffix("_bulkSaveMultipleIds"));
 
         StepVerifier.create(Mono.fromFuture(createStructure))
                     .expectNextMatches(pair -> pair.getLeft() != null && pair.getRight())
@@ -140,7 +148,7 @@ public class BulkUpdateTests extends ElasticTestBase {
     @Test
     public void bulkUpdateObjectWithMultipleIds() throws Exception{
         EntityContext entityContext = new DefaultEntityContext(new DummyParticipant());
-        CompletableFuture<Pair<Structure, Boolean>> createStructure = testDataService.createCarStructureIfNotExists("_bulkUpdateMultipleIds");
+        CompletableFuture<Pair<Structure, Boolean>> createStructure = testDataService.createCarStructureIfNotExists(structureSuffix("_bulkUpdateMultipleIds"));
 
         StepVerifier.create(Mono.fromFuture(createStructure))
                     .expectNextMatches(pair -> pair.getLeft() != null && pair.getRight())

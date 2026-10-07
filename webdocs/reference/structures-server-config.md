@@ -160,6 +160,11 @@ Below are the available options, their types, and default values. When you see a
   which costs Elasticsearch merges and cache churn when writes are heavy, and slows searches down. When `false`, the
   change shows up after the index's next scheduled refresh (every second by default), or once `syncIndex` is called.
   Finding an entity by id sees it straight away either way. Bulk saves and updates never force a refresh.
+
+  On structures with a `@Version` field, search results carry the version an entity had at the last refresh. With
+  this set to `false`, an entity found by search (`search`, `findAll`, named queries) straight after it was updated
+  still has its old version, and updating it fails with a version conflict. Read the entity with `findById` before
+  updating it, since that always returns the current version, or call `syncIndex` first.
 - **elasticRefreshAfterDelete** (`boolean`, default: `true`):
   The same, for deleting an entity by id. When `false`, the entity drops out of searches after the next scheduled
   refresh, or once `syncIndex` is called. Delete by query never forces a refresh.

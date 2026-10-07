@@ -51,6 +51,14 @@ public class EntityCrudTests extends ElasticTestBase {
     @Autowired
     private TestHelper testHelper;
 
+    /**
+     * Returns the suffix used to name the structures this test creates. Subclasses that run these tests again
+     * against the same Elasticsearch change it, so the two runs don't share structures.
+     */
+    protected String structureSuffix(String suffix) {
+        return suffix;
+    }
+
     @Test
     public void testCreateAndDeleteItem() {
 
@@ -68,7 +76,7 @@ public class EntityCrudTests extends ElasticTestBase {
     public void testCreateAndDeleteByQuery() {
         EntityContext context = new DefaultEntityContext(new DummyParticipant("tenant", "user"));
 
-        StructureAndPersonHolder holder = testHelper.createAndVerify(20, false, context, "_testFindByIds");
+        StructureAndPersonHolder holder = testHelper.createAndVerify(20, false, context, structureSuffix("_testFindByIds"));
 
         Assertions.assertNotNull(holder);
 
@@ -126,7 +134,7 @@ public class EntityCrudTests extends ElasticTestBase {
     public void testFindByIds(){
         EntityContext context = new DefaultEntityContext(new DummyParticipant("tenant", "user"));
 
-        StructureAndPersonHolder holder = testHelper.createAndVerify(10, true, context, "_testFindByIds");
+        StructureAndPersonHolder holder = testHelper.createAndVerify(10, true, context, structureSuffix("_testFindByIds"));
 
         Assertions.assertNotNull(holder);
 
@@ -170,7 +178,7 @@ public class EntityCrudTests extends ElasticTestBase {
     public void testFindByIdsNoneFound(){
         EntityContext context = new DefaultEntityContext(new DummyParticipant("tenant", "user"));
 
-        StructureAndPersonHolder holder = testHelper.createAndVerify(10, true, context, "_testFindByIdsNoneFound");
+        StructureAndPersonHolder holder = testHelper.createAndVerify(10, true, context, structureSuffix("_testFindByIdsNoneFound"));
 
         Assertions.assertNotNull(holder);
 
@@ -197,11 +205,11 @@ public class EntityCrudTests extends ElasticTestBase {
         EntityContext context1 = new DefaultEntityContext(new DummyParticipant("tenant1", "user1"));
         EntityContext context2 = new DefaultEntityContext(new DummyParticipant("tenant2", "user2"));
 
-        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, true, context1, "_testCount");
+        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, true, context1, structureSuffix("_testCount"));
 
         Assertions.assertNotNull(holder1);
 
-        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, true, context2, "_testCount");
+        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, true, context2, structureSuffix("_testCount"));
 
         Assertions.assertNotNull(holder2);
 
@@ -225,11 +233,11 @@ public class EntityCrudTests extends ElasticTestBase {
         EntityContext context1 = new DefaultEntityContext(new DummyParticipant("tenant1", "user1"));
         EntityContext context2 = new DefaultEntityContext(new DummyParticipant("tenant2", "user2"));
 
-        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, false, context1, "_testCountByQuery");
+        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, false, context1, structureSuffix("_testCountByQuery"));
 
         Assertions.assertNotNull(holder1);
 
-        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, false, context2, "_testCountByQuery");
+        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, false, context2, structureSuffix("_testCountByQuery"));
 
         Assertions.assertNotNull(holder2);
 
@@ -260,11 +268,11 @@ public class EntityCrudTests extends ElasticTestBase {
         EntityContext context1 = new DefaultEntityContext(new DummyParticipant("tenant1", "user1"));
         EntityContext context2 = new DefaultEntityContext(new DummyParticipant("tenant2", "user2"));
 
-        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, true, context1, "_testAll");
+        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, true, context1, structureSuffix("_testAll"));
 
         Assertions.assertNotNull(holder1);
 
-        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, true, context2, "_testAll");
+        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, true, context2, structureSuffix("_testAll"));
 
         Assertions.assertNotNull(holder2);
 
@@ -297,11 +305,11 @@ public class EntityCrudTests extends ElasticTestBase {
         EntityContext context1 = new DefaultEntityContext(new DummyParticipant("tenant1", "user1"));
         EntityContext context2 = new DefaultEntityContext(new DummyParticipant("tenant2", "user2"));
 
-        StructureAndPersonHolder holder1 = testHelper.createAndVerify(40, true, context1, "_testAllWCursor");
+        StructureAndPersonHolder holder1 = testHelper.createAndVerify(40, true, context1, structureSuffix("_testAllWCursor"));
 
         Assertions.assertNotNull(holder1);
 
-        StructureAndPersonHolder holder2 = testHelper.createAndVerify(30, true, context2, "_testAllWCursor");
+        StructureAndPersonHolder holder2 = testHelper.createAndVerify(30, true, context2, structureSuffix("_testAllWCursor"));
 
         Assertions.assertNotNull(holder2);
 
@@ -462,11 +470,11 @@ public class EntityCrudTests extends ElasticTestBase {
         EntityContext context1 = new DefaultEntityContext(new DummyParticipant("tenant1", "user1"));
         EntityContext context2 = new DefaultEntityContext(new DummyParticipant("tenant2", "user2"));
 
-        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, false, context1, "_testSearch");
+        StructureAndPersonHolder holder1 = testHelper.createAndVerify(10, false, context1, structureSuffix("_testSearch"));
 
         Assertions.assertNotNull(holder1);
 
-        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, false, context2, "_testSearch");
+        StructureAndPersonHolder holder2 = testHelper.createAndVerify(20, false, context2, structureSuffix("_testSearch"));
 
         Assertions.assertNotNull(holder2);
 
@@ -515,7 +523,7 @@ public class EntityCrudTests extends ElasticTestBase {
         for(int i = 0; i < 10; i++){
             int numberOfPeople = (int)(Math.random()*100);
             DefaultEntityContext context = new DefaultEntityContext(new DummyParticipant("tenant"+i, "user"+i));
-            StructureAndPersonHolder holder = testHelper.createAndVerify(numberOfPeople, true, context, "_testMultiTenantSearch");
+            StructureAndPersonHolder holder = testHelper.createAndVerify(numberOfPeople, true, context, structureSuffix("_testMultiTenantSearch"));
             Assertions.assertNotNull(holder);
             contextMap.put(context,  holder);
         }
@@ -559,7 +567,7 @@ public class EntityCrudTests extends ElasticTestBase {
     @Test
     public void testPartialUpdate() throws Exception {
         EntityContext entityContext = new DefaultEntityContext(new DummyParticipant());
-        CompletableFuture<Pair<Structure, Boolean>> createStructure = testDataService.createCarStructureIfNotExists("_partialUpdate");
+        CompletableFuture<Pair<Structure, Boolean>> createStructure = testDataService.createCarStructureIfNotExists(structureSuffix("_partialUpdate"));
 
         StepVerifier.create(Mono.fromFuture(createStructure))
                     .expectNextMatches(pair -> {

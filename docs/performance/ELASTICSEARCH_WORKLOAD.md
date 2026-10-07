@@ -125,15 +125,35 @@ refresh. With a setting off, a change becomes searchable at the next scheduled r
 by default) or after a `syncIndex` call. Find by id sees the change straight away either way,
 because Elasticsearch reads a single document by id without waiting for a refresh.
 
-The tests are `EntityRefreshAfterMutationDisabledTests` and
-`EntityRefreshAfterDeleteDisabledTests`. They switch scheduled refreshes off on the index, so they
-can check exactly when each change becomes searchable.
+**Watch out for optimistic locking.** On structures with a version field, search results carry
+the version an entity had at the last refresh. With refresh after save and update off, an entity
+found by search straight after it was updated still has its old version, and updating it fails
+with a version conflict. Clients should read an entity by id before updating it, since that always
+returns the current version, or call `syncIndex` first.
+
+Tests:
+
+- `EntityRefreshAfterMutationDisabledTests` and `EntityRefreshAfterDeleteDisabledTests` turn one
+  setting off each. They switch scheduled refreshes off on the index, so they can check exactly
+  when each change becomes searchable, and that the version conflict above happens only when
+  refresh after save and update is off.
+- `EntityCrudRefreshDisabledTests` and `BulkUpdateRefreshDisabledTests` run every entity service
+  test again with both settings off. They pass because those tests already call `syncIndex`
+  before searching, which is what clients should do.
+
+Follow-ups, not done yet:
+
+- **Add a `wait_for` value.** Make the settings an enum (`true`, `false`, `wait_for`) instead of
+  booleans, keeping `true` and `false` working so existing configuration doesn't break. With
+  `wait_for`, a single write waits for the next scheduled refresh (within 1 s by default) instead
+  of forcing one. Callers can still search their own writes as soon as the call returns, without
+  the cost of a forced refresh.
+- **Per-structure control.** The settings apply to every structure at once. A structure-level
+  option would let only the busiest indexes stop forcing refreshes, while structures used by
+  interactive apps keep searching their own writes straight away.
 
 #### Other changes worth making
 
-- **Consider `Refresh.WaitFor` instead of `Refresh.True`** for callers that still want to search
-  their writes straight away. The request waits for the next scheduled refresh (within 1 s by
-  default) instead of forcing one. This could become a third value for the settings above.
 - **Refresh less often** (`refresh_interval` of 5-10 s) on the indexes that take the most bulk
   writes. That means fewer segments and less merging, at the cost of new writes taking a few
   seconds longer to show up in searches.
