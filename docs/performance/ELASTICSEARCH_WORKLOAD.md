@@ -125,8 +125,18 @@ check exactly when each change becomes searchable.
 - **Review whether 2 replicas is needed.** With 1 replica, each node does about a third less
   indexing, at some cost to durability. Since the count is hard-coded in `CrudServiceTemplate`,
   making it a setting is part of this change.
-- **Prefer `bulkSave` where an integration can send whole documents.** It avoids the
-  fetch-and-merge that `bulkUpdate` costs Elasticsearch on every document.
+- **Integrations that always send whole documents move to `bulkSave`.** Decided October 2026.
+  It avoids the fetch-and-merge that `bulkUpdate` costs Elasticsearch on every document. Before
+  moving an integration, check:
+  - **`bulkSave` replaces the stored document.** Any field missing from the payload is dropped, so
+    the integration really must send the whole document every time.
+  - **Structures with optimistic locking need the version.** For those, `bulkSave` of a document
+    without a version is sent as a create, which fails if the document already exists.
+    `bulkUpdate` upserts in that case. Stream structures always create.
+  - **Unchanged documents stop being free.** `bulkUpdate` uses `detectNoop`, so a document sent
+    unchanged costs Elasticsearch a fetch but no write. `bulkSave` writes it again every time. If an
+    integration mostly sends documents that haven't changed, `bulkUpdate` may be cheaper for it.
+    The bulk response says per item whether it was a `noop`, which would show this.
 
 ### Proposed settings
 
