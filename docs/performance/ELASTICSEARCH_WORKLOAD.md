@@ -4,47 +4,60 @@
 record changes that make Structures easier on Elasticsearch. The first entry is throttling writes
 so they stop slowing reads.
 
+## Terms used here
+
+- **Refresh:** Elasticsearch doesn't make new or changed documents searchable straight away. It
+  collects them and publishes them to search in batches, by default once a second. Each publish is
+  a refresh. A caller can also force one immediately.
+- **Segment:** each refresh writes the batched changes into a new file on disk, called a segment.
+  Elasticsearch keeps merging small segments into bigger ones in the background. Many small
+  segments mean more merging and slower searches.
+- **Shard and replica:** an index is split into shards, and each shard can have copies (replicas)
+  on other nodes. Every copy has to index every document written to its shard.
+- **Bulk call:** one request that saves or updates many documents at once (`bulkSave`,
+  `bulkUpdate`), as opposed to a single `save` or `update`.
+- **`syncIndex`:** a Structures call that forces a refresh of a structure's whole index, so
+  everything written so far becomes searchable.
+
 ## Write throttling (October 2026)
 
 ### What happened
 
-Production went from one Structures pod to three. The single pod had been limiting the
-integrations without anyone intending it to, so write throughput roughly tripled once the extra
-pods were up. Both reads and writes then slowed down. The Structures pods look healthy; the
-latency is in Elasticsearch.
+A Structures deployment was scaled from one pod to three. One pod had been limiting how fast
+clients could write, without anyone intending it to. With three pods, the write rate to
+Elasticsearch roughly tripled, and both reads and writes slowed down. The Structures pods stayed
+healthy; the slowness was in Elasticsearch.
 
-What we know about the traffic:
+The workload looked like this:
 
-- Most integration writes are `bulkUpdate` and `bulkSave`. Single `save` and `update` calls are
-  much rarer.
-- Integrations can be slowed down, even paused for a minute or more. How fast they run is allowed
-  to vary.
-- Some integrations need to read their own writes.
+- Most writes arrive as bulk calls. Single `save` and `update` calls are much rarer.
+- The clients doing those writes can tolerate being slowed down, even paused for a minute or more.
+- Some clients need to search for data straight after writing it.
 
-The goal is to throttle inside Structures, so the integrations need no changes. Writes should wait
-when Elasticsearch is busy, not fail.
+The goal is to throttle writes inside Structures, so no client has to change. When Elasticsearch
+is busy, writes should wait, not fail.
 
-### Why writes hurt reads today
+### Why writes slow reads today
 
 - **Every Elasticsearch node indexes every document.** Indexes and index templates are created
   with 3 shards and 2 replicas (`CrudServiceTemplate.createIndex` and `createIndexTemplate`). On a
-  3-node cluster each node holds a full copy, so adding Structures pods raises the write rate
-  without adding any write capacity.
+  3-node cluster each node holds a full copy of the data, so adding Structures pods raises the
+  write rate without adding any write capacity.
 - **Reads and writes share one connection pool.** `StructuresElasticsearchConfig` builds one
-  `RestClient` and never sets pool sizes, so the low-level client's defaults apply (10 connections
-  per host, 30 in total, per pod). A burst of bulk calls can take every connection, and reads then
-  wait inside Structures before Elasticsearch even sees them. No connection request timeout is set
+  `RestClient` and never sets pool sizes, so the client's defaults apply: 10 connections per host
+  and 30 in total, per pod. A burst of bulk calls can take every connection, and reads then wait
+  inside Structures before Elasticsearch even sees them. No connection request timeout is set
   either, so a request waiting for a connection has no time limit.
 - **Single writes force a refresh.** `DefaultEntityService.save` and `update`, and deletes through
-  `ReadPreProcessor.beforeDelete`, all pass `Refresh.True`. Each one makes a new small segment on
-  every shard copy it touches, which adds merging and clears caches. Bulk calls don't refresh, so
-  this matters less given the traffic mix, but it is still a cost.
-- **`syncIndex` refreshes the whole index.** We don't know how often integrations call it. If the
-  ones that need to read their own writes call it after every bulk, it is a hidden refresh on
-  every bulk.
-- **`bulkUpdate` costs more than `bulkSave`.** It sends partial updates with `docAsUpsert`, so
-  Elasticsearch fetches each existing document, merges the change and indexes the whole document
-  again. `bulkSave` just indexes the document it is given.
+  `ReadPreProcessor.beforeDelete`, all ask Elasticsearch to refresh before returning
+  (`Refresh.True`). Each forced refresh writes a new small segment on every copy of the shard it
+  touched, which adds merging and clears caches. Bulk calls don't force a refresh, so with mostly
+  bulk traffic this matters less, but it is still a cost.
+- **`syncIndex` refreshes the whole index.** If clients that need to search their own writes call
+  it after every bulk call, every bulk call pays for a full refresh.
+- **`bulkUpdate` costs more than `bulkSave`.** `bulkUpdate` sends partial updates, so
+  Elasticsearch fetches each existing document, merges in the change and writes the whole document
+  again. `bulkSave` just writes the document it is given.
 
 ### Plan
 
@@ -54,47 +67,49 @@ Two `ElasticsearchAsyncClient` beans, each with its own connection pool:
 
 - **Built by one factory method** in `StructuresElasticsearchConfig`, so both get the same hosts,
   credentials, timeouts, TCP options and failover behaviour. If the two drift apart, one of them
-  loses the failover work from PR #21.
+  loses the failover behaviour described under `elasticConnections` in the
+  [server config reference](../../webdocs/reference/structures-server-config.md).
 - **The reader stays the default bean.** `CrudServiceTemplate`, named queries and the other
   services don't change. The writer is injected with a qualifier (e.g. `esWriteClient`) into
   `DefaultEntityService`, and only its write paths use it: `doPersist`, `doPersistBulkLogic` and
   `deleteByQuery`.
-- **The writer's pool size is the write throttle.** With a cap of 4 connections, each pod sends
-  at most 4 write requests to Elasticsearch at a time, or 12 across 3 pods. Writes over the cap
-  wait for a connection, which slows the integration down without any change on its side.
-- **Set a connection request timeout on the writer.** A write that waits longer fails with a
-  retryable error. The timeout must be shorter than the integrations' own client timeout.
-  Otherwise an integration gives up while its write is still queued, may retry, and adds load
-  instead of removing it.
+- **The writer's pool size is the write throttle.** With a cap of 4 connections, each pod sends at
+  most 4 write requests to Elasticsearch at a time, or 12 across 3 pods. Writes over the cap wait
+  for a free connection. The client simply sees a slower response and needs no changes.
+- **Set a connection request timeout on the writer.** A write that waits longer than this fails
+  with an error the client can retry. The timeout must be shorter than the client's own request
+  timeout. Otherwise the client gives up while its write is still queued, may send it again, and
+  adds load instead of removing it.
 - **Size the reader pool explicitly** too, instead of relying on the defaults.
 
 #### 2. Split large bulk calls into chunks
 
-A pool limits requests, not documents. A 10,000-document bulk and a 10-document bulk each hold
-one connection. Splitting bulk calls into fixed-size chunks in `doPersistBulkLogic` makes the cap
+A pool limits requests, not documents: a 10,000-document bulk call and a 10-document one each hold
+one connection. Splitting bulk calls into fixed-size chunks in `doPersistBulkLogic` makes the limit
 firm: connections × chunk size. For example, 4 connections × 500 documents = 2,000 documents in
 flight per pod.
 
 - **Send the chunks of one call one after another, not in parallel.** That keeps the original
-  order when the same id appears more than once in a call, and it means one call holds at most
-  one write connection at a time, so other integrations get a turn between chunks.
-- **Keep today's error handling.** Today every item is attempted and the call fails with the
-  combined error reasons if any item failed. Do the same across chunks: run all of them, collect
-  the errors, and fail once at the end. Elasticsearch bulk requests are not atomic, so a chunk
-  that succeeded before another failed matches what already happens inside a single bulk.
+  order when the same id appears more than once in a call. It also means one call holds at most
+  one write connection at a time, so other callers get a turn between chunks.
+- **Keep today's error handling.** Today every document in the call is attempted, and the call
+  fails with all the error reasons combined if any of them failed. Do the same across chunks: run
+  all of them, collect the errors, and fail once at the end. An Elasticsearch bulk request is not
+  all-or-nothing anyway, so a chunk that succeeded before another failed matches what already
+  happens within a single bulk call.
 
 #### 3. Adaptive write limiter (only if the metrics call for it)
 
-A pool's size can't easily change while the server runs. If a fixed cap turns out to be too
+A pool's size can't easily change while the server runs. If a fixed limit turns out to be too
 blunt, put a limiter in front of the writer client:
 
 - Count documents in flight, not requests.
 - Waiting writes queue in arrival order and must not block a thread. A plain `Semaphore.acquire()`
   would stall the Vert.x event loop, so it has to be a queue of `CompletableFuture`s.
-- Lower the limit when Elasticsearch latency or 429 rejections rise, and raise it slowly when they
-  recover (additive increase, multiplicative decrease). Driving it from read latency protects
-  reads directly instead of relying on a number tuned once.
-- If one integration turns out to use the whole budget, add per-tenant fairness.
+- Lower the limit when Elasticsearch slows down or starts rejecting requests (HTTP 429), and raise
+  it slowly when it recovers (additive increase, multiplicative decrease). Driving it from read
+  latency protects reads directly, instead of relying on a number tuned once.
+- If one tenant turns out to use the whole budget, add per-tenant fairness.
 
 #### Done: switches for forced refreshes
 
@@ -104,39 +119,40 @@ Two settings, both `true` by default so nothing changes unless they are set:
 - `structures.elasticRefreshAfterDelete`: whether a delete by id forces a refresh.
 
 In Helm they are `properties.structures.elastic.refreshAfterMutation` and `refreshAfterDelete`.
-The plan is to turn them off in controlled environments first. Integrations that need to read
-their own writes then call `syncIndex` only when they actually need it, instead of every write
-paying for a refresh. With a setting off, a change becomes searchable after the next scheduled
-refresh (1 s by default) or a `syncIndex` call, whichever comes first. Find by id sees it straight
-away either way, since an Elasticsearch get is realtime.
+The plan is to turn them off in test environments first. Clients that need to search their own
+writes then call `syncIndex` only when they actually need to, instead of every write paying for a
+refresh. With a setting off, a change becomes searchable at the next scheduled refresh (within 1 s
+by default) or after a `syncIndex` call. Find by id sees the change straight away either way,
+because Elasticsearch reads a single document by id without waiting for a refresh.
 
 The tests are `EntityRefreshAfterMutationDisabledTests` and
 `EntityRefreshAfterDeleteDisabledTests`. They switch scheduled refreshes off on the index, so they
-check exactly when each change becomes searchable.
+can check exactly when each change becomes searchable.
 
 #### Other changes worth making
 
-- **Consider `Refresh.WaitFor` instead of `Refresh.True`** for callers that still want to read
-  their writes. The request waits for the next scheduled refresh (1 s by default) instead of
-  forcing one. This could become a third value for the settings above.
-- **Use a longer `refresh_interval`** (5-10 s) on the indexes that take the most bulk writes. This
-  means fewer segments and less merging, at the cost of new writes taking a few seconds longer to
-  show up in searches.
+- **Consider `Refresh.WaitFor` instead of `Refresh.True`** for callers that still want to search
+  their writes straight away. The request waits for the next scheduled refresh (within 1 s by
+  default) instead of forcing one. This could become a third value for the settings above.
+- **Refresh less often** (`refresh_interval` of 5-10 s) on the indexes that take the most bulk
+  writes. That means fewer segments and less merging, at the cost of new writes taking a few
+  seconds longer to show up in searches.
 - **Review whether 2 replicas is needed.** With 1 replica, each node does about a third less
-  indexing, at some cost to durability. Since the count is hard-coded in `CrudServiceTemplate`,
-  making it a setting is part of this change.
-- **Integrations that always send whole documents move to `bulkSave`.** Decided October 2026.
-  It avoids the fetch-and-merge that `bulkUpdate` costs Elasticsearch on every document. Before
-  moving an integration, check:
-  - **`bulkSave` replaces the stored document.** Any field missing from the payload is dropped, so
-    the integration really must send the whole document every time.
-  - **Structures with optimistic locking need the version.** For those, `bulkSave` of a document
+  indexing, at some cost to durability. The count is hard-coded in `CrudServiceTemplate`, so making
+  it a setting is part of this change.
+- **Use `bulkSave` when the whole document is sent.** Decided October 2026: clients that always
+  send complete documents move from `bulkUpdate` to `bulkSave`, which avoids the fetch-and-merge
+  `bulkUpdate` costs Elasticsearch on every document. Before moving a client, check:
+  - **`bulkSave` replaces the stored document.** Any field missing from what is sent is dropped, so
+    the client really must send the whole document every time.
+  - **Structures with optimistic locking need the version.** On those, `bulkSave` of a document
     without a version is sent as a create, which fails if the document already exists.
-    `bulkUpdate` upserts in that case. Stream structures always create.
-  - **Unchanged documents stop being free.** `bulkUpdate` uses `detectNoop`, so a document sent
-    unchanged costs Elasticsearch a fetch but no write. `bulkSave` writes it again every time. If an
-    integration mostly sends documents that haven't changed, `bulkUpdate` may be cheaper for it.
-    The bulk response says per item whether it was a `noop`, which would show this.
+    `bulkUpdate` would create or update it instead. Stream structures always create.
+  - **Unchanged documents are written again.** `bulkUpdate` checks whether anything changed
+    (`detectNoop`), so a document sent unchanged costs Elasticsearch a fetch but no write.
+    `bulkSave` writes it again every time. If a client mostly sends documents that haven't changed,
+    `bulkUpdate` may be cheaper for it. The bulk response marks each skipped document as a `noop`,
+    so counting those shows which case a client is in.
 
 ### Proposed settings
 
@@ -148,7 +164,7 @@ structures:
     max-connections: 30
   elastic-write-pool:
     max-connections: 4          # per pod; the cluster total is this x the number of pods
-    max-wait: 30s               # connection request timeout; keep below the integrations' client timeout
+    max-wait: 30s               # connection request timeout; keep below the clients' request timeout
   elastic-bulk-chunk-size: 500
 ```
 
@@ -156,26 +172,27 @@ The limits are per pod. If the number of pods changes (for example, through auto
 total load on Elasticsearch changes with it.
 
 **Where to start sizing:** keep the total number of concurrent bulk requests across all pods near
-the size of Elasticsearch's write thread pool, which is one thread per core on each node. Then
+the size of Elasticsearch's write thread pool, which is one thread per CPU core on each node. Then
 adjust from the metrics.
 
 ### Metrics to collect first
 
-Get a production baseline before changing anything.
+Measure the current behaviour before changing anything.
 
 **Structures, per pod:**
 
-- Bulk documents per second, by structure and by operation (`bulkSave` or `bulkUpdate`)
-- Distribution of bulk call sizes
-- Bulk call latency
-- Read latency at p50 and p95 for search, named queries and find by id
-- How often `syncIndex` is called, and by which integrations
+- Bulk documents written per second, by structure and by operation (`bulkSave` or `bulkUpdate`)
+- How many documents bulk calls carry (the spread, not just the average)
+- How long bulk calls take
+- Read latency (median and 95th percentile) for search, named queries and find by id
+- How often `syncIndex` is called, and by which clients
 - Once steps 1-2 are in: connections in use per pool, time spent waiting for a write connection,
-  and wait timeouts
+  and how often that wait times out
 
 **Elasticsearch:**
 
-- `GET _cat/thread_pool/write,search?v`: active, queued and rejected for both pools
+- `GET _cat/thread_pool/write,search?v`: active, queued and rejected requests for writes and
+  searches
 - `GET _nodes/stats/indices/indexing,search,refresh,merges`: refresh and merge counts and time, and
   search time per query
 - `GET _nodes/stats/indexing_pressure`
@@ -186,16 +203,17 @@ On KinD with the load generator (see [LOAD_TESTING.md](../../LOAD_TESTING.md)):
 
 1. Keep reads running at a steady rate (`sustainedSearch` and `sustainedFindAll`), and push bulk
    writes hard with `sustainedBulkSave` at high concurrency and large bulk sizes.
-2. Compare read p95 with no write limit and with a small write pool plus chunking.
+2. Compare 95th percentile read latency with no write limit and with a small write pool plus
+   chunking.
 3. Check that writes slow down but don't fail, and that no waiting write times out at the chosen
    `max-wait`.
-4. Watch the Elasticsearch write thread pool for rejections in both runs.
+4. Watch the Elasticsearch write thread pool for rejected requests in both runs.
 
 ### Open questions
 
-- When an integration gets an error or a 429, does it retry, back off or drop the data? This
-  decides how long writes may queue before Structures rejects them.
-- What is the continuum RPC client's request timeout? `max-wait` has to stay below it.
-- Which integrations need to read their own writes, and do they call `syncIndex` to do it?
-- How many cores does each production Elasticsearch node have? That sets the write thread pool
-  size, which is where pool sizing starts.
+- When a client gets an error or a 429, does it retry, back off, or drop the data? This decides how
+  long writes may wait before Structures rejects them.
+- What is the request timeout of the continuum RPC client? `max-wait` has to stay below it.
+- Which clients need to search their own writes, and do they call `syncIndex` to do it?
+- How many CPU cores does each production Elasticsearch node have? That sets the size of its write
+  thread pool, which is where pool sizing starts.
