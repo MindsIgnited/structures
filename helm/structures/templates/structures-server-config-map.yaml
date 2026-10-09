@@ -138,7 +138,7 @@ data:
   {{- /* Spring reads a bare number as milliseconds, so these need a unit, like 5s, or ISO-8601, like PT5S */}}
   {{- range $key, $env := dict "jwksConnectTimeout" "JWKS_CONNECT_TIMEOUT" "jwksRequestTimeout" "JWKS_REQUEST_TIMEOUT" "jwksRefreshInterval" "JWKS_REFRESH_INTERVAL" "jwksMaxStaleness" "JWKS_MAX_STALENESS" "jwksRefreshCooldown" "JWKS_REFRESH_COOLDOWN" "jwksRetryBackoff" "JWKS_RETRY_BACKOFF" }}
   {{- with index $.Values.oidc $key }}
-  {{- if not (regexMatch "^([0-9]+(ns|us|ms|s|m|h|d)|P[0-9A-Za-z.]+)$" (toString .)) }}
+  {{- if not (regexMatch "(?i)^([0-9]+(ns|us|ms|s|m|h|d)|P[0-9A-Z.]+)$" (toString .)) }}
   {{- fail (printf "oidc.%s must have a unit, such as 5s or 500ms, got %v" $key .) }}
   {{- end }}
   OIDC_SECURITY_SERVICE_{{ $env }}: "{{ . }}"

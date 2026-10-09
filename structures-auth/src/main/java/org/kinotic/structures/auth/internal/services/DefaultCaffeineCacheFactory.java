@@ -100,9 +100,11 @@ public class DefaultCaffeineCacheFactory implements CaffeineCacheFactory {
 
         /**
          * Specifies that an entry becomes eligible for refresh once this duration has elapsed after its creation or
-         * most recent replacement. The refresh starts on the next access, which is served the old value meanwhile,
-         * and if the refresh fails the old value is kept. Requires a loader, {@link #buildAsync(AsyncCacheLoader)};
-         * Caffeine rejects it on a cache built without one.
+         * most recent replacement. The refresh starts on the next access, which is served the old value meanwhile.
+         * If the refresh fails, the old value is kept but stays eligible, so the next access refreshes again, and
+         * Caffeine logs each failure. To wait a full interval before retrying, have the loader's reload return the
+         * old value on failure instead. Requires a loader, {@link #buildAsync(AsyncCacheLoader)}; Caffeine rejects
+         * it on a cache built without one.
          *
          * @param duration the duration after which an entry should be refreshed
          * @return this builder instance

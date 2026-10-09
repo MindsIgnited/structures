@@ -14,7 +14,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
 import javax.net.ssl.SSLException;
@@ -67,8 +66,6 @@ import reactor.netty.resources.ConnectionProvider;
 public class DefaultJwksService implements JwksService {
 
     private static final Duration WELL_KNOWN_REFRESH = Duration.ofHours(24);
-    // rejected tokens are logged at warn at most this often, at debug otherwise, since anyone can send them
-    private static final Duration REJECTION_WARN_INTERVAL = Duration.ofMinutes(1);
     private static final int MAX_LOGGED_CLAIM_LENGTH = 200;
     private static final String KEY_SET = "JWKS";
     private static final String WELL_KNOWN = "OIDC discovery document";
@@ -88,9 +85,17 @@ public class DefaultJwksService implements JwksService {
     private final Map<String, FailedLoad> failedLoads = new ConcurrentHashMap<>();
     // keyed by description and cache key, the error of the last refresh that failed and kept the cached value
     private final Map<String, Throwable> failedRefreshes = new ConcurrentHashMap<>();
-    private final AtomicLong nextRejectionWarnNanos = new AtomicLong(System.nanoTime());
+    private final RejectionLog rejections = new RejectionLog(log);
 
     public DefaultJwksService(DefaultCaffeineCacheFactory cacheFactory, OidcSecurityServiceProperties properties) {
+        requirePositive("jwks-connect-timeout", properties.getJwksConnectTimeout());
+        requirePositive("jwks-request-timeout", properties.getJwksRequestTimeout());
+        requirePositive("jwks-refresh-interval", properties.getJwksRefreshInterval());
+        requireNotNegative("jwks-refresh-cooldown", properties.getJwksRefreshCooldown());
+        requireNotNegative("jwks-retry-backoff", properties.getJwksRetryBackoff());
+        if (properties.getJwksMaxStaleness() != null) {
+            requirePositive("jwks-max-staleness", properties.getJwksMaxStaleness());
+        }
         this.properties = properties;
         this.webClient = createWebClient(false);
         this.insecureWebClient = createWebClient(true);
@@ -269,8 +274,8 @@ public class DefaultJwksService implements JwksService {
     /**
      * When {@link OidcSecurityServiceProperties#getJwksMaxStaleness()} is set, evicts the key set once every
      * refresh has failed for longer than that, so the lookup loads it, or fails. Checked before the lookup, which
-     * would otherwise start a refresh that is then thrown away. Compares by value, since a failed refresh stores
-     * the same set in a new future.
+     * would otherwise start a refresh that is then thrown away. Compares the set, not the future holding it,
+     * since a failed refresh stores the same set in a new future.
      */
     private void evictIfTooStale(String jwksUrl) {
         Duration maxStaleness = properties.getJwksMaxStaleness();
@@ -279,8 +284,10 @@ public class DefaultJwksService implements JwksService {
         }
         KeySet present = keySetCache.synchronous().policy().getIfPresentQuietly(jwksUrl);
         if (present != null && System.nanoTime() - present.fetchedAtNanos() > maxStaleness.toNanos()) {
-            // a no-op if a concurrent lookup already replaced it
-            keySetCache.synchronous().asMap().remove(jwksUrl, present);
+            // Not asMap().remove(key, value), which reads the entry and so starts the refresh this avoids.
+            // Keeps the entry if a concurrent lookup already replaced it.
+            keySetCache.asMap().computeIfPresent(jwksUrl, (url, future) ->
+                    future.isDone() && !future.isCompletedExceptionally() && future.join() == present ? null : future);
         }
     }
 
@@ -336,8 +343,11 @@ public class DefaultJwksService implements JwksService {
                 }
             });
         }
-        // started after now (by a concurrent lookup) is fine too, the difference is then negative
-        return refresh != null && now - refresh.startedNanos() < cooldown ? refresh.future() : null;
+        // A refresh started here is always used, even with a zero cooldown. One a concurrent lookup started after
+        // now is fine too, the difference is then negative.
+        return refresh != null && (refresh.future() == started || now - refresh.startedNanos() < cooldown)
+                ? refresh.future()
+                : null;
     }
 
     private CompletableFuture<KeySet> fetchKeySet(String jwksUrl) {
@@ -357,7 +367,8 @@ public class DefaultJwksService implements JwksService {
                         try {
                             keysByKid.put(keyKid.asString(), jwkParser.parse(objectMapper.writeValueAsString(key)));
                         } catch (Exception e) {
-                            log.debug("Skipping key {} in JWKS at {} that could not be parsed", keyKid.asString(), jwksUrl, e);
+                            // once per fetch, so a key the IdP signs with but that cannot be used is visible
+                            log.warn("Skipping key {} in JWKS at {}, it could not be parsed: {}", keyKid.asString(), jwksUrl, e.getMessage());
                         }
                     }
                     // An empty set is treated as a failure, so it is not cached for the full TTL
@@ -439,28 +450,14 @@ public class DefaultJwksService implements JwksService {
      */
     private AuthenticationException notConfigured(String issuer) {
         String safeIssuer = sanitize(issuer);
-        logRejection("Rejecting token from issuer {}, no enabled OIDC provider has it as its authority", safeIssuer);
+        rejections.log("Rejecting token from issuer {}, no enabled OIDC provider has it as its authority", safeIssuer);
         return new AuthenticationException("Issuer not allowed: " + safeIssuer);
     }
 
     private JwksFetchException keyNotFound(String issuer, String kid) {
         String safeKid = sanitize(kid);
-        logRejection("Rejecting token from issuer {}, its key id {} is not in the issuer's JWKS", issuer, safeKid);
+        rejections.log("Rejecting token from issuer {}, its key id {} is not in the issuer's JWKS", issuer, safeKid);
         return new JwksFetchException("Key with kid '" + safeKid + "' not found in JWKS for issuer: " + issuer);
-    }
-
-    /**
-     * Logs at warn at most once per {@link #REJECTION_WARN_INTERVAL} and at debug otherwise, since the tokens
-     * being rejected are unverified and anyone can send them
-     */
-    private void logRejection(String format, Object... args) {
-        long now = System.nanoTime();
-        long next = nextRejectionWarnNanos.get();
-        if (now - next >= 0 && nextRejectionWarnNanos.compareAndSet(next, now + REJECTION_WARN_INTERVAL.toNanos())) {
-            log.warn(format + " (further rejections within " + REJECTION_WARN_INTERVAL + " are logged at debug)", args);
-        } else {
-            log.debug(format, args);
-        }
     }
 
     /**
@@ -476,6 +473,18 @@ public class DefaultJwksService implements JwksService {
         StringBuilder safe = new StringBuilder(shortened.length());
         shortened.codePoints().forEach(c -> safe.appendCodePoint(Character.isISOControl(c) ? '?' : c));
         return safe.toString();
+    }
+
+    private static void requirePositive(String name, Duration value) {
+        if (value == null || value.isZero() || value.isNegative()) {
+            throw new IllegalArgumentException("oidc-security-service." + name + " must be a positive duration, got " + value);
+        }
+    }
+
+    private static void requireNotNegative(String name, Duration value) {
+        if (value == null || value.isNegative()) {
+            throw new IllegalArgumentException("oidc-security-service." + name + " must not be negative, got " + value);
+        }
     }
 
     private record KeySet(Map<String, Jwk<? extends Key>> keys, long fetchedAtNanos) {

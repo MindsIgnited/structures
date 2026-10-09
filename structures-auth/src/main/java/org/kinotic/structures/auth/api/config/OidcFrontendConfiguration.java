@@ -1,9 +1,9 @@
 package org.kinotic.structures.auth.api.config;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.kinotic.structures.auth.api.domain.OidcProvider;
 
@@ -83,9 +83,13 @@ public record OidcFrontendConfiguration(boolean enabled,
             if (metadata == null) {
                 return null;
             }
-            Map<String, String> endpoints = metadata.entrySet().stream()
-                                                    .filter(entry -> FRONTEND_METADATA_KEYS.contains(entry.getKey()))
-                                                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            // a loop, not Collectors.toMap, which throws on a null value
+            Map<String, String> endpoints = new HashMap<>();
+            metadata.forEach((key, value) -> {
+                if (value != null && FRONTEND_METADATA_KEYS.contains(key)) {
+                    endpoints.put(key, value);
+                }
+            });
             return endpoints.isEmpty() ? null : endpoints;
         }
     }

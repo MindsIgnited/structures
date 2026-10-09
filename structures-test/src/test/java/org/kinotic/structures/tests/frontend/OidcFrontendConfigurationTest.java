@@ -65,6 +65,19 @@ class OidcFrontendConfigurationTest {
     }
 
     @Test
+    void nullMetadataValuesAreSkipped() {
+        Map<String, String> metadata = new java.util.HashMap<>();
+        metadata.put("end_session_endpoint", null);
+        metadata.put("token_endpoint", "https://auth.example.com/token");
+        OidcSecurityServiceProperties properties = new OidcSecurityServiceProperties()
+                .setEnabled(true)
+                .setOidcProviders(List.of(new OidcProvider().setEnabled(true).setProvider("kc").setMetadata(metadata)));
+
+        assertEquals(Map.of("token_endpoint", "https://auth.example.com/token"),
+                     OidcFrontendConfiguration.from(properties).oidcProviders().getFirst().metadata());
+    }
+
+    @Test
     void metadataWithoutEndpointKeysIsNotSent() {
         // the frontend treats any metadata object as a full set of endpoint overrides
         OidcSecurityServiceProperties properties = new OidcSecurityServiceProperties()

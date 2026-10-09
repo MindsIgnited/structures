@@ -295,6 +295,22 @@ class JwksResilienceTest {
         assertNull(await(service.getKey(idp.issuer, "k1")).error(), "not recovered once the IdP was back");
     }
 
+    @Test
+    void keysPastTheMaxStalenessAreLoadedOnceNotRefreshedToo() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(200))
+                                                               .setJwksMaxStaleness(Duration.ofMillis(500));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        // no lookups for longer than both the refresh interval and the max staleness, like an idle night
+        idp.jwks = FakeIdp.status(503);
+        Thread.sleep(600);
+        assertNotNull(await(service.getKey(idp.issuer, "k1")).error());
+        Thread.sleep(300); // let a refresh started in the background, if any, reach the IdP
+
+        assertEquals(2, idp.jwksHits.get(), "evicting stale keys also refreshed them, so the IdP was asked twice");
+    }
+
     // --- A failed routine refresh: keys kept, retried after the interval, not on every lookup -------------------
 
     @Test
@@ -347,6 +363,30 @@ class JwksResilienceTest {
         Outcome<Jwk<? extends Key>> rotated = await(service.getKey(idp.issuer, "k2"));
 
         assertNull(rotated.error(), "a key rotated just after a routine fetch was rejected: " + rotated.error());
+    }
+
+    @Test
+    void zeroRefreshCooldownStillUsesTheRefreshItStarts() {
+        DefaultJwksService service = newService(properties().setJwksRefreshCooldown(Duration.ZERO));
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.serveKeys(jwks(Map.of("k1", keyPair1, "k2", keyPair2)));
+        Outcome<Jwk<? extends Key>> rotated = await(service.getKey(idp.issuer, "k2"));
+
+        assertNull(rotated.error(), "with a zero cooldown the rotated key was rejected: " + rotated.error());
+    }
+
+    @Test
+    void invalidFetchSettingsAreRejectedAtStartup() {
+        assertThrows(IllegalArgumentException.class,
+                     () -> newService(properties().setJwksRefreshCooldown(Duration.ofSeconds(-1))));
+        assertThrows(IllegalArgumentException.class,
+                     () -> newService(properties().setJwksRequestTimeout(Duration.ZERO)));
+        assertThrows(IllegalArgumentException.class,
+                     () -> newService(properties().setJwksRefreshInterval(null)));
+        assertThrows(IllegalArgumentException.class,
+                     () -> newService(properties().setJwksMaxStaleness(Duration.ZERO)));
+        assertDoesNotThrow(() -> newService(properties().setJwksMaxStaleness(null)));
     }
 
     @Test

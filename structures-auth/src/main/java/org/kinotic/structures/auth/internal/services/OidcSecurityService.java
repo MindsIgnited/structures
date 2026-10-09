@@ -38,6 +38,7 @@ public class OidcSecurityService implements SecurityService {
     
     private final OidcSecurityServiceProperties properties;
     private final JwksService jwksService;
+    private final RejectionLog rejections = new RejectionLog(log);
 
     @Override
     public CompletableFuture<Participant> authenticate(Map<String, String> authenticationInfo) {
@@ -165,7 +166,8 @@ public class OidcSecurityService implements SecurityService {
             return CompletableFuture.completedFuture(participant);
 
         } catch (JwtException e) {
-            log.error("JWT parsing/validation failed", e);
+            // an expired or forged token, anyone can send these
+            rejections.log("Rejecting token, JWT parsing/validation failed: {}", e.getMessage());
             return CompletableFuture.failedFuture(new RuntimeException("JWT parsing/validation failed", e));
         } catch (Exception e) {
             log.error("Unexpected error during JWT validation", e);
