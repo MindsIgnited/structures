@@ -89,14 +89,57 @@ describe('End To End Tests', () => {
          savedVehicle.color = 'Grey'
          await logFailure(entityService.update(savedVehicle), 'Failed to update vehicle')
 
-         // try and save same one again
-         try {
-             await entityService.update(savedVehicle)
-         } catch (e: any) {
-             expect(e.message).toEqual(expect.stringContaining('version conflict'))
-         }
+         // Updating with the version from before that update must be refused
+         await expect(entityService.update(savedVehicle)).rejects.toThrow('version conflict')
 
          await expect(entityService.deleteById(savedVehicle.id)).resolves.toBeNull()
+     })
+
+    it<LocalTestContext>('Save without a version for an existing id is a version conflict',
+     async ({entityService}) => {
+         const saved: Vehicle = await logFailure(entityService.save(createTestVehicle()), 'Failed to save vehicle')
+
+         // Without a version a save is a create, which Elasticsearch refuses for an id it already has
+         const again = createTestVehicle()
+         again.id = saved.id
+         await expect(entityService.save(again)).rejects.toThrow(/^Version conflict writing Vehicle: .*version conflict/)
+     })
+
+    it<LocalTestContext>('Bulk update with a stale version is a version conflict for that item only',
+     async ({entityService}) => {
+         const vehicles = createTestVehicles(3)
+         await expect(entityService.bulkSave(vehicles)).resolves.toBeNull()
+
+         const current: Vehicle[] = await entityService.findByIds(vehicles.map(v => v.id))
+         expect(current.length).toBe(3)
+
+         // Moves the first one on, so the version held for it below is stale
+         const moved = await logFailure(entityService.update({...current[0], color: 'Grey'}), 'Failed to update vehicle')
+         expect(moved.version).not.toEqual(current[0].version)
+
+         for (const vehicle of current) {
+             vehicle.color = 'CLEAR'
+         }
+         await expect(entityService.bulkUpdate(current))
+             .rejects.toThrow(/^Version conflict writing Vehicle, 1 of 3 items were not written:\n.*version conflict/)
+
+         // Elasticsearch applies each bulk item on its own, so the two with current versions were written
+         const after = await entityService.findByIds(current.map(v => v.id))
+         const colors = new Map(after.map(v => [v.id, v.color]))
+         expect(colors.get(current[0].id)).toBe('Grey')
+         expect(colors.get(current[1].id)).toBe('CLEAR')
+         expect(colors.get(current[2].id)).toBe('CLEAR')
+     })
+
+    it<LocalTestContext>('Bulk save of existing ids without versions is a version conflict',
+     async ({entityService}) => {
+         const vehicles = createTestVehicles(2)
+         await expect(entityService.bulkSave(vehicles)).resolves.toBeNull()
+
+         // The same ids again, still without versions, so each item is a create of an existing document
+         const again = vehicles.map(v => ({...v, version: null, color: 'Blue'}))
+         await expect(entityService.bulkSave(again))
+             .rejects.toThrow(/^Version conflict writing Vehicle, 2 of 2 items were not written:/)
      })
 
     it<LocalTestContext>('Test Bulk CRUD',

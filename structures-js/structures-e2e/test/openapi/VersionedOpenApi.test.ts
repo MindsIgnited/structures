@@ -1,7 +1,8 @@
 import {Structure,} from '@kinotic/structures-api'
 import * as allure from 'allure-js-commons'
+import axios from 'axios'
 import {afterAll, beforeAll, describe, expect, inject, it} from 'vitest'
-import {createVehicleStructureIfNotExist, initContinuumClient, shutdownContinuumClient} from '../TestHelpers.js'
+import {createTestVehicle, createVehicleStructureIfNotExist, initContinuumClient, shutdownContinuumClient} from '../TestHelpers.js'
 import {loadOpenAPISchema} from './OpenApiHelpers.js'
 
 
@@ -13,6 +14,16 @@ interface LocalTestContext {
 
 const applicationId = 'openapi.versioned'
 const projectName = 'TestProject'
+const BASE_AUTH = 'Basic YWRtaW46c3RydWN0dXJlcw=='
+
+const axiosInstance = axios.create({
+                                       headers: {
+                                           'Authorization': BASE_AUTH,
+                                           'Content-Type': 'application/json'
+                                       },
+                                       // Let the tests look at error statuses instead of axios throwing
+                                       validateStatus: () => true
+                                   })
 
 describe('Versioned OpenApi Tests', () => {
 
@@ -44,6 +55,46 @@ describe('Versioned OpenApi Tests', () => {
             expect(schema).toBeDefined()
             expect(schema.openapi).toBe('3.0.1')
             expect(schema.info?.title).toBe('openapi.versioned Structures API')
+
+            const responses = (schema as any).paths['/api/openapi.versioned/vehicle/update'].post.responses
+            expect(responses['409']).toBeDefined()
+        }
+    )
+
+    it<LocalTestContext>(
+        'Update with a stale version answers 409',
+        async () => {
+            const url = `${inject('STRUCTURES_OPENAPI_BASE_URL')}/api/openapi.versioned/vehicle`
+
+            const saved = await axiosInstance.post(url, createTestVehicle())
+            expect(saved.status).toBe(200)
+            expect(saved.data.version).toBeDefined()
+
+            const updated = await axiosInstance.post(`${url}/update`, {...saved.data, color: 'Grey'})
+            expect(updated.status).toBe(200)
+            expect(updated.data.version).not.toEqual(saved.data.version)
+
+            // Still carries the version from before the update above
+            const stale = await axiosInstance.post(`${url}/update`, {...saved.data, color: 'Blue'})
+            expect(stale.status).toBe(409)
+            expect(stale.data.error).toContain('version conflict')
+        }
+    )
+
+    it<LocalTestContext>(
+        'Bulk update with a stale version answers 409',
+        async () => {
+            const url = `${inject('STRUCTURES_OPENAPI_BASE_URL')}/api/openapi.versioned/vehicle`
+
+            const first = (await axiosInstance.post(url, createTestVehicle())).data
+            const second = (await axiosInstance.post(url, createTestVehicle())).data
+            expect((await axiosInstance.post(`${url}/update`, {...first, color: 'Grey'})).status).toBe(200)
+
+            // first still carries the version from before the update above
+            const response = await axiosInstance.post(`${url}/bulk-update`,
+                                                      [{...first, color: 'Blue'}, {...second, color: 'Blue'}])
+            expect(response.status).toBe(409)
+            expect(response.data.error).toMatch(/^Version conflict writing Vehicle, 1 of 2 items were not written:\n.*version conflict/)
         }
     )
 

@@ -73,13 +73,32 @@
       </template>
     </div>
 
+    <div class="flex items-center gap-4">
+      <!-- The tenant the server put this session in. Shared structures only show that tenant's data -->
+      <div v-if="tenantId"
+        v-tooltip.bottom="'Your tenant'"
+        data-testid="tenant-indicator"
+        class="flex items-center gap-2 rounded-full border border-surface-700 px-3 py-1 text-xs text-surface-300 max-w-64">
+        <i class="pi pi-building text-surface-400"></i>
+        <span class="text-surface-400">Tenant</span>
+        <span class="font-medium text-white truncate">{{ tenantId }}</span>
+      </div>
+
          <div ref="avatarDropdownRef" class="relative">
        <button @click="toggleAvatarDropdown" class="flex items-center">
          <img src="@/assets/avatar.png" class="h-8 w-8 rounded-full cursor-pointer hover:opacity-80" />
        </button>
        
        <div v-if="avatarDropdownOpen" 
-         class="absolute top-full right-0 mt-1 bg-white rounded shadow-lg w-48 z-50">
+         class="absolute top-full right-0 mt-1 bg-white rounded shadow-lg w-56 z-50">
+         <div v-if="participantId || tenantId" class="px-4 py-3 border-b border-gray-100 text-xs text-gray-500">
+           <div v-if="participantId" class="truncate">
+             Signed in as <span class="font-medium text-gray-900">{{ participantId }}</span>
+           </div>
+           <div v-if="tenantId" class="truncate mt-1">
+             Tenant <span class="font-medium text-gray-900">{{ tenantId }}</span>
+           </div>
+         </div>
          <div class="py-1">
            <button @click="handleLogout" 
              class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center">
@@ -89,6 +108,7 @@
          </div>
        </div>
      </div>
+    </div>
   </div>
 </template>
 
@@ -101,12 +121,16 @@ import { Structures } from '@kinotic/structures-api';
 import InputText from 'primevue/inputtext';
 import IconField from 'primevue/iconfield';
 import InputIcon from 'primevue/inputicon';
+import Tooltip from 'primevue/tooltip';
 
 @Component({
   components: {
     InputText,
     IconField,
     InputIcon
+  },
+  directives: {
+    tooltip: Tooltip
   }
 })
 export default class Header extends Vue {
@@ -157,6 +181,15 @@ export default class Header extends Vue {
     return this.projectsForCurrentApp.filter(proj =>
       proj.name.toLowerCase().includes(this.searchTextProject.toLowerCase())
     );
+  }
+
+  /** The tenant the server resolved for this session, from the token's tenant claim */
+  get tenantId(): string | null {
+    return USER_STATE.connectedInfo?.participant?.tenantId ?? null;
+  }
+
+  get participantId(): string | null {
+    return USER_STATE.connectedInfo?.participant?.id ?? null;
   }
 
   get currentAppName() {

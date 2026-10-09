@@ -110,6 +110,8 @@ blunt, put a limiter in front of the writer client:
   it slowly when it recovers (additive increase, multiplicative decrease). Driving it from read
   latency protects reads directly, instead of relying on a number tuned once.
 - If one tenant turns out to use the whole budget, add per-tenant fairness.
+- Bulk items Elasticsearch rejects with a 429 reach clients as a 400 today. See "Give failed bulk
+  items the right status" below.
 
 #### Done: refresh settings for single writes
 
@@ -209,6 +211,58 @@ Follow-ups, not done yet:
     `bulkSave` writes it again every time. If a client mostly sends documents that haven't changed,
     `bulkUpdate` may be cheaper for it. The bulk response marks each skipped document as a `noop`,
     so counting those shows which case a client is in.
+- **Give failed bulk items the right status.** Found in the review of PR #26, not done yet.
+  `doPersistBulkLogic` fails a bulk call with a 409 `VersionConflictException` only when every
+  failed item was a version conflict. Any other failed item makes the whole call an
+  `IllegalArgumentException`, which REST answers with **400 Bad Request**. That includes items
+  Elasticsearch rejected under load (`429 es_rejected_execution_exception`), a `503`, and a call
+  that mixes conflicts with rejections. A client reads the 400 as bad data, so it neither retries
+  the throttled items nor re-reads the conflicted ones. This gets more likely under the write
+  pressure this plan is about. Base the status on the item statuses instead:
+  - **Only conflicts:** 409, as it is now.
+  - **Only client errors** (mapping or parse failures): 400.
+  - **Any 429 or 5xx:** a retryable status, 429 or 503, with the failed item ids listed so the
+    client resends just those.
+
+  This fits with step 2 (chunks report their errors together at the end) and step 3 (the limiter
+  reacts to the same 429s).
+- **Tell bulk callers which items failed.** Not done yet. A failed bulk call rejects with one
+  message that lists each distinct Elasticsearch reason, one per line. Callers can't get a list of
+  the failed items. The best they can do is parse ids out of that text, and that only works for
+  some failures:
+  - **Version conflict reasons** name the stored document id, e.g. `[kinotic-123]: version
+    conflict, ...`. On shared multi-tenant structures that id has the tenant prefixed.
+  - **Many other reasons, such as mapping errors, don't name the document.** Identical reasons are
+    listed once, so 50 items failing the same way show as one line.
+
+  The items that didn't fail are written either way, since Elasticsearch applies each bulk item on
+  its own. Keep listing every reason until this is done, because parsing them is the only option
+  callers have. Elasticsearch returns bulk results in request order, so each failure can be mapped
+  back to its position in the submitted array and to its entity id.
+
+  Over STOMP only the exception's message reaches the JS client. `EventBus` reads just the error
+  header, and Continuum's `ServiceExceptionWrapper` carries only the class, message and stack. So
+  the options are:
+  1. **A result instead of `void`** (preferred): bulk calls return something like
+     `{failures: [{index, id, status, reason}]}`. It works the same over STOMP, REST and Java
+     without changing Continuum. A call that partly failed would no longer reject, so callers that
+     ignore the result would miss failures. Ship it as new methods, or in a major version.
+  2. **A typed exception that carries the failures**: easy for the REST body, but over STOMP it
+     needs Continuum to serialize the extra fields and continuum-client-js to read them.
+  3. **JSON inside the message**: works on every transport today, but callers parse error text.
+     Avoid.
+
+  Do this together with the item above, so each failure also carries a status a client can act on.
+- **Keep Elasticsearch details out of single-write errors.** Found in the second review of PR #26,
+  not done yet. The async client hands back any status it isn't told to expect as the low-level
+  `ResponseException`. It does this for 429, 503 and 409 too (only 400-405 come back as typed
+  errors). That exception's message names the Elasticsearch host and request URI, for example
+  `method [POST], host [http://es-internal:9200], URI [/idx/_update/kinotic-1?...]`, and the caller
+  gets it unchanged. PR #26 fixed this for 409 only: `ElasticVersionConflicts` reads the reason from
+  the response body. A `save` or `update` rejected with a 429 or 503 still answers 500 with the
+  host and URI in its body. Fix it the same way for every `ResponseException`: build the message
+  from the body's `error.reason`, and pick the status from the response, so a 429 or 503 is
+  retryable as described above.
 
 ### Proposed settings
 
