@@ -8,6 +8,7 @@ import io.jsonwebtoken.security.Jwks;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.kinotic.continuum.api.exceptions.AuthenticationException;
 import org.kinotic.continuum.api.security.Participant;
 import org.kinotic.structures.auth.api.config.OidcSecurityServiceProperties;
 import org.kinotic.structures.auth.api.domain.OidcProvider;
@@ -127,6 +128,22 @@ class JwksResilienceTest {
     }
 
     @Test
+    void tokenFromTheIssuerOfADisabledProviderIsNotAllowed() throws Exception {
+        OidcSecurityServiceProperties properties = properties();
+        properties.getOidcProviders().getFirst().setEnabled(false);
+        OidcSecurityService securityService = new OidcSecurityService(properties, newService(properties));
+
+        // what the gateway sees, it reports an AuthenticationException's message and wraps anything else
+        Throwable error = securityService.authenticate(Map.of("authorization", "Bearer " + token(idp.issuer, "k1", keyPair1)))
+                                         .handle((participant, throwable) -> throwable)
+                                         .get(DEADLINE.toMillis(), TimeUnit.MILLISECONDS);
+
+        assertInstanceOf(AuthenticationException.class, error);
+        assertEquals("Issuer not allowed: " + idp.issuer, error.getMessage());
+        assertEquals(0, idp.totalHits(), "fetched from the issuer of a disabled provider");
+    }
+
+    @Test
     void discoveryDocumentWithoutJwksUriIsNotCached() throws Exception {
         // A misconfigured or half started IdP serves discovery without jwks_uri, then recovers
         idp.wellKnown = FakeIdp.ok(objectMapper.writeValueAsString(Map.of("issuer", idp.issuer)));
@@ -152,6 +169,44 @@ class JwksResilienceTest {
         Outcome<Jwk<? extends Key>> recovered = await(service.getKey(idp.issuer, "k1"));
 
         assertNull(recovered.error(), "the failed JWKS fetch was cached: " + recovered.error());
+    }
+
+    @Test
+    void failedFirstFetchIsRetriedAfterTheBackoff() throws Exception {
+        idp.jwks = FakeIdp.status(503);
+        OidcSecurityServiceProperties properties = properties().setJwksRetryBackoff(Duration.ofMillis(500));
+        DefaultJwksService service = newService(properties);
+
+        assertNotNull(await(service.getKey(idp.issuer, "k1")).error());
+        for (int i = 0; i < 10; i++) {
+            assertNotNull(await(service.getKey(idp.issuer, "k1")).error());
+        }
+        assertEquals(1, idp.jwksHits.get(), "lookups within the backoff fetched again");
+
+        idp.serveKeys(jwks(Map.of("k1", keyPair1)));
+        Thread.sleep(600);
+        Outcome<Jwk<? extends Key>> recovered = await(service.getKey(idp.issuer, "k1"));
+
+        assertNull(recovered.error(), "not retried after the backoff: " + recovered.error());
+    }
+
+    @Test
+    void burstOfTokensSignedWithARotatedKeyShareOneRefresh() throws Exception {
+        DefaultJwksService service = newService(properties());
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.jwks = FakeIdp.delayed(Duration.ofMillis(300), jwks(Map.of("k1", keyPair1, "k2", keyPair2)));
+        Thread.sleep(500); // past the refresh cooldown used by these tests
+        List<CompletableFuture<Jwk<? extends Key>>> futures = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            futures.add(service.getKey(idp.issuer, "k2"));
+        }
+
+        for (CompletableFuture<Jwk<? extends Key>> future : futures) {
+            Outcome<Jwk<? extends Key>> outcome = await(future);
+            assertNull(outcome.error(), "a token signed with the rotated key was rejected: " + outcome.error());
+        }
+        assertEquals(2, idp.jwksHits.get(), "JWKS fetches for the first load and one refresh");
     }
 
     @Test
@@ -257,7 +312,9 @@ class JwksResilienceTest {
                 .setOidcProviders(List.of(provider))
                 .setJwksConnectTimeout(Duration.ofSeconds(1))
                 .setJwksRequestTimeout(Duration.ofSeconds(2))
-                .setJwksRefreshCooldown(Duration.ofMillis(300));
+                .setJwksRefreshCooldown(Duration.ofMillis(300))
+                // tests of the backoff set their own, the others retry right away
+                .setJwksRetryBackoff(Duration.ZERO);
     }
 
     private DefaultJwksService newService(OidcSecurityServiceProperties properties) {

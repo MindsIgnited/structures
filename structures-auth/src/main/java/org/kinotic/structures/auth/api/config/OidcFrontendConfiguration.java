@@ -11,7 +11,8 @@ import org.kinotic.structures.auth.api.domain.OidcProvider;
  * <p>
  * This is an allow-list of what the frontend reads. Settings that only the backend uses, such as the
  * audience, required roles, roles claim path and JWKS fetch settings, are not sent, and a new setting is
- * not sent unless it is added here. Disabled providers are not sent either.
+ * not sent unless it is added here. Disabled providers are sent, with enabled false, since the frontend
+ * decides whether to offer basic auth from whether any providers are configured.
  */
 public record OidcFrontendConfiguration(boolean enabled,
                                         boolean debug,
@@ -22,7 +23,6 @@ public record OidcFrontendConfiguration(boolean enabled,
         List<Provider> providers = properties.getOidcProviders() == null
                 ? List.of()
                 : properties.getOidcProviders().stream()
-                            .filter(OidcProvider::isEnabled)
                             .map(Provider::from)
                             .toList();
         return new OidcFrontendConfiguration(properties.isEnabled(),

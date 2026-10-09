@@ -30,7 +30,8 @@ import lombok.experimental.Accessors;
  * - JWKS key sets are cached for 1 hour, and fetched again early when a token names an unknown key id,
  *   at most once per {@link #jwksRefreshCooldown}
  * - Well-known configurations are cached for 24 hours
- * - Failed fetches are never cached, and concurrent lookups share one fetch
+ * - Failed fetches are not cached; a failed refresh keeps the cached copy, and a failed first fetch is
+ *   retried after {@link #jwksRetryBackoff}. Concurrent lookups share one fetch
  * - Every fetch is bounded by {@link #jwksConnectTimeout} and {@link #jwksRequestTimeout}
  */
 @Getter
@@ -83,6 +84,12 @@ public class OidcSecurityServiceProperties {
      * Rotated keys are picked up, without letting each token with a made up key id cause a fetch.
      */
     private Duration jwksRefreshCooldown = Duration.ofSeconds(30);
+
+    /**
+     * After a discovery or JWKS fetch fails with nothing cached, how long lookups fail with that error before
+     * one fetches again. Limits the requests and log lines an unreachable provider causes.
+     */
+    private Duration jwksRetryBackoff = Duration.ofSeconds(5);
 
     /**
      * The enabled providers whose authority is exactly the given issuer. Both the key lookup and the

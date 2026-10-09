@@ -132,6 +132,18 @@ data:
   OIDC_SECURITY_SERVICE_ENABLED: "{{ .Values.oidc.enabled }}"
   OIDC_SECURITY_SERVICE_DEBUG: "{{ .Values.oidc.debug }}"
   OIDC_SECURITY_SERVICE_FRONTEND_CONFIGURATION_PATH: "{{ .Values.oidc.frontendConfigurationPath }}"
+  {{- if .Values.oidc.jwksConnectTimeout }}
+  OIDC_SECURITY_SERVICE_JWKS_CONNECT_TIMEOUT: "{{ .Values.oidc.jwksConnectTimeout }}"
+  {{- end }}
+  {{- if .Values.oidc.jwksRequestTimeout }}
+  OIDC_SECURITY_SERVICE_JWKS_REQUEST_TIMEOUT: "{{ .Values.oidc.jwksRequestTimeout }}"
+  {{- end }}
+  {{- if .Values.oidc.jwksRefreshCooldown }}
+  OIDC_SECURITY_SERVICE_JWKS_REFRESH_COOLDOWN: "{{ .Values.oidc.jwksRefreshCooldown }}"
+  {{- end }}
+  {{- if .Values.oidc.jwksRetryBackoff }}
+  OIDC_SECURITY_SERVICE_JWKS_RETRY_BACKOFF: "{{ .Values.oidc.jwksRetryBackoff }}"
+  {{- end }}
   {{- range $index,$value:= .Values.oidc.oidcProviders }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_PROVIDER: "{{ $value.provider }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_DISPLAY_NAME: "{{ $value.displayName }}"
@@ -140,6 +152,9 @@ data:
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_AUDIENCE: "{{ $value.audience }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_CLIENT_ID: "{{ $value.clientId }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_AUTHORITY: "{{ $value.authority }}"
+  {{- if $value.jwksUri }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_JWKS_URI: "{{ $value.jwksUri }}"
+  {{- end }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_REDIRECT_URI: "{{ $value.redirectUri }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_POST_LOGOUT_REDIRECT_URI: "{{ $value.postLogoutRedirectUri }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_SILENT_REDIRECT_URI: "{{ $value.silentRedirectUri }}"

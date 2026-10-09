@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 
 @Slf4j
@@ -71,8 +72,21 @@ public class OidcSecurityService implements SecurityService {
     }
 
     private CompletableFuture<Participant> verifyJwtToken(String token) {
-        return jwksService.getKeyFromToken(token)
-            .thenCompose(key -> validateTokenWithKey(token, key));
+        // Completed with the original error, not the CompletionException a dependent stage wraps it in, so the
+        // gateway sees an AuthenticationException as one and reports its message instead of a generic one
+        CompletableFuture<Participant> result = new CompletableFuture<>();
+        jwksService.getKeyFromToken(token)
+                   .thenCompose(key -> validateTokenWithKey(token, key))
+                   .whenComplete((participant, error) -> {
+                       if (error != null) {
+                           result.completeExceptionally(error instanceof CompletionException && error.getCause() != null
+                                                                ? error.getCause()
+                                                                : error);
+                       } else {
+                           result.complete(participant);
+                       }
+                   });
+        return result;
     }
 
     private CompletableFuture<Participant> validateTokenWithKey(String token, Jwk<? extends Key> jwk) {

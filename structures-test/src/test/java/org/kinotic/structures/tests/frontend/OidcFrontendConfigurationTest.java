@@ -62,7 +62,8 @@ class OidcFrontendConfigurationTest {
     }
 
     @Test
-    void disabledProvidersAreNotSerialized() {
+    void disabledProvidersAreStillSent() {
+        // the frontend offers basic auth only when no providers are configured, enabled or not
         OidcSecurityServiceProperties properties = new OidcSecurityServiceProperties()
                 .setEnabled(true)
                 .setOidcProviders(List.of(new OidcProvider().setEnabled(true).setProvider("on"),
@@ -70,7 +71,8 @@ class OidcFrontendConfigurationTest {
 
         List<OidcFrontendConfiguration.Provider> providers = OidcFrontendConfiguration.from(properties).oidcProviders();
 
-        assertEquals(List.of("on"), providers.stream().map(OidcFrontendConfiguration.Provider::provider).toList());
+        assertEquals(List.of("on", "off"), providers.stream().map(OidcFrontendConfiguration.Provider::provider).toList());
+        assertFalse(providers.get(1).enabled());
     }
 
     @Test

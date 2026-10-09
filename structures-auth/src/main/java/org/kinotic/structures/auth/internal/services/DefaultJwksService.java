@@ -11,11 +11,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 
 import javax.net.ssl.SSLException;
 
+import org.kinotic.continuum.api.exceptions.AuthenticationException;
 import org.kinotic.structures.auth.api.config.OidcSecurityServiceProperties;
 import org.kinotic.structures.auth.api.domain.OidcProvider;
 import org.kinotic.structures.auth.api.services.JwksService;
@@ -23,10 +27,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
+import com.github.benmanes.caffeine.cache.AsyncCacheLoader;
 import com.github.benmanes.caffeine.cache.AsyncLoadingCache;
 
 import io.jsonwebtoken.security.Jwk;
@@ -49,8 +55,10 @@ import reactor.netty.resources.ConnectionProvider;
  * are not cached, and concurrent lookups of the same document share one fetch.
  * <p>
  * Cached documents are refreshed rather than expired: once due, the next lookup starts a refresh and is served
- * the cached document meanwhile, and a failed refresh keeps it. So an IdP outage only fails lookups that need
- * something not already cached, such as a key id that is not in the cached key set.
+ * the cached document meanwhile, and a failed refresh keeps it until the next one is due. So an IdP outage only
+ * fails lookups that need something not already cached, such as a key id that is not in the cached key set.
+ * A load that fails, with nothing cached, is retried no sooner than
+ * {@link OidcSecurityServiceProperties#getJwksRetryBackoff()} later; lookups meanwhile fail with its error.
  */
 @Slf4j
 @Service
@@ -61,6 +69,8 @@ public class DefaultJwksService implements JwksService {
     // how long a key set may be served while every refresh fails, after which lookups need a successful fetch
     private static final Duration KEY_SET_MAX_STALENESS = Duration.ofHours(24);
     private static final Duration WELL_KNOWN_REFRESH = Duration.ofHours(24);
+    private static final String KEY_SET = "JWKS";
+    private static final String WELL_KNOWN = "OIDC discovery document";
 
     private final OidcSecurityServiceProperties properties;
     private final WebClient webClient;
@@ -69,10 +79,12 @@ public class DefaultJwksService implements JwksService {
     private final Parser<Jwk<?>> jwkParser;
     // keyed by JWKS url
     private final AsyncLoadingCache<String, KeySet> keySetCache;
-    // keyed by JWKS url, when an unknown key id last caused a refresh
-    private final Map<String, Long> lastUnknownKidRefreshNanos = new ConcurrentHashMap<>();
+    // keyed by JWKS url, the refresh an unknown key id last started
+    private final Map<String, UnknownKidRefresh> unknownKidRefreshes = new ConcurrentHashMap<>();
     // keyed by issuer
     private final AsyncLoadingCache<String, JsonNode> wellKnownCache;
+    // keyed by description and cache key, the last load that failed
+    private final Map<String, FailedLoad> failedLoads = new ConcurrentHashMap<>();
 
     public DefaultJwksService(DefaultCaffeineCacheFactory cacheFactory, OidcSecurityServiceProperties properties) {
         this.properties = properties;
@@ -81,21 +93,60 @@ public class DefaultJwksService implements JwksService {
         this.objectMapper = JsonMapper.builder().build();
         this.jwkParser = Jwks.parser().build();
 
-        // A failed load completes its future exceptionally, and Caffeine drops those, so failures are not cached.
-        // Caffeine also logs each failed load and refresh, with the cause, so fetchJson does not log them again.
+        // KEY_SET_MAX_STALENESS is checked in getKey, since a failed refresh keeping the old set resets its write time
         this.keySetCache = cacheFactory.<String, KeySet>newBuilder()
                 .name("jwksKeySetCache")
                 .refreshAfterWrite(KEY_SET_REFRESH)
-                .expireAfterWrite(KEY_SET_MAX_STALENESS)
                 .maximumSize(100)
-                .buildAsync((jwksUrl, executor) -> fetchKeySet(jwksUrl));
+                .buildAsync(loader(KEY_SET, this::fetchKeySet));
 
         // Only issuers of enabled providers are ever loaded, so entries do not need to expire
         this.wellKnownCache = cacheFactory.<String, JsonNode>newBuilder()
                 .name("jwksWellKnownCache")
                 .refreshAfterWrite(WELL_KNOWN_REFRESH)
                 .maximumSize(100)
-                .buildAsync((issuer, executor) -> fetchWellKnownConfiguration(issuer));
+                .buildAsync(loader(WELL_KNOWN, this::fetchWellKnownConfiguration));
+    }
+
+    /**
+     * A failed load completes exceptionally, which Caffeine does not cache, and logs with its cause, and is
+     * remembered for {@link #getCached}. A failed refresh keeps the cached value, until the next refresh is due.
+     */
+    private <V> AsyncCacheLoader<String, V> loader(String description, Function<String, CompletableFuture<V>> fetch) {
+        return new AsyncCacheLoader<>() {
+            @Override
+            public CompletableFuture<V> asyncLoad(String key, Executor executor) {
+                String failureKey = description + " " + key;
+                return fetch.apply(key).whenComplete((value, error) -> {
+                    if (error != null) {
+                        failedLoads.put(failureKey, new FailedLoad(System.nanoTime(), unwrap(error)));
+                    } else {
+                        failedLoads.remove(failureKey);
+                    }
+                });
+            }
+
+            @Override
+            public CompletableFuture<V> asyncReload(String key, V oldValue, Executor executor) {
+                return fetch.apply(key).exceptionally(error -> {
+                    log.warn("Keeping the cached {} for {}, refreshing it failed: {}", description, key, unwrap(error).getMessage());
+                    return oldValue;
+                });
+            }
+        };
+    }
+
+    /**
+     * The cached value, loading it if absent, unless the last load of it failed within the retry backoff
+     */
+    private <V> CompletableFuture<V> getCached(AsyncLoadingCache<String, V> cache, String description, String key) {
+        FailedLoad failed = failedLoads.get(description + " " + key);
+        if (failed != null
+                && System.nanoTime() - failed.atNanos() < properties.getJwksRetryBackoff().toNanos()
+                && cache.getIfPresent(key) == null) {
+            return CompletableFuture.failedFuture(failed.error());
+        }
+        return cache.get(key);
     }
 
     /**
@@ -147,12 +198,12 @@ public class DefaultJwksService implements JwksService {
             return CompletableFuture.failedFuture(notConfigured(issuer));
         }
         // copy, so a caller cannot complete or cancel the future that is shared through the cache
-        return wellKnownCache.get(issuer).copy();
+        return getCached(wellKnownCache, WELL_KNOWN, issuer).copy();
     }
 
     private CompletableFuture<JsonNode> fetchWellKnownConfiguration(String issuer) {
-        String wellKnownUrl = stripTrailingSlash(issuer) + "/.well-known/openid-configuration";
-        return fetchJson(wellKnownUrl, "OIDC discovery document")
+        String wellKnownUrl = StringUtils.trimTrailingCharacter(issuer, '/') + "/.well-known/openid-configuration";
+        return fetchJson(wellKnownUrl, WELL_KNOWN)
                 .thenApply(config -> {
                     // Checked before the document is cached, so a broken document is fetched again next time
                     JsonNode jwksUri = config.get("jwks_uri");
@@ -184,7 +235,7 @@ public class DefaultJwksService implements JwksService {
         if (configured.isPresent()) {
             return CompletableFuture.completedFuture(configured.get());
         }
-        return getWellKnownConfiguration(issuer).thenApply(config -> config.get("jwks_uri").asString());
+        return getCached(wellKnownCache, WELL_KNOWN, issuer).thenApply(config -> config.get("jwks_uri").asString());
     }
 
     /**
@@ -194,44 +245,56 @@ public class DefaultJwksService implements JwksService {
         if (kid == null) {
             return CompletableFuture.failedFuture(new JwksFetchException("No key id (kid) given for issuer: " + issuer));
         }
-        return getJwksUrl(issuer).thenCompose(jwksUrl -> keySetCache.get(jwksUrl).thenCompose(keySet -> {
-            Jwk<? extends Key> jwk = keySet.keys().get(kid);
-            if (jwk != null) {
-                return CompletableFuture.completedFuture(jwk);
-            }
-            if (!unknownKidMayRefresh(jwksUrl, keySet)) {
-                return CompletableFuture.failedFuture(keyNotFound(issuer, kid));
-            }
-            // The provider may have rotated its keys. Concurrent refreshes of one key set share a fetch, the
-            // cached set keeps serving other lookups meanwhile, and stays cached if the refresh fails.
-            return keySetCache.synchronous().refresh(jwksUrl).thenCompose(refreshed -> {
-                Jwk<? extends Key> rotated = refreshed.keys().get(kid);
-                return rotated != null
-                        ? CompletableFuture.completedFuture(rotated)
-                        : CompletableFuture.failedFuture(keyNotFound(issuer, kid));
+        return getJwksUrl(issuer).thenCompose(jwksUrl -> {
+            CompletableFuture<KeySet> cached = getCached(keySetCache, KEY_SET, jwksUrl);
+            return cached.thenCompose(keySet -> {
+                if (System.nanoTime() - keySet.fetchedAtNanos() > KEY_SET_MAX_STALENESS.toNanos()) {
+                    // Every refresh has failed for too long. Replace the set, unless a concurrent lookup already
+                    // has, in which case this joins that load.
+                    keySetCache.asMap().remove(jwksUrl, cached);
+                    return getCached(keySetCache, KEY_SET, jwksUrl).thenCompose(fresh -> findKey(issuer, kid, jwksUrl, fresh));
+                }
+                return findKey(issuer, kid, jwksUrl, keySet);
             });
-        }));
+        });
+    }
+
+    private CompletableFuture<Jwk<? extends Key>> findKey(String issuer, String kid, String jwksUrl, KeySet keySet) {
+        Jwk<? extends Key> jwk = keySet.keys().get(kid);
+        if (jwk != null) {
+            return CompletableFuture.completedFuture(jwk);
+        }
+        CompletableFuture<KeySet> refresh = refreshForUnknownKid(jwksUrl, keySet);
+        if (refresh == null) {
+            return CompletableFuture.failedFuture(keyNotFound(issuer, kid));
+        }
+        return refresh.thenCompose(refreshed -> {
+            Jwk<? extends Key> rotated = refreshed.keys().get(kid);
+            return rotated != null
+                    ? CompletableFuture.completedFuture(rotated)
+                    : CompletableFuture.failedFuture(keyNotFound(issuer, kid));
+        });
     }
 
     /**
-     * An unknown key id refreshes a key set at most once per cooldown, counted from the last fetch of the set
-     * or the last refresh an unknown key id started, whichever is later, so failed refreshes are limited too
+     * The provider may have rotated its keys, so an unknown key id refreshes the key set, at most once per
+     * cooldown, and not when the set was fetched within the cooldown. Lookups within the cooldown of a refresh
+     * use that refresh, so a burst of tokens signed with a new key all wait on the one fetch. The cached set
+     * keeps serving known key ids meanwhile, and stays cached if the refresh fails.
+     *
+     * @return the refresh to look the key id up in, or null when the key set may not be refreshed yet
      */
-    private boolean unknownKidMayRefresh(String jwksUrl, KeySet keySet) {
-        long cooldownNanos = properties.getJwksRefreshCooldown().toNanos();
+    private CompletableFuture<KeySet> refreshForUnknownKid(String jwksUrl, KeySet keySet) {
+        long cooldown = properties.getJwksRefreshCooldown().toNanos();
         long now = System.nanoTime();
-        if (now - keySet.fetchedAtNanos() < cooldownNanos) {
-            return false;
-        }
-        boolean[] allowed = {false};
-        lastUnknownKidRefreshNanos.compute(jwksUrl, (url, last) -> {
-            if (last == null || now - last >= cooldownNanos) {
-                allowed[0] = true;
-                return now;
+        UnknownKidRefresh refresh = unknownKidRefreshes.compute(jwksUrl, (url, last) -> {
+            if ((last != null && now - last.startedNanos() < cooldown) || now - keySet.fetchedAtNanos() < cooldown) {
+                return last;
             }
-            return last;
+            return new UnknownKidRefresh(now, keySetCache.synchronous().refresh(url));
         });
-        return allowed[0];
+        // started after now (by a concurrent lookup) is fine too, the difference is then negative
+        return refresh != null && now - refresh.startedNanos() < cooldown ? refresh.future() : null;
     }
 
     private CompletableFuture<KeySet> fetchKeySet(String jwksUrl) {
@@ -323,20 +386,26 @@ public class DefaultJwksService implements JwksService {
     public void clearCaches() {
         keySetCache.synchronous().invalidateAll();
         wellKnownCache.synchronous().invalidateAll();
-        lastUnknownKidRefreshNanos.clear();
+        unknownKidRefreshes.clear();
+        failedLoads.clear();
     }
 
-    private static JwksFetchException notConfigured(String issuer) {
+    /**
+     * The issuer is not the authority of any enabled provider, either none is configured for it or it is
+     * disabled. An {@link AuthenticationException}, so the gateway reports this message to the client.
+     */
+    private static AuthenticationException notConfigured(String issuer) {
         log.warn("Rejecting token from issuer {}, no enabled OIDC provider has it as its authority", issuer);
-        return new JwksFetchException("No enabled OIDC provider configured for issuer: " + issuer);
+        return new AuthenticationException("Issuer not allowed: " + issuer);
     }
 
     private static JwksFetchException keyNotFound(String issuer, String kid) {
+        log.warn("Rejecting token from issuer {}, its key id {} is not in the issuer's JWKS", issuer, kid);
         return new JwksFetchException("Key with kid '" + kid + "' not found in JWKS for issuer: " + issuer);
     }
 
-    private static String stripTrailingSlash(String value) {
-        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    private static Throwable unwrap(Throwable error) {
+        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
     }
 
     private record KeySet(Map<String, Jwk<? extends Key>> keys, long fetchedAtNanos) {
@@ -345,6 +414,10 @@ public class DefaultJwksService implements JwksService {
             return "KeySet" + keys.keySet();
         }
     }
+
+    private record UnknownKidRefresh(long startedNanos, CompletableFuture<KeySet> future) {}
+
+    private record FailedLoad(long atNanos, Throwable error) {}
 
     private static class JwksFetchException extends RuntimeException {
         JwksFetchException(String message) {

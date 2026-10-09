@@ -154,6 +154,10 @@ oidc-security-service:
 | `tenant-id-field-name` | string | `"tenantId"` | JWT claim field name for tenant ID |
 | `frontend-configuration-path` | string | `"/app-config.override.json"` | Path for frontend configuration overrides |
 | `oidc-providers` | array | `[]` | List of OIDC provider configurations |
+| `jwks-connect-timeout` | duration | `5s` | TCP connect timeout for discovery and JWKS fetches |
+| `jwks-request-timeout` | duration | `10s` | End-to-end timeout for one discovery or JWKS fetch |
+| `jwks-refresh-cooldown` | duration | `30s` | Minimum time between key set refreshes caused by tokens with an unknown key id |
+| `jwks-retry-backoff` | duration | `5s` | After a fetch fails with nothing cached, how long lookups fail with that error before one fetches again |
 
 #### OIDC Provider Properties
 
@@ -164,6 +168,7 @@ oidc-security-service:
 | `enabled` | boolean | Yes | Enable/disable this specific provider |
 | `client-id` | string | Yes | OAuth client ID from the provider |
 | `authority` | string | Yes | OIDC issuer authority URL |
+| `jwks-uri` | string | No | JWKS endpoint to fetch keys from instead of the authority's discovery document, e.g. an in-cluster IdP URL. Not sent to the frontend. |
 | `redirect-uri` | string | Yes | OAuth redirect URI after authentication |
 | `post-logout-redirect-uri` | string | Yes | Redirect URI after logout |
 | `silent-redirect-uri` | string | Yes | URI for silent token renewal |
@@ -234,7 +239,7 @@ This lets a single Okta tenant (one `authority`) split across multiple providers
 
 ### 5. **Frontend Integration**
 - Serves configuration overrides at `/app-config.override.json`, unauthenticated, so it holds only what the
-  frontend reads: enabled providers' `provider`, `display-name`, `client-id`, `authority`, redirect URIs,
+  frontend reads: each provider's `enabled`, `provider`, `display-name`, `client-id`, `authority`, redirect URIs,
   `domains`, `front-end-roles`, `additional-scopes` and `metadata`. Backend-only settings such as `audience`,
   `roles`, `roles-claim-path`, `allow-any-domain`, `jwks-uri` and `tenant-id-field-name` are not sent
   (see `OidcFrontendConfiguration`)

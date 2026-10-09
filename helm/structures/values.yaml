@@ -126,6 +126,11 @@ oidc:
   enabled: false
   debug: true
   frontendConfigurationPath: "/app-config.override.json"
+  # Bounds on discovery and JWKS fetches, leave unset for the defaults (5s, 10s, 30s, 5s)
+  # jwksConnectTimeout: "5s"
+  # jwksRequestTimeout: "10s"
+  # jwksRefreshCooldown: "30s"
+  # jwksRetryBackoff: "5s"
   oidcProviders:
     - provider: "keycloak"
       displayName: "Keycloak"
@@ -138,6 +143,9 @@ oidc:
       audience: "structures-client"
       clientId: "structures-client"
       authority: "http://keycloak:8888/auth/realms/test"
+      # Optional: fetch keys from here instead of the authority's discovery document,
+      # e.g. an in-cluster service URL when the authority's public URL is not reachable from the pods
+      # jwksUri: "http://keycloak.auth.svc:8080/realms/test/protocol/openid-connect/certs"
       redirectUri: "http://localhost:9090/login"
       postLogoutRedirectUri: "http://localhost:9090"
       silentRedirectUri: "http://localhost:9090/login/silent-renew"

@@ -649,8 +649,8 @@ Keys are only ever fetched for an issuer that matches the `authority` of an enab
 other issuer is rejected before anything is fetched.
 
 Cached documents are refreshed rather than expired. Once one is due, the next lookup starts a refresh in the
-background and is served the cached document meanwhile, and a failed refresh keeps it. An IdP outage therefore
-only fails lookups that need something not already cached.
+background and is served the cached document meanwhile, and a failed refresh keeps it until the next refresh is
+due. An IdP outage therefore only fails lookups that need something not already cached.
 
 ### JWKS Key Set Cache
 - **Refresh**: after 1 hour
@@ -658,8 +658,9 @@ only fails lookups that need something not already cached.
 - **Max Size**: 100 key sets
 - **Purpose**: Cache each provider's key set by JWKS URL
 - **Key rotation**: a token with a key id that is not in the cached set causes the set to be fetched again, at
-  most once per `jwks-refresh-cooldown` (30 seconds by default). A token signed with a newly rotated key can
-  therefore be rejected for up to that long after the last fetch
+  most once per `jwks-refresh-cooldown` (30 seconds by default). Tokens that arrive while that refresh runs, or
+  within the cooldown after it, use its result, so a burst of tokens signed with a new key shares one fetch. A
+  token signed with a newly rotated key can be rejected for up to the cooldown after a fetch that predates it
 
 ### Well-known Configuration Cache
 - **Refresh**: after 24 hours
@@ -668,7 +669,9 @@ only fails lookups that need something not already cached.
 - A document without a `jwks_uri` is treated as a failure and not cached
 
 ### Failures and Timeouts
-- Failed fetches, empty key sets and broken discovery documents are never cached, so recovery is immediate
+- Failed fetches, empty key sets and broken discovery documents are never cached. With nothing cached, lookups
+  fail with the last error for `jwks-retry-backoff` (5 seconds by default) before one fetches again, which
+  bounds the requests and log lines an unreachable provider causes
 - Concurrent lookups of the same document share one fetch
 - Fetches do not reuse pooled connections, so a connection silently dropped by a NAT or load balancer cannot
   stall a fetch until TCP gives up (around 15 minutes on Linux)
@@ -678,7 +681,8 @@ only fails lookups that need something not already cached.
 oidc-security-service:
   jwks-connect-timeout: 5s   # TCP connect to the provider
   jwks-request-timeout: 10s  # one discovery or JWKS fetch, end to end
-  jwks-refresh-cooldown: 30s # minimum age of a key set before an unknown key id refetches it
+  jwks-refresh-cooldown: 30s # minimum time between refreshes caused by unknown key ids
+  jwks-retry-backoff: 5s     # after a failed fetch with nothing cached, wait this long before fetching again
 ```
 
 ### Fetching keys from a different URL
