@@ -141,7 +141,7 @@ public class ReadPreProcessor {
     public Query.Builder createQueryWithTenantLogic(Structure structure, EntityContext context, Consumer<String> routingConsumer) {
         Query.Builder queryBuilder = null;
         // add multi tenancy filters if needed
-        if(structure.getMultiTenancyType() == MultiTenancyType.SHARED){
+        if(structure.getMultiTenancyType() == MultiTenancyType.SHARED && !context.selectsAllTenants()){
 
             // Check if multiple tenants are selected if not use the logged-in user's tenant
             if(context.hasTenantSelection()) {
@@ -176,7 +176,7 @@ public class ReadPreProcessor {
         if(searchText != null){
             queryBuilder = new Query.Builder();
             // add multi tenancy filters if needed
-            if(structure.getMultiTenancyType() == MultiTenancyType.SHARED){
+            if(structure.getMultiTenancyType() == MultiTenancyType.SHARED && !context.selectsAllTenants()){
 
                 // Check if multiple tenants are selected if not use the logged-in user's tenant
                 if(context.hasTenantSelection()) {
