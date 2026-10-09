@@ -81,4 +81,21 @@ describe('Versioned OpenApi Tests', () => {
         }
     )
 
+    it<LocalTestContext>(
+        'Bulk update with a stale version answers 409',
+        async () => {
+            const url = `${inject('STRUCTURES_OPENAPI_BASE_URL')}/api/openapi.versioned/vehicle`
+
+            const first = (await axiosInstance.post(url, createTestVehicle())).data
+            const second = (await axiosInstance.post(url, createTestVehicle())).data
+            expect((await axiosInstance.post(`${url}/update`, {...first, color: 'Grey'})).status).toBe(200)
+
+            // first still carries the version from before the update above
+            const response = await axiosInstance.post(`${url}/bulk-update`,
+                                                      [{...first, color: 'Blue'}, {...second, color: 'Blue'}])
+            expect(response.status).toBe(409)
+            expect(response.data.error).toMatch(/^Version conflict writing Vehicle, 1 of 2 items were not written:\n.*version conflict/)
+        }
+    )
+
 })
