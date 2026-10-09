@@ -131,7 +131,8 @@ oidc:
   # Bounds on discovery and JWKS fetches, leave unset for the defaults. Durations need a unit, like 5s
   # jwksConnectTimeout: "5s"
   # jwksRequestTimeout: "10s"
-  # How often each key set is refreshed. Rotate keys by publishing the new one at least this long before use
+  # How often each key set and discovery document is refreshed. Rotate keys by publishing the new one at
+  # least this long before use
   # jwksRefreshInterval: "1h"
   # Unset keeps the last fetched keys through an IdP outage. Set, e.g. "24h", logins fail once the keys are
   # that old and the IdP still cannot be reached

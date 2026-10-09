@@ -334,6 +334,34 @@ class JwksResilienceTest {
         awaitHits(idp.jwksHits, 3);
     }
 
+    @Test
+    void oneLookupRefreshesTheDiscoveryDocumentAndKeySetTogether() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(300));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        Thread.sleep(350);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error()); // served the cached copies of both
+
+        awaitHits(idp.wellKnownHits, 2);
+        awaitHits(idp.jwksHits, 2);
+    }
+
+    @Test
+    void failedDiscoveryRefreshKeepsTheDocumentAndKeysWorking() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(300));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.wellKnown = FakeIdp.status(503);
+        for (int i = 0; i < 3; i++) {
+            Thread.sleep(350);
+            Outcome<Jwk<? extends Key>> outcome = await(service.getKey(idp.issuer, "k1"));
+            assertNull(outcome.error(), "a failed discovery refresh broke key lookups: " + outcome.error());
+        }
+        assertTrue(idp.wellKnownHits.get() > 1, "the discovery document was never refreshed");
+    }
+
     // --- Key rotation --------------------------------------------------------------------------------------------
 
     @Test

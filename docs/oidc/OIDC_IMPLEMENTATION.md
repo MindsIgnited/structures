@@ -701,7 +701,11 @@ Publish a new key before signing with it, and every pod picks it up in a routine
 Without that, a rotation is still picked up through the unknown key id refresh, at the cost of one fetch.
 
 ### Well-known Configuration Cache
-- **Refresh**: every 24 hours; a failed refresh keeps the cached document
+- **Refresh**: every `jwks-refresh-interval`, like key sets; a failed refresh keeps the cached document, and
+  there is no maximum age
+- A lookup that finds both due refreshes both. The two run independently, neither waits for the other, and
+  the lookup is served the cached copies of both. The key set refresh uses the JWKS URL from the cached
+  document; a changed `jwks_uri` is used from the first lookup after the discovery refresh completes
 - **Max Size**: 100 configurations
 - **Purpose**: Cache OIDC provider discovery documents, for their `jwks_uri`
 - A document without a `jwks_uri` is treated as a failure and not cached
@@ -720,7 +724,7 @@ Without that, a rotation is still picked up through the unknown key id refresh, 
 oidc-security-service:
   jwks-connect-timeout: 5s   # TCP connect to the provider
   jwks-request-timeout: 10s  # one discovery or JWKS fetch, end to end
-  jwks-refresh-interval: 1h  # how often each key set is refreshed
+  jwks-refresh-interval: 1h  # how often each key set and discovery document is refreshed
   jwks-max-staleness:        # unset: keep the last fetched keys through an outage; e.g. 24h to cap it
   jwks-refresh-cooldown: 30s # minimum time between refreshes caused by unknown key ids
   jwks-retry-backoff: 5s     # after a failed fetch with nothing cached, wait this long before fetching again

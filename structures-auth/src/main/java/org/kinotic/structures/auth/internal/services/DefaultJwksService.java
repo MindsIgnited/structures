@@ -65,7 +65,6 @@ import reactor.netty.resources.ConnectionProvider;
 @ConditionalOnProperty(prefix = "oidc-security-service", name = "enabled", havingValue = "true", matchIfMissing = false)
 public class DefaultJwksService implements JwksService {
 
-    private static final Duration WELL_KNOWN_REFRESH = Duration.ofHours(24);
     private static final int MAX_LOGGED_CLAIM_LENGTH = 200;
     private static final String KEY_SET = "JWKS";
     private static final String WELL_KNOWN = "OIDC discovery document";
@@ -109,10 +108,11 @@ public class DefaultJwksService implements JwksService {
                 .maximumSize(100)
                 .buildAsync(loader(KEY_SET, this::fetchKeySet));
 
-        // Only issuers of enabled providers are ever loaded, so entries do not need to expire
+        // Only issuers of enabled providers are ever loaded, so entries do not need to expire. Refreshed on the
+        // same interval as key sets, so one lookup usually refreshes both, independently of each other.
         this.wellKnownCache = cacheFactory.<String, JsonNode>newBuilder()
                 .name("jwksWellKnownCache")
-                .refreshAfterWrite(WELL_KNOWN_REFRESH)
+                .refreshAfterWrite(properties.getJwksRefreshInterval())
                 .maximumSize(100)
                 .buildAsync(loader(WELL_KNOWN, this::fetchWellKnownConfiguration));
     }

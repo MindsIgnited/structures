@@ -30,7 +30,7 @@ import lombok.experimental.Accessors;
  * - JWKS key sets are refreshed every {@link #jwksRefreshInterval}, and early when a token names an unknown
  *   key id, at most once per {@link #jwksRefreshCooldown}. Through an outage the last fetched keys keep being
  *   used, for at most {@link #jwksMaxStaleness} when that is set
- * - Well-known configurations are cached for 24 hours
+ * - Well-known configurations are refreshed every {@link #jwksRefreshInterval} too, and kept if that fails
  * - Failed fetches are not cached; a failed refresh keeps the cached copy, and a failed first fetch is
  *   retried after {@link #jwksRetryBackoff}. Concurrent lookups share one fetch
  * - Every fetch is bounded by {@link #jwksConnectTimeout} and {@link #jwksRequestTimeout}
@@ -81,9 +81,10 @@ public class OidcSecurityServiceProperties {
     private Duration jwksRequestTimeout = Duration.ofSeconds(10);
 
     /**
-     * How often each cached key set is refreshed. The refresh starts on the first lookup after this has passed,
-     * which is served the cached set meanwhile. A failed refresh keeps the cached set, and is retried after this
-     * passes again. Keys an IdP publishes ahead of using them are picked up within this interval.
+     * How often each cached key set, and each provider's discovery document, is refreshed. The refresh starts on
+     * the first lookup after this has passed, which is served the cached copy meanwhile. A failed refresh keeps
+     * the cached copy, and is retried after this passes again. Keys an IdP publishes ahead of using them are
+     * picked up within this interval.
      */
     private Duration jwksRefreshInterval = Duration.ofHours(1);
 
