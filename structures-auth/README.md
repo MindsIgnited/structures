@@ -156,6 +156,8 @@ oidc-security-service:
 | `oidc-providers` | array | `[]` | List of OIDC provider configurations |
 | `jwks-connect-timeout` | duration | `5s` | TCP connect timeout for discovery and JWKS fetches |
 | `jwks-request-timeout` | duration | `10s` | End-to-end timeout for one discovery or JWKS fetch |
+| `jwks-refresh-interval` | duration | `1h` | How often each key set is refreshed; a failed refresh keeps the cached keys |
+| `jwks-max-staleness` | duration | unset | How long the last fetched keys may be used while every refresh fails. Unset, they are used for as long as an outage lasts |
 | `jwks-refresh-cooldown` | duration | `30s` | Minimum time between key set refreshes caused by tokens with an unknown key id |
 | `jwks-retry-backoff` | duration | `5s` | After a fetch fails with nothing cached, how long lookups fail with that error before one fetches again |
 

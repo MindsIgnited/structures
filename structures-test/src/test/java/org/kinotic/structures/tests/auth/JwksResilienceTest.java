@@ -258,6 +258,97 @@ class JwksResilienceTest {
         assertNull(afterFailedRefresh.error(), "the failed refresh dropped the cached keys: " + afterFailedRefresh.error());
     }
 
+    // --- An IdP outage: the last fetched keys keep working ------------------------------------------------------
+
+    @Test
+    void keysAreKeptThroughAnOutageByDefault() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(200));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.jwks = FakeIdp.status(503);
+        for (int i = 0; i < 5; i++) {
+            Thread.sleep(250); // past the refresh interval, so each lookup starts a refresh that fails
+            Outcome<Jwk<? extends Key>> outcome = await(service.getKey(idp.issuer, "k1"));
+            assertNull(outcome.error(), "a cached key stopped working during the outage: " + outcome.error());
+        }
+        assertTrue(idp.jwksHits.get() > 1, "no refresh was attempted during the outage");
+    }
+
+    @Test
+    void maxStalenessStopsUsingKeysWhenSet() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(100))
+                                                               .setJwksMaxStaleness(Duration.ofMillis(600));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.jwks = FakeIdp.status(503);
+        Thread.sleep(300);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error(), "keys within the max staleness were not used");
+
+        Thread.sleep(400); // the keys are now 700 ms old
+        Outcome<Jwk<? extends Key>> stale = await(service.getKey(idp.issuer, "k1"));
+        assertNotNull(stale.error(), "keys older than the max staleness were still used");
+        assertTrue(stale.error().getMessage().contains("503"), stale.error().getMessage());
+
+        idp.serveKeys(jwks(Map.of("k1", keyPair1)));
+        assertNull(await(service.getKey(idp.issuer, "k1")).error(), "not recovered once the IdP was back");
+    }
+
+    // --- A failed routine refresh: keys kept, retried after the interval, not on every lookup -------------------
+
+    @Test
+    void failedRoutineRefreshIsRetriedAfterTheIntervalNotOnEveryLookup() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(300));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.jwks = FakeIdp.status(503);
+        Thread.sleep(350);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error()); // starts the refresh, served the cached keys
+        awaitHits(idp.jwksHits, 2);
+
+        for (int i = 0; i < 10; i++) {
+            assertNull(await(service.getKey(idp.issuer, "k1")).error());
+        }
+        assertEquals(2, idp.jwksHits.get(), "lookups after a failed refresh fetched again before the interval");
+
+        Thread.sleep(350);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+        awaitHits(idp.jwksHits, 3);
+    }
+
+    // --- Key rotation --------------------------------------------------------------------------------------------
+
+    @Test
+    void routineRefreshPicksUpKeysPublishedAheadOfUse() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(300));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        // like a Keycloak key added as passive: published, not yet used for signing
+        idp.serveKeys(jwks(Map.of("k1", keyPair1, "k2", keyPair2)));
+        Thread.sleep(350);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error()); // starts the routine refresh
+        awaitHits(idp.jwksHits, 2);
+
+        Outcome<Jwk<? extends Key>> rotated = await(service.getKey(idp.issuer, "k2"));
+        assertNull(rotated.error(), "the published key was not picked up: " + rotated.error());
+        assertEquals(2, idp.jwksHits.get(), "the published key needed a fetch of its own");
+    }
+
+    @Test
+    void rotationJustAfterARoutineFetchIsPickedUp() {
+        DefaultJwksService service = newService(properties());
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        // rotated right after the fetch above, well within the refresh cooldown
+        idp.serveKeys(jwks(Map.of("k1", keyPair1, "k2", keyPair2)));
+        Outcome<Jwk<? extends Key>> rotated = await(service.getKey(idp.issuer, "k2"));
+
+        assertNull(rotated.error(), "a key rotated just after a routine fetch was rejected: " + rotated.error());
+    }
+
     @Test
     void rotatedKeyIsPickedUp() throws Exception {
         DefaultJwksService service = newService(properties());
@@ -379,6 +470,14 @@ class JwksResilienceTest {
                    .expiration(new Date(System.currentTimeMillis() + 300_000))
                    .signWith(keyPair.getPrivate())
                    .compact();
+    }
+
+    private static void awaitHits(AtomicInteger hits, int expected) throws InterruptedException {
+        long deadline = System.nanoTime() + DEADLINE.toNanos();
+        while (hits.get() < expected && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        assertEquals(expected, hits.get(), "fetches");
     }
 
     private static <T> Outcome<T> await(CompletableFuture<T> future) {

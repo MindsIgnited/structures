@@ -646,27 +646,66 @@ oidc-security-service:
 ## Caching Strategy
 
 Keys are only ever fetched for an issuer that matches the `authority` of an enabled provider. A token from any
-other issuer is rejected before anything is fetched.
+other issuer, or from a disabled provider's issuer, is rejected with `Issuer not allowed` before anything is
+fetched.
 
 Cached documents are refreshed rather than expired. Once one is due, the next lookup starts a refresh in the
-background and is served the cached document meanwhile, and a failed refresh keeps it until the next refresh is
-due. An IdP outage therefore only fails lookups that need something not already cached.
+background and is served the cached document meanwhile. A failed refresh keeps the cached document. An IdP
+outage, or a network problem between Structures and the IdP, therefore only fails lookups that need something
+not already cached.
 
 ### JWKS Key Set Cache
-- **Refresh**: after 1 hour
-- **Max staleness**: 24 hours, while every refresh fails
-- **Max Size**: 100 key sets
-- **Purpose**: Cache each provider's key set by JWKS URL
-- **Key rotation**: a token with a key id that is not in the cached set causes the set to be fetched again, at
-  most once per `jwks-refresh-cooldown` (30 seconds by default). Tokens that arrive while that refresh runs, or
-  within the cooldown after it, use its result, so a burst of tokens signed with a new key shares one fetch. A
-  token signed with a newly rotated key can be rejected for up to the cooldown after a fetch that predates it
+
+The key set of each provider is cached by JWKS URL, at most 100 of them. How it behaves in each situation:
+
+| Situation | What happens |
+|---|---|
+| Normal operation | The set is refreshed every `jwks-refresh-interval` (1 hour by default). The lookup that starts the refresh is served the cached set, so no login waits on it. |
+| A refresh fails | The cached set is kept and logged at warn with its age. The next refresh is attempted once `jwks-refresh-interval` passes again, not on every lookup. |
+| A long IdP outage | The last fetched keys keep working for as long as the outage lasts. Set `jwks-max-staleness` to cap that, counted from the last successful fetch; after it, logins fail until the IdP is reachable. |
+| A token names an unknown key id | The provider may have rotated its keys, so the set is fetched again, at most once per `jwks-refresh-cooldown` (30 seconds by default). Tokens that arrive while that refresh runs, or within the cooldown after it, use its result, so a burst of tokens signed with a new key shares one fetch. |
+| Keys published ahead of use | Picked up by the next routine refresh, so no token waits on a fetch. |
+| A refresh for an unknown key id fails | The token is rejected with the fetch error, `Could not refresh the JWKS to find key id ...`. Tokens with known key ids keep working. |
+
+The cooldown counts only from refreshes that unknown key ids started, so a rotation just after a routine refresh
+is still picked up. A token signed with a rotated key is rejected only if it arrives within the cooldown after
+an unknown key id refresh that ran before the rotation.
+
+#### How this compares to other libraries
+
+Libraries differ mainly in what they do when a refresh fails while keys are cached:
+
+| Library | Routine refresh | Refresh fails while keys are cached | Unknown key id |
+|---|---|---|---|
+| Spring Security `NimbusJwtDecoder` (default) | Cache expires after 5 min | Validation fails | Refetch, not rate limited |
+| Nimbus `JWKSourceBuilder` (default) | 5 min, refreshed 30 s ahead | Fails, unless outage tolerance is enabled (off by default, then 50 min or forever) | Refetch, at most once per 30 s |
+| panva/jose | 10 min max age | Fails | Refetch, 30 s cooldown |
+| auth0 node-jwks-rsa | 10 min max age | Fails, unless a fallback window is set | Refetch, at most 10 per minute |
+| Microsoft.IdentityModel | Every 12 h | Keeps the current keys, no maximum age | Manual refresh at most every 5 min |
+| coreos/go-oidc | Keys do not expire | Keeps the cached keys | Refetch, not rate limited |
+| **Structures** | Every 1 h (`jwks-refresh-interval`) | Keeps the cached keys, optional `jwks-max-staleness` | Refetch, 30 s cooldown (`jwks-refresh-cooldown`) |
+
+Structures takes the availability side, as Microsoft.IdentityModel and go-oidc do: a network problem does not
+reject tokens that are still valid. The cost is that a key the IdP revokes while it cannot be reached is
+trusted until it can be; `jwks-max-staleness` bounds that for deployments that prefer to fail closed.
+
+#### Rotating keys without rejected logins
+
+Publish a new key before signing with it, and every pod picks it up in a routine refresh:
+
+- **Keycloak**: add the new key provider with the key *enabled* but not *active*, so it is published in the
+  JWKS but not used for signing. Wait at least `jwks-refresh-interval`, then make it active, and later disable
+  the old key once tokens signed with it have expired.
+- **Entra ID and Okta** publish upcoming keys ahead of use already.
+
+Without that, a rotation is still picked up through the unknown key id refresh, at the cost of one fetch.
 
 ### Well-known Configuration Cache
-- **Refresh**: after 24 hours
+- **Refresh**: every 24 hours; a failed refresh keeps the cached document
 - **Max Size**: 100 configurations
-- **Purpose**: Cache OIDC provider discovery documents
+- **Purpose**: Cache OIDC provider discovery documents, for their `jwks_uri`
 - A document without a `jwks_uri` is treated as a failure and not cached
+- Not used for a provider with `jwks-uri` configured
 
 ### Failures and Timeouts
 - Failed fetches, empty key sets and broken discovery documents are never cached. With nothing cached, lookups
@@ -681,6 +720,8 @@ due. An IdP outage therefore only fails lookups that need something not already 
 oidc-security-service:
   jwks-connect-timeout: 5s   # TCP connect to the provider
   jwks-request-timeout: 10s  # one discovery or JWKS fetch, end to end
+  jwks-refresh-interval: 1h  # how often each key set is refreshed
+  jwks-max-staleness:        # unset: keep the last fetched keys through an outage; e.g. 24h to cap it
   jwks-refresh-cooldown: 30s # minimum time between refreshes caused by unknown key ids
   jwks-retry-backoff: 5s     # after a failed fetch with nothing cached, wait this long before fetching again
 ```

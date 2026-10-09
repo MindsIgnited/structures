@@ -27,8 +27,9 @@ import lombok.experimental.Accessors;
  * 
  * Caching and fetching:
  * - Keys are only fetched for issuers that match an enabled provider's authority
- * - JWKS key sets are cached for 1 hour, and fetched again early when a token names an unknown key id,
- *   at most once per {@link #jwksRefreshCooldown}
+ * - JWKS key sets are refreshed every {@link #jwksRefreshInterval}, and early when a token names an unknown
+ *   key id, at most once per {@link #jwksRefreshCooldown}. Through an outage the last fetched keys keep being
+ *   used, for at most {@link #jwksMaxStaleness} when that is set
  * - Well-known configurations are cached for 24 hours
  * - Failed fetches are not cached; a failed refresh keeps the cached copy, and a failed first fetch is
  *   retried after {@link #jwksRetryBackoff}. Concurrent lookups share one fetch
@@ -80,8 +81,24 @@ public class OidcSecurityServiceProperties {
     private Duration jwksRequestTimeout = Duration.ofSeconds(10);
 
     /**
-     * How old a cached key set must be before a token with an unknown key id causes it to be fetched again.
-     * Rotated keys are picked up, without letting each token with a made up key id cause a fetch.
+     * How often each cached key set is refreshed. The refresh starts on the first lookup after this has passed,
+     * which is served the cached set meanwhile. A failed refresh keeps the cached set, and is retried after this
+     * passes again. Keys an IdP publishes ahead of using them are picked up within this interval.
+     */
+    private Duration jwksRefreshInterval = Duration.ofHours(1);
+
+    /**
+     * How long a key set may keep being used while every refresh fails, counted from its last successful fetch.
+     * After that, lookups need a successful fetch and fail while the IdP is unreachable. Unset (the default), the
+     * last fetched keys are used for as long as an outage lasts, as Microsoft.IdentityModel and go-oidc do.
+     * Setting it bounds how long a key the IdP has revoked can still be trusted while it cannot be reached.
+     */
+    private Duration jwksMaxStaleness;
+
+    /**
+     * The minimum time between key set refreshes caused by tokens with an unknown key id. Lets rotated keys be
+     * picked up, without letting each token with a made up key id cause a fetch. Counted from the last such
+     * refresh only, not from routine refreshes.
      */
     private Duration jwksRefreshCooldown = Duration.ofSeconds(30);
 

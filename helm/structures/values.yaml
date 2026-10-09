@@ -128,9 +128,14 @@ oidc:
   frontendConfigurationPath: "/app-config.override.json"
   # JWT claim holding the tenant id, default "tenantId"
   # tenantIdFieldName: "tenantId"
-  # Bounds on discovery and JWKS fetches, leave unset for the defaults (5s, 10s, 30s, 5s)
+  # Bounds on discovery and JWKS fetches, leave unset for the defaults. Durations need a unit, like 5s
   # jwksConnectTimeout: "5s"
   # jwksRequestTimeout: "10s"
+  # How often each key set is refreshed. Rotate keys by publishing the new one at least this long before use
+  # jwksRefreshInterval: "1h"
+  # Unset keeps the last fetched keys through an IdP outage. Set, e.g. "24h", logins fail once the keys are
+  # that old and the IdP still cannot be reached
+  # jwksMaxStaleness: "24h"
   # jwksRefreshCooldown: "30s"
   # jwksRetryBackoff: "5s"
   oidcProviders:

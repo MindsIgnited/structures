@@ -53,9 +53,11 @@ import reactor.netty.resources.ConnectionProvider;
  * service call out to a URL of its choosing. Every fetch is bounded by the configured timeouts, failed fetches
  * are not cached, and concurrent lookups of the same document share one fetch.
  * <p>
- * Cached documents are refreshed rather than expired: once due, the next lookup starts a refresh and is served
- * the cached document meanwhile, and a failed refresh keeps it until the next one is due. So an IdP outage only
- * fails lookups that need something not already cached, such as a key id that is not in the cached key set.
+ * Cached documents are refreshed rather than expired, like Microsoft.IdentityModel and go-oidc: once due, the
+ * next lookup starts a refresh and is served the cached document meanwhile, and a failed refresh keeps it until
+ * the next one is due. Key sets are kept through an outage for as long as it lasts, unless
+ * {@link OidcSecurityServiceProperties#getJwksMaxStaleness()} caps it. So an IdP outage only fails lookups that
+ * need something not already cached, such as a key id that is not in the cached key set.
  * A load that fails, with nothing cached, is retried no sooner than
  * {@link OidcSecurityServiceProperties#getJwksRetryBackoff()} later; lookups meanwhile fail with its error.
  */
@@ -64,9 +66,6 @@ import reactor.netty.resources.ConnectionProvider;
 @ConditionalOnProperty(prefix = "oidc-security-service", name = "enabled", havingValue = "true", matchIfMissing = false)
 public class DefaultJwksService implements JwksService {
 
-    private static final Duration KEY_SET_REFRESH = Duration.ofHours(1);
-    // how long a key set may be served while every refresh fails, after which lookups need a successful fetch
-    private static final Duration KEY_SET_MAX_STALENESS = Duration.ofHours(24);
     private static final Duration WELL_KNOWN_REFRESH = Duration.ofHours(24);
     // rejected tokens are logged at warn at most this often, at debug otherwise, since anyone can send them
     private static final Duration REJECTION_WARN_INTERVAL = Duration.ofMinutes(1);
@@ -98,10 +97,10 @@ public class DefaultJwksService implements JwksService {
         this.objectMapper = JsonMapper.builder().build();
         this.jwkParser = Jwks.parser().build();
 
-        // KEY_SET_MAX_STALENESS is checked in getKey, since a failed refresh keeping the old set resets its write time
+        // jwksMaxStaleness is checked in getKey, since a failed refresh keeping the old set resets its write time
         this.keySetCache = cacheFactory.<String, KeySet>newBuilder()
                 .name("jwksKeySetCache")
-                .refreshAfterWrite(KEY_SET_REFRESH)
+                .refreshAfterWrite(properties.getJwksRefreshInterval())
                 .maximumSize(100)
                 .buildAsync(loader(KEY_SET, this::fetchKeySet));
 
@@ -142,7 +141,10 @@ public class DefaultJwksService implements JwksService {
                     }
                     Throwable cause = CompletionErrors.unwrap(error);
                     failedRefreshes.put(failureKey, cause);
-                    log.warn("Keeping the cached {} for {}, refreshing it failed: {}", description, key, cause.getMessage());
+                    String age = oldValue instanceof KeySet keySet
+                            ? ", fetched " + Duration.ofNanos(System.nanoTime() - keySet.fetchedAtNanos()).toSeconds() + "s ago,"
+                            : "";
+                    log.warn("Keeping the cached {} for {}{} refreshing it failed: {}", description, key, age, cause.getMessage());
                     return oldValue;
                 });
             }
@@ -265,13 +267,18 @@ public class DefaultJwksService implements JwksService {
     }
 
     /**
-     * Evicts the key set if every refresh has failed for longer than {@link #KEY_SET_MAX_STALENESS}, so the
-     * lookup loads it, or fails. Checked before the lookup, which would otherwise start a refresh that is then
-     * thrown away. Compares by value, since a failed refresh stores the same set in a new future.
+     * When {@link OidcSecurityServiceProperties#getJwksMaxStaleness()} is set, evicts the key set once every
+     * refresh has failed for longer than that, so the lookup loads it, or fails. Checked before the lookup, which
+     * would otherwise start a refresh that is then thrown away. Compares by value, since a failed refresh stores
+     * the same set in a new future.
      */
     private void evictIfTooStale(String jwksUrl) {
+        Duration maxStaleness = properties.getJwksMaxStaleness();
+        if (maxStaleness == null) {
+            return;
+        }
         KeySet present = keySetCache.synchronous().policy().getIfPresentQuietly(jwksUrl);
-        if (present != null && System.nanoTime() - present.fetchedAtNanos() > KEY_SET_MAX_STALENESS.toNanos()) {
+        if (present != null && System.nanoTime() - present.fetchedAtNanos() > maxStaleness.toNanos()) {
             // a no-op if a concurrent lookup already replaced it
             keySetCache.synchronous().asMap().remove(jwksUrl, present);
         }
@@ -282,7 +289,7 @@ public class DefaultJwksService implements JwksService {
         if (jwk != null) {
             return CompletableFuture.completedFuture(jwk);
         }
-        CompletableFuture<KeySet> refresh = refreshForUnknownKid(jwksUrl, keySet);
+        CompletableFuture<KeySet> refresh = refreshForUnknownKid(jwksUrl);
         if (refresh == null) {
             return CompletableFuture.failedFuture(keyNotFound(issuer, kid));
         }
@@ -302,18 +309,19 @@ public class DefaultJwksService implements JwksService {
 
     /**
      * The provider may have rotated its keys, so an unknown key id refreshes the key set, at most once per
-     * cooldown, and not when the set was fetched within the cooldown. Lookups within the cooldown of a refresh
+     * cooldown. The cooldown counts from the last refresh an unknown key id started, not from routine fetches,
+     * so a rotation just after a routine refresh is still picked up. Lookups within the cooldown of a refresh
      * use that refresh, so a burst of tokens signed with a new key all wait on the one fetch. The cached set
      * keeps serving known key ids meanwhile, and stays cached if the refresh fails.
      *
      * @return the refresh to look the key id up in, or null when the key set may not be refreshed yet
      */
-    private CompletableFuture<KeySet> refreshForUnknownKid(String jwksUrl, KeySet keySet) {
+    private CompletableFuture<KeySet> refreshForUnknownKid(String jwksUrl) {
         long cooldown = properties.getJwksRefreshCooldown().toNanos();
         long now = System.nanoTime();
         CompletableFuture<KeySet> started = new CompletableFuture<>();
         UnknownKidRefresh refresh = unknownKidRefreshes.compute(jwksUrl, (url, last) -> {
-            if ((last != null && now - last.startedNanos() < cooldown) || now - keySet.fetchedAtNanos() < cooldown) {
+            if (last != null && now - last.startedNanos() < cooldown) {
                 return last;
             }
             return new UnknownKidRefresh(now, started);
