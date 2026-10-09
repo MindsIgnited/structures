@@ -2,6 +2,8 @@ package org.kinotic.structures.auth.api.config;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.kinotic.structures.auth.api.domain.OidcProvider;
 
@@ -19,6 +21,16 @@ public record OidcFrontendConfiguration(boolean enabled,
                                         String frontendConfigurationPath,
                                         List<Provider> oidcProviders) {
 
+    /**
+     * The provider metadata keys the frontend reads, as endpoint overrides for its OIDC client. The backend
+     * also adds a provider's metadata to each Participant's, so other keys are not sent.
+     */
+    private static final Set<String> FRONTEND_METADATA_KEYS = Set.of("authorization_endpoint",
+                                                                     "token_endpoint",
+                                                                     "userinfo_endpoint",
+                                                                     "end_session_endpoint",
+                                                                     "jwks_uri");
+
     public static OidcFrontendConfiguration from(OidcSecurityServiceProperties properties) {
         List<Provider> providers = properties.getOidcProviders() == null
                 ? List.of()
@@ -33,7 +45,7 @@ public record OidcFrontendConfiguration(boolean enabled,
 
     /**
      * @param domains   email domains that route a user to this provider on the login page
-     * @param metadata  may carry endpoint overrides the frontend passes to its OIDC client
+     * @param metadata  endpoint overrides the frontend passes to its OIDC client, null when there are none
      */
     public record Provider(boolean enabled,
                            String provider,
@@ -60,7 +72,21 @@ public record OidcFrontendConfiguration(boolean enabled,
                                 provider.getDomains(),
                                 provider.getFrontEndRoles(),
                                 provider.getAdditionalScopes(),
-                                provider.getMetadata());
+                                endpointMetadata(provider.getMetadata()));
+        }
+
+        /**
+         * Null rather than empty when there are no endpoint keys, since the frontend treats any metadata object
+         * as a full set of endpoint overrides
+         */
+        private static Map<String, String> endpointMetadata(Map<String, String> metadata) {
+            if (metadata == null) {
+                return null;
+            }
+            Map<String, String> endpoints = metadata.entrySet().stream()
+                                                    .filter(entry -> FRONTEND_METADATA_KEYS.contains(entry.getKey()))
+                                                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            return endpoints.isEmpty() ? null : endpoints;
         }
     }
 }

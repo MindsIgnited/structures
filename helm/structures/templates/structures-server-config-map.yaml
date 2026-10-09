@@ -135,17 +135,14 @@ data:
   {{- if .Values.oidc.tenantIdFieldName }}
   OIDC_SECURITY_SERVICE_TENANT_ID_FIELD_NAME: "{{ .Values.oidc.tenantIdFieldName }}"
   {{- end }}
-  {{- if .Values.oidc.jwksConnectTimeout }}
-  OIDC_SECURITY_SERVICE_JWKS_CONNECT_TIMEOUT: "{{ .Values.oidc.jwksConnectTimeout }}"
+  {{- /* Spring reads a bare number as milliseconds, so these need a unit, like 5s, or ISO-8601, like PT5S */}}
+  {{- range $key, $env := dict "jwksConnectTimeout" "JWKS_CONNECT_TIMEOUT" "jwksRequestTimeout" "JWKS_REQUEST_TIMEOUT" "jwksRefreshCooldown" "JWKS_REFRESH_COOLDOWN" "jwksRetryBackoff" "JWKS_RETRY_BACKOFF" }}
+  {{- with index $.Values.oidc $key }}
+  {{- if not (regexMatch "^([0-9]+(ns|us|ms|s|m|h|d)|P[0-9A-Za-z.]+)$" (toString .)) }}
+  {{- fail (printf "oidc.%s must have a unit, such as 5s or 500ms, got %v" $key .) }}
   {{- end }}
-  {{- if .Values.oidc.jwksRequestTimeout }}
-  OIDC_SECURITY_SERVICE_JWKS_REQUEST_TIMEOUT: "{{ .Values.oidc.jwksRequestTimeout }}"
+  OIDC_SECURITY_SERVICE_{{ $env }}: "{{ . }}"
   {{- end }}
-  {{- if .Values.oidc.jwksRefreshCooldown }}
-  OIDC_SECURITY_SERVICE_JWKS_REFRESH_COOLDOWN: "{{ .Values.oidc.jwksRefreshCooldown }}"
-  {{- end }}
-  {{- if .Values.oidc.jwksRetryBackoff }}
-  OIDC_SECURITY_SERVICE_JWKS_RETRY_BACKOFF: "{{ .Values.oidc.jwksRetryBackoff }}"
   {{- end }}
   {{- range $index,$value:= .Values.oidc.oidcProviders }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_PROVIDER: "{{ $value.provider }}"

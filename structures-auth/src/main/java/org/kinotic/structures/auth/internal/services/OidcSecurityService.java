@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 
 
 @Slf4j
@@ -79,9 +78,7 @@ public class OidcSecurityService implements SecurityService {
                    .thenCompose(key -> validateTokenWithKey(token, key))
                    .whenComplete((participant, error) -> {
                        if (error != null) {
-                           result.completeExceptionally(error instanceof CompletionException && error.getCause() != null
-                                                                ? error.getCause()
-                                                                : error);
+                           result.completeExceptionally(CompletionErrors.unwrap(error));
                        } else {
                            result.complete(participant);
                        }

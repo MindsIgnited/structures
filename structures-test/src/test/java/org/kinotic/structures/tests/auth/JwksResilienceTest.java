@@ -298,6 +298,36 @@ class JwksResilienceTest {
     }
 
     @Test
+    void failedRefreshForAnUnknownKeyIdReportsTheFetchError() throws Exception {
+        DefaultJwksService service = newService(properties());
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.jwks = FakeIdp.status(503);
+        Thread.sleep(500); // past the refresh cooldown used by these tests
+        Outcome<Jwk<? extends Key>> outcome = await(service.getKey(idp.issuer, "k2"));
+
+        assertNotNull(outcome.error());
+        assertTrue(outcome.error().getMessage().startsWith("Could not refresh the JWKS"),
+                   "a failed refresh was reported as a missing key: " + outcome.error().getMessage());
+        assertTrue(outcome.error().getMessage().contains("503"), outcome.error().getMessage());
+    }
+
+    @Test
+    void unverifiedIssuerIsSanitizedInTheError() throws Exception {
+        String issuer = "https://evil.example.com/\nINFO forged log line " + "x".repeat(1000);
+        OidcSecurityServiceProperties properties = properties();
+        OidcSecurityService securityService = new OidcSecurityService(properties, newService(properties));
+
+        Throwable error = securityService.authenticate(Map.of("authorization", "Bearer " + token(issuer, "k1", keyPair1)))
+                                         .handle((participant, throwable) -> throwable)
+                                         .get(DEADLINE.toMillis(), TimeUnit.MILLISECONDS);
+
+        assertInstanceOf(AuthenticationException.class, error);
+        assertFalse(error.getMessage().contains("\n"), "control characters from the token were kept");
+        assertTrue(error.getMessage().length() < 300, "the token's issuer was not shortened: " + error.getMessage().length());
+    }
+
+    @Test
     void blankRolesClaimPathIsTreatedAsUnset() {
         // a Helm value left empty renders as an empty string, which must not demand roles
         OidcSecurityServiceProperties properties = properties();

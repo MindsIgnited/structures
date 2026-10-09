@@ -40,7 +40,8 @@ class OidcFrontendConfigurationTest {
                 .setAudience("structures-api")
                 .setRoles(List.of("admin"))
                 .setFrontEndRoles(List.of("admin"))
-                .setMetadata(Map.of("end_session_endpoint", "https://auth.example.com/logout"))
+                .setMetadata(Map.of("end_session_endpoint", "https://auth.example.com/logout",
+                                    "team", "backend-only"))
                 .setRolesClaimPath("realm_access.roles")
                 .setAdditionalScopes("groups");
         OidcSecurityServiceProperties properties = new OidcSecurityServiceProperties()
@@ -59,6 +60,19 @@ class OidcFrontendConfigurationTest {
                      fieldNames(served));
         assertEquals("structures-client", served.get("clientId").asString());
         assertEquals("example.com", served.get("domains").get(0).asString());
+        assertEquals(Set.of("end_session_endpoint"), fieldNames(served.get("metadata")),
+                     "metadata other than the endpoint overrides was sent");
+    }
+
+    @Test
+    void metadataWithoutEndpointKeysIsNotSent() {
+        // the frontend treats any metadata object as a full set of endpoint overrides
+        OidcSecurityServiceProperties properties = new OidcSecurityServiceProperties()
+                .setEnabled(true)
+                .setOidcProviders(List.of(new OidcProvider().setEnabled(true).setProvider("kc")
+                                                            .setMetadata(Map.of("team", "backend-only"))));
+
+        assertNull(OidcFrontendConfiguration.from(properties).oidcProviders().getFirst().metadata());
     }
 
     @Test
