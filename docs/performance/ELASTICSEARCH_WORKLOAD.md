@@ -226,6 +226,16 @@ Follow-ups, not done yet:
 
   This fits with step 2 (chunks report their errors together at the end) and step 3 (the limiter
   reacts to the same 429s).
+- **Keep Elasticsearch details out of single-write errors.** Found in the second review of PR #26,
+  not done yet. The async client hands back any status it isn't told to expect as the low-level
+  `ResponseException`. It does this for 429, 503 and 409 too (only 400-405 come back as typed
+  errors). That exception's message names the Elasticsearch host and request URI, for example
+  `method [POST], host [http://es-internal:9200], URI [/idx/_update/kinotic-1?...]`, and the caller
+  gets it unchanged. PR #26 fixed this for 409 only: `ElasticVersionConflicts` reads the reason from
+  the response body. A `save` or `update` rejected with a 429 or 503 still answers 500 with the
+  host and URI in its body. Fix it the same way for every `ResponseException`: build the message
+  from the body's `error.reason`, and pick the status from the response, so a 429 or 503 is
+  retryable as described above.
 
 ### Proposed settings
 

@@ -2,12 +2,14 @@ package org.kinotic.structures.internal.utils;
 
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
-import org.apache.http.util.EntityUtils;
 import org.elasticsearch.client.ResponseException;
 import org.kinotic.structures.api.domain.Structure;
 import org.kinotic.structures.api.exceptions.VersionConflictException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
+import java.io.InputStream;
+import java.util.Collection;
 
 /**
  * Recognizes the 409 Conflict Elasticsearch answers with when an if_seq_no / if_primary_term check fails,
@@ -21,6 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 public final class ElasticVersionConflicts {
 
     private static final int CONFLICT = 409;
+    private static final int MAX_LISTED_REASONS = 20;
 
     private ElasticVersionConflicts() {
     }
@@ -63,23 +66,46 @@ public final class ElasticVersionConflicts {
     /**
      * @param conflicts the number of bulk items that conflicted
      * @param total     the number of items in the bulk request
-     * @param reasons   the reasons of the items that conflicted, one per line
+     * @param reasons   the distinct reasons of the items that conflicted
      */
-    public static VersionConflictException bulkConflict(Structure structure, int conflicts, int total, String reasons) {
+    public static VersionConflictException bulkConflict(Structure structure, int conflicts, int total, Collection<String> reasons) {
         // Elasticsearch applies each bulk item on its own, so only the items that conflicted were not written
         return new VersionConflictException("Version conflict writing " + structure.getName()
                                                     + ", " + conflicts + " of " + total + " items were not written:\n"
-                                                    + reasons + advice(structure, true));
+                                                    + (reasons.isEmpty() ? "version conflict\n" : listReasons(reasons))
+                                                    + advice(structure, true));
     }
 
     /**
-     * With a version field the caller sent a stale version, or created an entity that exists. Without one, the
-     * conflict comes from another write changing the same entity while an update was applied, so the update can
-     * be sent again. Elasticsearch is not asked to retry it itself, since it would apply the partial update
-     * over the other write without the caller knowing.
+     * Lists bulk item reasons one per line, at most {@link #MAX_LISTED_REASONS} of them. Each conflict reason names
+     * its own document, so a large bulk call could otherwise produce a message as long as the request.
+     */
+    public static String listReasons(Collection<String> reasons) {
+        StringBuilder builder = new StringBuilder();
+        int listed = 0;
+        for(String reason : reasons){
+            if(listed == MAX_LISTED_REASONS){
+                builder.append("and ").append(reasons.size() - listed).append(" more\n");
+                break;
+            }
+            builder.append(reason).append("\n");
+            listed++;
+        }
+        return builder.toString();
+    }
+
+    /**
+     * A stream only creates entities, so its conflicts are ids that already exist. With a version field the caller
+     * sent a stale version, or created an entity that exists. Without one, the conflict comes from another write
+     * changing the same entity while an update was applied, so the update can be sent again. Elasticsearch is not
+     * asked to retry it itself, since it would apply the partial update over the other write without the caller knowing.
      */
     private static String advice(Structure structure, boolean bulk) {
-        if(structure.isOptimisticLockingEnabled() || structure.isStream()){
+        if(structure.isStream()){
+            return bulk ? "Entities with those ids already exist, and stream entities can't be replaced."
+                        : "An entity with this id already exists, and stream entities can't be replaced.";
+        }
+        if(structure.isOptimisticLockingEnabled()){
             return bulk ? "Read those entities again to get their current versions."
                         : "Read the entity again to get its current version.";
         }
@@ -88,9 +114,10 @@ public final class ElasticVersionConflicts {
     }
 
     private static String readReason(ResponseException e, ObjectMapper objectMapper) {
-        try {
-            // The low level client buffers the entity of a ResponseException, so it can be read here
-            JsonNode body = objectMapper.readTree(EntityUtils.toString(e.getResponse().getEntity()));
+        // The low level client buffers the entity of a ResponseException, so it can be read here.
+        // Parsed from the bytes, since the compatibility content type Elasticsearch answers with names no charset
+        try (InputStream content = e.getResponse().getEntity().getContent()) {
+            JsonNode body = objectMapper.readTree(content);
             JsonNode reason = body.path("error").path("reason");
             return reason.isString() ? reason.asString() : null;
         } catch (Exception ignored) {

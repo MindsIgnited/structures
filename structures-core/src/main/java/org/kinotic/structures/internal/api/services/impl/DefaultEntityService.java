@@ -700,7 +700,8 @@ public class DefaultEntityService implements EntityService {
 
         return esAsyncClient.bulk(br.build()).thenCompose(bulkResponse -> {
             if (bulkResponse.errors()) {
-                StringBuilder builder = new StringBuilder();
+                // Each conflict reason names its own document, a set keeps finding duplicates cheap for large calls
+                Set<String> reasons = new LinkedHashSet<>();
                 int errors = 0;
                 int conflicts = 0;
                 for (BulkResponseItem item : bulkResponse.items()) {
@@ -710,18 +711,20 @@ public class DefaultEntityService implements EntityService {
                         if (ElasticVersionConflicts.isConflict(item)) {
                             conflicts++;
                         }
-                        if (error.reason() != null && builder.indexOf(error.reason()) == -1) {
-                            builder.append(error.reason()).append("\n");
+                        if (error.reason() != null) {
+                            reasons.add(error.reason());
                         }
                     }
                 }
-                String errorMessage = !builder.isEmpty() ? builder.toString() : "Unknown error occurred during bulk operation";
                 if (conflicts > 0 && conflicts == errors) {
                     return CompletableFuture.failedFuture(ElasticVersionConflicts.bulkConflict(structure,
                                                                                                conflicts,
                                                                                                bulkResponse.items().size(),
-                                                                                               errorMessage));
+                                                                                               reasons));
                 }
+                String errorMessage = !reasons.isEmpty()
+                        ? ElasticVersionConflicts.listReasons(reasons)
+                        : "Unknown error occurred during bulk operation";
                 return CompletableFuture.failedFuture(new IllegalArgumentException("Bulk save failed with errors:\n" + errorMessage));
             } else {
                 return CompletableFuture.completedFuture(bulkResponse);
