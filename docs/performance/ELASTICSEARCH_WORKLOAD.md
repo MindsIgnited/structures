@@ -110,6 +110,8 @@ blunt, put a limiter in front of the writer client:
   it slowly when it recovers (additive increase, multiplicative decrease). Driving it from read
   latency protects reads directly, instead of relying on a number tuned once.
 - If one tenant turns out to use the whole budget, add per-tenant fairness.
+- Bulk items Elasticsearch rejects with a 429 reach clients as a 400 today. See "Give failed bulk
+  items the right status" below.
 
 #### Done: refresh settings for single writes
 
@@ -209,6 +211,21 @@ Follow-ups, not done yet:
     `bulkSave` writes it again every time. If a client mostly sends documents that haven't changed,
     `bulkUpdate` may be cheaper for it. The bulk response marks each skipped document as a `noop`,
     so counting those shows which case a client is in.
+- **Give failed bulk items the right status.** Found in the review of PR #26, not done yet.
+  `doPersistBulkLogic` fails a bulk call with a 409 `VersionConflictException` only when every
+  failed item was a version conflict. Any other failed item makes the whole call an
+  `IllegalArgumentException`, which REST answers with **400 Bad Request**. That includes items
+  Elasticsearch rejected under load (`429 es_rejected_execution_exception`), a `503`, and a call
+  that mixes conflicts with rejections. A client reads the 400 as bad data, so it neither retries
+  the throttled items nor re-reads the conflicted ones. This gets more likely under the write
+  pressure this plan is about. Base the status on the item statuses instead:
+  - **Only conflicts:** 409, as it is now.
+  - **Only client errors** (mapping or parse failures): 400.
+  - **Any 429 or 5xx:** a retryable status, 429 or 503, with the failed item ids listed so the
+    client resends just those.
+
+  This fits with step 2 (chunks report their errors together at the end) and step 3 (the limiter
+  reacts to the same 429s).
 
 ### Proposed settings
 
