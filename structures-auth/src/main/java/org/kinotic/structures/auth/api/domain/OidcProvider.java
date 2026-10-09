@@ -3,6 +3,8 @@ package org.kinotic.structures.auth.api.domain;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -46,8 +48,9 @@ public class OidcProvider {
     /**
      * Optional JWKS endpoint for this provider. When set, keys are fetched from here and the authority's
      * discovery document is not used. Useful when the authority's public URL is not reachable from where
-     * Structures runs, for example an in-cluster service URL for the IdP.
+     * Structures runs, for example an in-cluster service URL for the IdP. Not sent to the frontend.
      */
+    @JsonIgnore
     private String jwksUri;
 
     /**

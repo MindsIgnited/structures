@@ -174,10 +174,7 @@ public class OidcSecurityService implements SecurityService {
             return null;
         }
 
-        List<OidcProvider> candidates = properties.getOidcProviders().stream()
-                .filter(p -> issuer.equals(p.getAuthority()))
-                .filter(OidcProvider::isEnabled)
-                .toList();
+        List<OidcProvider> candidates = properties.findEnabledProviders(issuer);
 
         if (candidates.isEmpty()) {
             log.warn("No enabled Oidc Providers configured for issuer: {}", issuer);

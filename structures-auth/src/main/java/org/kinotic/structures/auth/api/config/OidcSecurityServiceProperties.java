@@ -88,5 +88,19 @@ public class OidcSecurityServiceProperties {
      */
     @JsonIgnore
     private Duration jwksRefreshCooldown = Duration.ofSeconds(30);
+
+    /**
+     * The enabled providers whose authority is exactly the given issuer. Both the key lookup and the
+     * provider match use this, so a token is only ever fetched for when it could match a provider.
+     */
+    public List<OidcProvider> findEnabledProviders(String issuer) {
+        if (issuer == null || oidcProviders == null) {
+            return List.of();
+        }
+        return oidcProviders.stream()
+                            .filter(OidcProvider::isEnabled)
+                            .filter(p -> issuer.equals(p.getAuthority()))
+                            .toList();
+    }
     
 }

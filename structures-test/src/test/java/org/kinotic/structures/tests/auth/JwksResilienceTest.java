@@ -33,6 +33,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -184,6 +185,36 @@ class JwksResilienceTest {
     }
 
     @Test
+    void unknownKeyIdWhileTheIdpIsDownKeepsServingCachedKeys() throws Exception {
+        DefaultJwksService service = newService(properties());
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.jwks = FakeIdp.hang();
+        Thread.sleep(500); // past the refresh cooldown used by these tests
+        CompletableFuture<Jwk<? extends Key>> bogus = service.getKey(idp.issuer, "unknown-" + UUID.randomUUID());
+
+        // While that refresh hangs, and after it fails, the cached key keeps working without waiting on it
+        long start = System.nanoTime();
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+        assertTrue(Duration.ofNanos(System.nanoTime() - start).compareTo(Duration.ofMillis(500)) < 0,
+                   "a cached key waited on the refresh an unknown key id started");
+        assertNotNull(await(bogus).error());
+        Outcome<Jwk<? extends Key>> afterFailedRefresh = await(service.getKey(idp.issuer, "k1"));
+        assertNull(afterFailedRefresh.error(), "the failed refresh dropped the cached keys: " + afterFailedRefresh.error());
+    }
+
+    @Test
+    void fetchSettingsAreNotSentToTheFrontend() {
+        OidcSecurityServiceProperties properties = properties();
+        properties.getOidcProviders().getFirst().setJwksUri("http://keycloak.auth.svc:8080/certs");
+
+        String json = objectMapper.writeValueAsString(properties);
+
+        assertTrue(json.contains("\"authority\""), json);
+        assertFalse(json.contains("jwks"), "fetch settings are in the frontend configuration: " + json);
+    }
+
+    @Test
     void rotatedKeyIsPickedUp() throws Exception {
         DefaultJwksService service = newService(properties());
         assertNull(await(service.getKey(idp.issuer, "k1")).error());
@@ -286,6 +317,7 @@ class JwksResilienceTest {
         }
 
         final HttpServer server;
+        final ExecutorService executor = Executors.newCachedThreadPool();
         final String issuer;
         final String jwksUri;
         final AtomicInteger wellKnownHits = new AtomicInteger();
@@ -296,7 +328,7 @@ class JwksResilienceTest {
 
         FakeIdp() throws IOException {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-            server.setExecutor(Executors.newCachedThreadPool());
+            server.setExecutor(executor);
             issuer = "http://127.0.0.1:" + server.getAddress().getPort() + "/realms/test";
             jwksUri = issuer + "/protocol/openid-connect/certs";
             server.createContext("/realms/test/.well-known/openid-configuration", exchange -> {
@@ -372,6 +404,7 @@ class JwksResilienceTest {
         public void close() {
             released.countDown();
             server.stop(0);
+            executor.shutdownNow();
         }
     }
 }

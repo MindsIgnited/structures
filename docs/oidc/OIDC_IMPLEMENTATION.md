@@ -648,15 +648,21 @@ oidc-security-service:
 Keys are only ever fetched for an issuer that matches the `authority` of an enabled provider. A token from any
 other issuer is rejected before anything is fetched.
 
+Cached documents are refreshed rather than expired. Once one is due, the next lookup starts a refresh in the
+background and is served the cached document meanwhile, and a failed refresh keeps it. An IdP outage therefore
+only fails lookups that need something not already cached.
+
 ### JWKS Key Set Cache
-- **TTL**: 1 hour
+- **Refresh**: after 1 hour
+- **Max staleness**: 24 hours, while every refresh fails
 - **Max Size**: 100 key sets
 - **Purpose**: Cache each provider's key set by JWKS URL
 - **Key rotation**: a token with a key id that is not in the cached set causes the set to be fetched again, at
-  most once per `jwks-refresh-cooldown` (30 seconds by default)
+  most once per `jwks-refresh-cooldown` (30 seconds by default). A token signed with a newly rotated key can
+  therefore be rejected for up to that long after the last fetch
 
 ### Well-known Configuration Cache
-- **TTL**: 24 hours
+- **Refresh**: after 24 hours
 - **Max Size**: 100 configurations
 - **Purpose**: Cache OIDC provider discovery documents
 - A document without a `jwks_uri` is treated as a failure and not cached
@@ -678,7 +684,7 @@ oidc-security-service:
 ### Fetching keys from a different URL
 When the authority's public URL is not reachable from where Structures runs, set `jwks-uri` on the provider.
 Keys are then fetched from it and the discovery document is not used. The token's issuer must still match
-`authority`.
+`authority`. `jwks-uri` is not included in the frontend configuration.
 
 ```yaml
 oidc-security-service:
