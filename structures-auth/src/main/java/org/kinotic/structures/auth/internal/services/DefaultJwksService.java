@@ -151,9 +151,9 @@ public class DefaultJwksService implements JwksService {
                     Throwable cause = CompletionErrors.unwrap(error);
                     failedRefreshes.put(failureKey, cause);
                     String age = oldValue instanceof KeySet keySet
-                            ? ", fetched " + Duration.ofNanos(System.nanoTime() - keySet.fetchedAtNanos()).toSeconds() + "s ago,"
+                            ? ", fetched " + Duration.ofNanos(System.nanoTime() - keySet.fetchedAtNanos()).toSeconds() + "s ago"
                             : "";
-                    log.warn("Keeping the cached {} for {}{} refreshing it failed: {}", description, key, age, cause.getMessage());
+                    log.warn("Keeping the cached {} for {}{}, refreshing it failed: {}", description, key, age, cause.getMessage());
                     return oldValue;
                 });
             }
