@@ -76,7 +76,7 @@
     <div class="flex items-center gap-4">
       <!-- The tenant the server put this session in. Shared structures only show that tenant's data -->
       <div v-if="tenantId"
-        v-tooltip.bottom="'You only see data that belongs to this tenant'"
+        v-tooltip.bottom="'Your tenant'"
         data-testid="tenant-indicator"
         class="flex items-center gap-2 rounded-full border border-surface-700 px-3 py-1 text-xs text-surface-300 max-w-64">
         <i class="pi pi-building text-surface-400"></i>

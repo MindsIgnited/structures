@@ -701,19 +701,26 @@ public class DefaultEntityService implements EntityService {
         return esAsyncClient.bulk(br.build()).thenCompose(bulkResponse -> {
             if (bulkResponse.errors()) {
                 StringBuilder builder = new StringBuilder();
-                boolean onlyConflicts = true;
+                int errors = 0;
+                int conflicts = 0;
                 for (BulkResponseItem item : bulkResponse.items()) {
                     var error = item.error();
                     if (error != null) {
-                        onlyConflicts &= ElasticVersionConflicts.isConflict(item);
+                        errors++;
+                        if (ElasticVersionConflicts.isConflict(item)) {
+                            conflicts++;
+                        }
                         if (error.reason() != null && builder.indexOf(error.reason()) == -1) {
                             builder.append(error.reason()).append("\n");
                         }
                     }
                 }
                 String errorMessage = !builder.isEmpty() ? builder.toString() : "Unknown error occurred during bulk operation";
-                if (onlyConflicts) {
-                    return CompletableFuture.failedFuture(ElasticVersionConflicts.bulkConflict(structure.getName(), errorMessage));
+                if (conflicts > 0 && conflicts == errors) {
+                    return CompletableFuture.failedFuture(ElasticVersionConflicts.bulkConflict(structure,
+                                                                                               conflicts,
+                                                                                               bulkResponse.items().size(),
+                                                                                               errorMessage));
                 }
                 return CompletableFuture.failedFuture(new IllegalArgumentException("Bulk save failed with errors:\n" + errorMessage));
             } else {
@@ -724,11 +731,11 @@ public class DefaultEntityService implements EntityService {
 
     /**
      * Turns a 409 from Elasticsearch into a {@link org.kinotic.structures.api.exceptions.VersionConflictException},
-     * so callers can tell a stale version from a server error
+     * so callers can tell a conflicting write from a server error
      */
     private <R> CompletableFuture<R> translateVersionConflict(CompletableFuture<R> future){
         return future.exceptionallyCompose(throwable -> CompletableFuture.failedFuture(
-                ElasticVersionConflicts.translate(throwable, structure.getName(), objectMapper)));
+                ElasticVersionConflicts.translate(throwable, structure, objectMapper)));
     }
 
     private String extractTenant(Object object, String tenantIdFieldName){

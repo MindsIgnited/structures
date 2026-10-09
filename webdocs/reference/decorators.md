@@ -325,6 +325,8 @@ A save or update that carries a stale version is refused. So is a save without a
 
 To recover, read the entity again to get its current version, reapply the change, and retry. In a bulk save or bulk update, Elasticsearch applies each item on its own. Items that did not conflict are written, and the error lists the ones that did.
 
+Entities without a `@Version` field can conflict too. An update that runs while another write changes the same entity fails the same way, and the message says to send the request again. Structures does not retry it for you, since the retry would apply your change on top of the other write without telling you.
+
 ## Time Reference Decorators
 
 ### @TimeReference
