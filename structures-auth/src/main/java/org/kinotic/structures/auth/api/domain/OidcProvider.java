@@ -44,6 +44,13 @@ public class OidcProvider {
     private String authority;
 
     /**
+     * Optional JWKS endpoint for this provider. When set, keys are fetched from here and the authority's
+     * discovery document is not used. Useful when the authority's public URL is not reachable from where
+     * Structures runs, for example an in-cluster service URL for the IdP.
+     */
+    private String jwksUri;
+
+    /**
      * The redirect URI of the OIDC provider.
      */
     private String redirectUri;

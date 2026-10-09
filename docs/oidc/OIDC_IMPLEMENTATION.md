@@ -645,15 +645,48 @@ oidc-security-service:
 
 ## Caching Strategy
 
-### JWKS Key Cache
+Keys are only ever fetched for an issuer that matches the `authority` of an enabled provider. A token from any
+other issuer is rejected before anything is fetched.
+
+### JWKS Key Set Cache
 - **TTL**: 1 hour
-- **Max Size**: 100 keys
-- **Purpose**: Cache individual public keys by issuer and key ID
+- **Max Size**: 100 key sets
+- **Purpose**: Cache each provider's key set by JWKS URL
+- **Key rotation**: a token with a key id that is not in the cached set causes the set to be fetched again, at
+  most once per `jwks-refresh-cooldown` (30 seconds by default)
 
 ### Well-known Configuration Cache
 - **TTL**: 24 hours
-- **Max Size**: 10 configurations
+- **Max Size**: 100 configurations
 - **Purpose**: Cache OIDC provider discovery documents
+- A document without a `jwks_uri` is treated as a failure and not cached
+
+### Failures and Timeouts
+- Failed fetches, empty key sets and broken discovery documents are never cached, so recovery is immediate
+- Concurrent lookups of the same document share one fetch
+- Fetches do not reuse pooled connections, so a connection silently dropped by a NAT or load balancer cannot
+  stall a fetch until TCP gives up (around 15 minutes on Linux)
+- Every fetch is bounded:
+
+```yaml
+oidc-security-service:
+  jwks-connect-timeout: 5s   # TCP connect to the provider
+  jwks-request-timeout: 10s  # one discovery or JWKS fetch, end to end
+  jwks-refresh-cooldown: 30s # minimum age of a key set before an unknown key id refetches it
+```
+
+### Fetching keys from a different URL
+When the authority's public URL is not reachable from where Structures runs, set `jwks-uri` on the provider.
+Keys are then fetched from it and the discovery document is not used. The token's issuer must still match
+`authority`.
+
+```yaml
+oidc-security-service:
+  oidc-providers:
+    - provider: "keycloak"
+      authority: "https://auth.example.com/realms/structures"
+      jwks-uri: "http://keycloak.auth.svc:8080/realms/structures/protocol/openid-connect/certs"
+```
 
 ## Security Features
 
@@ -859,7 +892,7 @@ console.log('Stored state:', localStorage.getItem('oidc.state.your-client-id'));
 ## Performance Considerations
 
 1. **Cache Tuning**: Adjust cache TTL and size based on your OIDC provider
-2. **Network Timeouts**: Configure appropriate timeouts for JWKS fetching
+2. **Network Timeouts**: `jwks-connect-timeout` and `jwks-request-timeout` bound every JWKS and discovery fetch
 3. **Memory Usage**: Monitor cache memory usage in production
 4. **Concurrent Requests**: The implementation is thread-safe and handles concurrent requests
 

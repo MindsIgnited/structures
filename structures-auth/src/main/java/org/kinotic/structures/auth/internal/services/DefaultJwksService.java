@@ -2,91 +2,123 @@
 package org.kinotic.structures.auth.internal.services;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.time.Duration;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.SSLException;
 
+import org.kinotic.structures.auth.api.config.OidcSecurityServiceProperties;
+import org.kinotic.structures.auth.api.domain.OidcProvider;
 import org.kinotic.structures.auth.api.services.JwksService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.MediaType;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
-import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.AsyncCache;
 
 import io.jsonwebtoken.security.Jwk;
 import io.jsonwebtoken.security.Jwks;
+import io.netty.channel.ChannelOption;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
+import reactor.netty.resources.ConnectionProvider;
 
+/**
+ * Fetches and caches OIDC discovery documents and JWKS key sets.
+ * <p>
+ * Only issuers that match an enabled provider's authority are ever fetched from, so a token cannot make this
+ * service call out to a URL of its choosing. Every fetch is bounded by the configured timeouts, failed fetches
+ * are not cached, and concurrent lookups of the same document share one fetch.
+ */
 @Slf4j
 @Service
 @ConditionalOnProperty(prefix = "oidc-security-service", name = "enabled", havingValue = "true", matchIfMissing = false)
 public class DefaultJwksService implements JwksService {
 
+    private static final Duration KEY_SET_TTL = Duration.ofHours(1);
+    private static final Duration WELL_KNOWN_TTL = Duration.ofHours(24);
+
+    private final OidcSecurityServiceProperties properties;
     private final WebClient webClient;
     private final WebClient insecureWebClient;
     private final ObjectMapper objectMapper;
-    private final Cache<String, Jwk<? extends Key>> keyCache;
-    private final Cache<String, JsonNode> wellKnownCache;
+    // keyed by JWKS url
+    private final AsyncCache<String, KeySet> keySetCache;
+    // keyed by issuer
+    private final AsyncCache<String, JsonNode> wellKnownCache;
 
-    public DefaultJwksService(DefaultCaffeineCacheFactory cacheFactory) {
-        this.webClient = WebClient.builder().build();
-        this.insecureWebClient = createInsecureWebClient();
+    public DefaultJwksService(DefaultCaffeineCacheFactory cacheFactory, OidcSecurityServiceProperties properties) {
+        this.properties = properties;
+        this.webClient = createWebClient(false);
+        this.insecureWebClient = createWebClient(true);
         this.objectMapper = JsonMapper.builder().build();
-        
-        // Cache for individual keys, with 1 hour TTL
-        this.keyCache = cacheFactory.<String, Jwk<? extends Key>>newBuilder()
-                .name("jwksKeyCache")
-                .expireAfterWrite(Duration.ofHours(1))
+
+        // A failed fetch completes its future exceptionally, and Caffeine drops those, so failures are not cached
+        this.keySetCache = cacheFactory.<String, KeySet>newBuilder()
+                .name("jwksKeySetCache")
+                .expireAfterWrite(KEY_SET_TTL)
                 .maximumSize(100)
-                .build();
-                
-        // Cache for well-known configuration, with 24 hour TTL
+                .buildAsync();
+
         this.wellKnownCache = cacheFactory.<String, JsonNode>newBuilder()
                 .name("jwksWellKnownCache")
-                .expireAfterWrite(Duration.ofHours(24))
-                .maximumSize(10)
-                .build();
+                .expireAfterWrite(WELL_KNOWN_TTL)
+                .maximumSize(100)
+                .buildAsync();
     }
 
     /**
-     * Create a WebClient that trusts all SSL certificates.
-     * WARNING: Only use for development with .local domains!
+     * Discovery and JWKS documents are fetched a few times an hour at most, so connections are not pooled.
+     * A pooled connection would sit idle until the next fetch and could be silently dropped by a NAT, load
+     * balancer or conntrack table in the meantime, and a request written to such a connection waits on TCP
+     * retransmission, around 15 minutes on Linux, before failing.
+     * <p>
+     * The insecure client trusts all certificates. WARNING: Only for development with .local domains!
      */
-    private WebClient createInsecureWebClient() {
-        try {
-            SslContext sslContext = SslContextBuilder
-                    .forClient()
-                    .trustManager(InsecureTrustManagerFactory.INSTANCE)
-                    .build();
-            
-            HttpClient httpClient = HttpClient.create()
-                    .secure(spec -> spec.sslContext(sslContext));
-            
-            return WebClient.builder()
-                    .clientConnector(new ReactorClientHttpConnector(httpClient))
-                    .build();
-        } catch (SSLException e) {
-            log.warn("Failed to create insecure WebClient, falling back to default", e);
-            return WebClient.builder().build();
+    private WebClient createWebClient(boolean insecure) {
+        HttpClient httpClient = HttpClient.create(ConnectionProvider.newConnection())
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) properties.getJwksConnectTimeout().toMillis())
+                .responseTimeout(properties.getJwksRequestTimeout());
+        if (insecure) {
+            try {
+                SslContext sslContext = SslContextBuilder
+                        .forClient()
+                        .trustManager(InsecureTrustManagerFactory.INSTANCE)
+                        .build();
+                httpClient = httpClient.secure(spec -> spec.sslContext(sslContext));
+            } catch (SSLException e) {
+                log.warn("Failed to create insecure WebClient, falling back to default", e);
+            }
         }
+        return WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .build();
     }
 
     /**
      * Get the appropriate WebClient based on the URL.
-     * Uses insecure client for .local domains (development only).
+     * Uses insecure client for .local hosts (development only).
      */
-    private WebClient getWebClientForUrl(String url) {
-        if (url != null && url.contains(".local")) {
-            log.debug("Using insecure WebClient for .local domain: {}", url);
+    private WebClient getWebClientForUrl(URI uri) {
+        String host = uri.getHost();
+        if (host != null && host.endsWith(".local")) {
+            log.debug("Using insecure WebClient for .local host: {}", uri);
             return insecureWebClient;
         }
         return webClient;
@@ -96,88 +128,132 @@ public class DefaultJwksService implements JwksService {
      * Get the well-known configuration for an OIDC issuer
      */
     public CompletableFuture<JsonNode> getWellKnownConfiguration(String issuer) {
-        String cacheKey = "well-known:" + issuer;
-        JsonNode cached = wellKnownCache.getIfPresent(cacheKey);
-        if (cached != null) {
-            return CompletableFuture.completedFuture(cached);
+        if (findProviders(issuer).isEmpty()) {
+            return CompletableFuture.failedFuture(notConfigured(issuer));
         }
+        // copy, so a caller cannot complete or cancel the future that is shared through the cache
+        return wellKnownCache.get(issuer, (key, executor) -> fetchWellKnownConfiguration(key)).copy();
+    }
 
-        String wellKnownUrl = issuer + "/.well-known/openid-configuration";
-        
-        return getWebClientForUrl(wellKnownUrl).get()
-                .uri(URI.create(wellKnownUrl))
-                .retrieve()
-                .bodyToMono(String.class)
-                .map(response -> {
-                    try {
-                        JsonNode config = objectMapper.readTree(response);
-                        wellKnownCache.put(cacheKey, config);
-                        return config;
-                    } catch (Exception e) {
-                        log.error("Failed to parse well-known configuration for issuer: {}", issuer, e);
-                        throw new RuntimeException("Failed to parse OIDC configuration", e);
+    private CompletableFuture<JsonNode> fetchWellKnownConfiguration(String issuer) {
+        String wellKnownUrl = stripTrailingSlash(issuer) + "/.well-known/openid-configuration";
+        return fetchJson(wellKnownUrl, "OIDC discovery document")
+                .thenApply(config -> {
+                    // Checked before the document is cached, so a broken document is fetched again next time
+                    JsonNode jwksUri = config.get("jwks_uri");
+                    if (jwksUri == null || !jwksUri.isString() || jwksUri.asString().isBlank()) {
+                        throw new JwksFetchException("No jwks_uri in the OIDC discovery document at " + wellKnownUrl);
                     }
-                })
-                .toFuture();
+                    JsonNode documentIssuer = config.get("issuer");
+                    if (documentIssuer == null || !issuer.equals(documentIssuer.asString())) {
+                        log.warn("OIDC discovery document at {} names issuer {}, expected {}",
+                                 wellKnownUrl, documentIssuer, issuer);
+                    }
+                    return config;
+                });
     }
 
     /**
-     * Get the JWKS URL from the well-known configuration
+     * Get the JWKS URL for an issuer, from the provider's jwksUri when configured, otherwise from the
+     * well-known configuration
      */
     public CompletableFuture<String> getJwksUrl(String issuer) {
-        return getWellKnownConfiguration(issuer)
-                .thenApply(config -> {
-                    JsonNode jwksUri = config.get("jwks_uri");
-                    if (jwksUri == null || jwksUri.isNull()) {
-                        throw new RuntimeException("JWKS URI not found in OIDC configuration for issuer: " + issuer);
-                    }
-                    return jwksUri.asText();
-                });
+        List<OidcProvider> providers = findProviders(issuer);
+        if (providers.isEmpty()) {
+            return CompletableFuture.failedFuture(notConfigured(issuer));
+        }
+        Optional<String> configured = providers.stream()
+                                               .map(OidcProvider::getJwksUri)
+                                               .filter(uri -> uri != null && !uri.isBlank())
+                                               .findFirst();
+        if (configured.isPresent()) {
+            return CompletableFuture.completedFuture(configured.get());
+        }
+        return getWellKnownConfiguration(issuer).thenApply(config -> config.get("jwks_uri").asString());
     }
 
     /**
      * Get a key by its key ID (kid)
      */
     public CompletableFuture<Jwk<? extends Key>> getKey(String issuer, String kid) {
-        String cacheKey = issuer + ":" + kid;
-        Jwk<? extends Key> cachedKey = keyCache.getIfPresent(cacheKey);
-        if (cachedKey != null) {
-            return CompletableFuture.completedFuture(cachedKey);
+        if (kid == null) {
+            return CompletableFuture.failedFuture(new JwksFetchException("No key id (kid) given for issuer: " + issuer));
         }
+        return getJwksUrl(issuer).thenCompose(jwksUrl -> {
+            CompletableFuture<KeySet> cached = keySetCache.get(jwksUrl, (key, executor) -> fetchKeySet(key));
+            return cached.thenCompose(keySet -> {
+                Jwk<? extends Key> jwk = keySet.keys().get(kid);
+                if (jwk != null) {
+                    return CompletableFuture.completedFuture(jwk);
+                }
+                if (keySet.age().compareTo(properties.getJwksRefreshCooldown()) < 0) {
+                    return CompletableFuture.failedFuture(keyNotFound(issuer, kid));
+                }
+                // The provider may have rotated its keys. Replace the cached set, unless a concurrent lookup
+                // already has, in which case this joins that fetch.
+                keySetCache.asMap().remove(jwksUrl, cached);
+                return keySetCache.get(jwksUrl, (key, executor) -> fetchKeySet(key))
+                                  .thenCompose(refreshed -> {
+                                      Jwk<? extends Key> rotated = refreshed.keys().get(kid);
+                                      return rotated != null
+                                              ? CompletableFuture.completedFuture(rotated)
+                                              : CompletableFuture.failedFuture(keyNotFound(issuer, kid));
+                                  });
+            });
+        });
+    }
 
-        return getJwksUrl(issuer)
-                .thenCompose(jwksUrl -> getWebClientForUrl(jwksUrl).get()
-                        .uri(URI.create(jwksUrl))
-                        .retrieve()
-                        .bodyToMono(String.class)
-                        .toFuture())
-                .thenApply(jwksResponse -> {
-                    try {
-                        JsonNode jwks = objectMapper.readTree(jwksResponse);
-                        JsonNode keys = jwks.get("keys");
-                        
-                        if (keys == null || !keys.isArray()) {
-                            throw new RuntimeException("Invalid JWKS response: no keys array found");
-                        }
-
-                        for (JsonNode key : keys) {
-                            String keyKid = key.get("kid") != null ? key.get("kid").asText() : null;
-                            if (kid.equals(keyKid)) {
-                                // Use the correct JJWT 0.12.x API for parsing RSA keys
-                                Jwk<? extends Key> parsedKey = Jwks.parser()
-                                                                   .build()
-                                                                   .parse(objectMapper.writeValueAsString(key));
-                                keyCache.put(cacheKey, parsedKey);
-                                return parsedKey;
-                            }
-                        }
-                        
-                        throw new RuntimeException("Key with kid '" + kid + "' not found in JWKS for issuer: " + issuer);
-                    } catch (Exception e) {
-                        log.error("Failed to parse JWKS for issuer: {} and kid: {}", issuer, kid, e);
-                        throw new RuntimeException("Failed to parse JWKS", e);
+    private CompletableFuture<KeySet> fetchKeySet(String jwksUrl) {
+        return fetchJson(jwksUrl, "JWKS")
+                .thenApply(jwks -> {
+                    JsonNode keys = jwks.get("keys");
+                    if (keys == null || !keys.isArray()) {
+                        throw new JwksFetchException("Invalid JWKS at " + jwksUrl + ": no keys array found");
                     }
+                    Map<String, Jwk<? extends Key>> keysByKid = new HashMap<>();
+                    for (JsonNode key : keys) {
+                        JsonNode keyKid = key.get("kid");
+                        JsonNode use = key.get("use");
+                        if (keyKid == null || !keyKid.isString() || (use != null && "enc".equals(use.asString()))) {
+                            continue;
+                        }
+                        try {
+                            keysByKid.put(keyKid.asString(), Jwks.parser().build().parse(objectMapper.writeValueAsString(key)));
+                        } catch (Exception e) {
+                            log.debug("Skipping key {} in JWKS at {} that could not be parsed", keyKid.asString(), jwksUrl, e);
+                        }
+                    }
+                    // An empty set is treated as a failure, so it is not cached for the full TTL
+                    if (keysByKid.isEmpty()) {
+                        throw new JwksFetchException("No usable signing keys in JWKS at " + jwksUrl);
+                    }
+                    return new KeySet(Map.copyOf(keysByKid), System.nanoTime());
                 });
+    }
+
+    private CompletableFuture<JsonNode> fetchJson(String url, String description) {
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.failedFuture(new JwksFetchException("Invalid " + description + " URL: " + url, e));
+        }
+        Duration timeout = properties.getJwksRequestTimeout();
+        return getWebClientForUrl(uri).get()
+                .uri(uri)
+                .accept(MediaType.APPLICATION_JSON)
+                .retrieve()
+                .bodyToMono(String.class)
+                .switchIfEmpty(Mono.error(() -> new JwksFetchException("Empty " + description + " from " + url)))
+                // responseTimeout only covers waiting for the response headers, so the whole fetch is bounded too
+                .timeout(timeout)
+                .map(objectMapper::readTree)
+                .onErrorMap(e -> !(e instanceof JwksFetchException),
+                            e -> new JwksFetchException(e instanceof TimeoutException
+                                                                ? "Timed out after " + timeout + " fetching " + description + " from " + url
+                                                                : "Failed to fetch " + description + " from " + url + ": " + e, e))
+                .doOnError(e -> log.warn(e.getMessage()))
+                .toFuture();
     }
 
     /**
@@ -188,28 +264,25 @@ public class DefaultJwksService implements JwksService {
             // Parse the JWT header to get the key ID
             String[] parts = token.split("\\.");
             if (parts.length != 3) {
-                throw new RuntimeException("Invalid JWT token format");
+                throw new JwksFetchException("Invalid JWT token format");
             }
 
             // Decode the header
-            String headerJson = new String(java.util.Base64.getUrlDecoder().decode(parts[0]));
-            JsonNode header = objectMapper.readTree(headerJson);
-            
-            String kid = header.get("kid") != null ? header.get("kid").asText() : null;
+            JsonNode header = objectMapper.readTree(new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8));
+            String kid = header.get("kid") != null ? header.get("kid").asString() : null;
             if (kid == null) {
-                throw new RuntimeException("JWT token does not contain a key ID (kid)");
+                throw new JwksFetchException("JWT token does not contain a key ID (kid)");
             }
 
             // Parse the payload to get the issuer
-            String payloadJson = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
-            JsonNode payload = objectMapper.readTree(payloadJson);
-            String issuer = payload.get("iss") != null ? payload.get("iss").asText() : null;
+            JsonNode payload = objectMapper.readTree(new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8));
+            String issuer = payload.get("iss") != null ? payload.get("iss").asString() : null;
             if (issuer == null) {
-                throw new RuntimeException("JWT token does not contain an issuer (iss)");
+                throw new JwksFetchException("JWT token does not contain an issuer (iss)");
             }
             return getKey(issuer, kid);
         } catch (Exception e) {
-            log.error("Failed to extract key information from JWT token", e);
+            log.debug("Failed to extract key information from JWT token", e);
             return CompletableFuture.failedFuture(e);
         }
     }
@@ -218,7 +291,54 @@ public class DefaultJwksService implements JwksService {
      * Clear all caches (useful for testing or manual cache invalidation)
      */
     public void clearCaches() {
-        keyCache.invalidateAll();
-        wellKnownCache.invalidateAll();
+        keySetCache.synchronous().invalidateAll();
+        wellKnownCache.synchronous().invalidateAll();
     }
-} 
+
+    /**
+     * The enabled providers whose authority is the issuer, matched the same way {@link OidcSecurityService} does
+     */
+    private List<OidcProvider> findProviders(String issuer) {
+        if (issuer == null || properties.getOidcProviders() == null) {
+            return List.of();
+        }
+        return properties.getOidcProviders().stream()
+                         .filter(OidcProvider::isEnabled)
+                         .filter(p -> issuer.equals(p.getAuthority()))
+                         .toList();
+    }
+
+    private static JwksFetchException notConfigured(String issuer) {
+        log.warn("Rejecting token from issuer {}, no enabled OIDC provider has it as its authority", issuer);
+        return new JwksFetchException("No enabled OIDC provider configured for issuer: " + issuer);
+    }
+
+    private static JwksFetchException keyNotFound(String issuer, String kid) {
+        return new JwksFetchException("Key with kid '" + kid + "' not found in JWKS for issuer: " + issuer);
+    }
+
+    private static String stripTrailingSlash(String value) {
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private record KeySet(Map<String, Jwk<? extends Key>> keys, long fetchedAtNanos) {
+        Duration age() {
+            return Duration.ofNanos(System.nanoTime() - fetchedAtNanos);
+        }
+
+        @Override
+        public String toString() {
+            return "KeySet" + keys.keySet();
+        }
+    }
+
+    private static class JwksFetchException extends RuntimeException {
+        JwksFetchException(String message) {
+            super(message);
+        }
+
+        JwksFetchException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+}
