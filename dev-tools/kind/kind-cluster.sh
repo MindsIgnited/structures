@@ -405,8 +405,8 @@ Examples:
   # Deploy with inline override
   $(basename "$0") deploy --set replicaCount=3
 
-  # Deploy a specific published tag: the develop snapshot, or a PR image (3.7.0-pr<N>.<sha>)
-  $(basename "$0") deploy --tag 3.7.0-SNAPSHOT
+  # Deploy a specific published tag: the develop snapshot, or a PR image (3.8.0-pr<N>.<sha>)
+  $(basename "$0") deploy --tag 3.8.0-SNAPSHOT
 
   # Build from source and load into the cluster instead of pulling
   $(basename "$0") deploy --build-local
@@ -798,7 +798,7 @@ Examples:
   $(basename "$0") load
 
   # Load specific image
-  $(basename "$0") load --image mindsignited/structures-server:3.7.0
+  $(basename "$0") load --image mindsignited/structures-server:3.8.0
 
   # Load into specific cluster
   $(basename "$0") load --name test-cluster
