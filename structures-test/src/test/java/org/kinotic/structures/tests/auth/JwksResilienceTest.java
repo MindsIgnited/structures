@@ -204,17 +204,6 @@ class JwksResilienceTest {
     }
 
     @Test
-    void fetchSettingsAreNotSentToTheFrontend() {
-        OidcSecurityServiceProperties properties = properties();
-        properties.getOidcProviders().getFirst().setJwksUri("http://keycloak.auth.svc:8080/certs");
-
-        String json = objectMapper.writeValueAsString(properties);
-
-        assertTrue(json.contains("\"authority\""), json);
-        assertFalse(json.contains("jwks"), "fetch settings are in the frontend configuration: " + json);
-    }
-
-    @Test
     void rotatedKeyIsPickedUp() throws Exception {
         DefaultJwksService service = newService(properties());
         assertNull(await(service.getKey(idp.issuer, "k1")).error());

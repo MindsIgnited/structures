@@ -9,8 +9,6 @@ import org.springframework.stereotype.Component;
 
 import org.kinotic.structures.auth.api.domain.OidcProvider;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -72,21 +70,18 @@ public class OidcSecurityServiceProperties {
     /**
      * How long to wait for a TCP connection to an OIDC provider when fetching its discovery document or JWKS.
      */
-    @JsonIgnore
     private Duration jwksConnectTimeout = Duration.ofSeconds(5);
 
     /**
      * The longest a single discovery or JWKS fetch may take, connecting included. Authentication that needs
      * a fetch fails once this passes, rather than waiting on the provider.
      */
-    @JsonIgnore
     private Duration jwksRequestTimeout = Duration.ofSeconds(10);
 
     /**
      * How old a cached key set must be before a token with an unknown key id causes it to be fetched again.
      * Rotated keys are picked up, without letting each token with a made up key id cause a fetch.
      */
-    @JsonIgnore
     private Duration jwksRefreshCooldown = Duration.ofSeconds(30);
 
     /**

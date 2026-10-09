@@ -233,7 +233,11 @@ This lets a single Okta tenant (one `authority`) split across multiple providers
 - Applies role-based access control
 
 ### 5. **Frontend Integration**
-- Serves configuration overrides at `/app-config.override.json`
+- Serves configuration overrides at `/app-config.override.json`, unauthenticated, so it holds only what the
+  frontend reads: enabled providers' `provider`, `display-name`, `client-id`, `authority`, redirect URIs,
+  `domains`, `front-end-roles`, `additional-scopes` and `metadata`. Backend-only settings such as `audience`,
+  `roles`, `roles-claim-path`, `allow-any-domain`, `jwks-uri` and `tenant-id-field-name` are not sent
+  (see `OidcFrontendConfiguration`)
 - Enables dynamic frontend configuration without rebuilds
 - Supports runtime provider enable/disable
 - `front-end-roles` is shipped to the frontend in the config payload. After login, the frontend intersects this list with the participant's roles and rejects users with no overlap — the backend already accepted the token, but the UI app stays gated behind a role check.
