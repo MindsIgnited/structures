@@ -297,6 +297,19 @@ class JwksResilienceTest {
         assertEquals("user-1", outcome.value().getId());
     }
 
+    @Test
+    void blankRolesClaimPathIsTreatedAsUnset() {
+        // a Helm value left empty renders as an empty string, which must not demand roles
+        OidcSecurityServiceProperties properties = properties();
+        properties.getOidcProviders().getFirst().setRolesClaimPath("");
+        OidcSecurityService securityService = new OidcSecurityService(properties, newService(properties));
+
+        Outcome<Participant> outcome = await(securityService.authenticate(
+                Map.of("authorization", "Bearer " + token(idp.issuer, "k1", keyPair1))));
+
+        assertNull(outcome.error(), "a blank roles claim path rejected the token: " + outcome.error());
+    }
+
     // ---------------------------------------------------------------------------------------------------------------
 
     private OidcSecurityServiceProperties properties() {

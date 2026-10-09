@@ -132,6 +132,9 @@ data:
   OIDC_SECURITY_SERVICE_ENABLED: "{{ .Values.oidc.enabled }}"
   OIDC_SECURITY_SERVICE_DEBUG: "{{ .Values.oidc.debug }}"
   OIDC_SECURITY_SERVICE_FRONTEND_CONFIGURATION_PATH: "{{ .Values.oidc.frontendConfigurationPath }}"
+  {{- if .Values.oidc.tenantIdFieldName }}
+  OIDC_SECURITY_SERVICE_TENANT_ID_FIELD_NAME: "{{ .Values.oidc.tenantIdFieldName }}"
+  {{- end }}
   {{- if .Values.oidc.jwksConnectTimeout }}
   OIDC_SECURITY_SERVICE_JWKS_CONNECT_TIMEOUT: "{{ .Values.oidc.jwksConnectTimeout }}"
   {{- end }}
@@ -148,7 +151,9 @@ data:
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_PROVIDER: "{{ $value.provider }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_DISPLAY_NAME: "{{ $value.displayName }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ENABLED: "{{ $value.enabled }}"
+  {{- if $value.rolesClaimPath }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ROLES_CLAIM_PATH: "{{ $value.rolesClaimPath }}"
+  {{- end }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_AUDIENCE: "{{ $value.audience }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_CLIENT_ID: "{{ $value.clientId }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_AUTHORITY: "{{ $value.authority }}"
@@ -163,6 +168,15 @@ data:
   {{- end }}
   {{- range $roleIndex,$roleValue:= $value.roles }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ROLES_{{ $roleIndex }}: "{{ $roleValue }}"
+  {{- end }}
+  {{- if $value.allowAnyDomain }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ALLOW_ANY_DOMAIN: "{{ $value.allowAnyDomain }}"
+  {{- end }}
+  {{- range $roleIndex,$roleValue:= $value.frontEndRoles }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_FRONT_END_ROLES_{{ $roleIndex }}: "{{ $roleValue }}"
+  {{- end }}
+  {{- if $value.additionalScopes }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ADDITIONAL_SCOPES: "{{ $value.additionalScopes }}"
   {{- end }}
   {{- end }}
   {{- end }}

@@ -145,7 +145,8 @@ public class OidcSecurityService implements SecurityService {
 
             // Extract roles from claims
             List<String> roles = null;
-            if(oidcProvider.getRolesClaimPath() != null) {
+            // blank counts as unset, a Helm value left empty renders as an empty string
+            if(oidcProvider.getRolesClaimPath() != null && !oidcProvider.getRolesClaimPath().isBlank()) {
                 // function below will return an empty list if no roles are found at configured path
                 roles = extractRolesFromClaims(oidcProvider, claims);
                 if(roles.isEmpty()) {

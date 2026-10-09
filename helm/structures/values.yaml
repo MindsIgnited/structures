@@ -126,6 +126,8 @@ oidc:
   enabled: false
   debug: true
   frontendConfigurationPath: "/app-config.override.json"
+  # JWT claim holding the tenant id, default "tenantId"
+  # tenantIdFieldName: "tenantId"
   # Bounds on discovery and JWKS fetches, leave unset for the defaults (5s, 10s, 30s, 5s)
   # jwksConnectTimeout: "5s"
   # jwksRequestTimeout: "10s"
@@ -149,6 +151,15 @@ oidc:
       redirectUri: "http://localhost:9090/login"
       postLogoutRedirectUri: "http://localhost:9090"
       silentRedirectUri: "http://localhost:9090/login/silent-renew"
+      # Optional: match on issuer alone, skipping the email domain check. Needed for M2M tokens
+      # allowAnyDomain: false
+      # Optional: roles required to use the frontend through this provider, not checked by the backend
+      # frontEndRoles:
+      #   - "admin"
+      # Optional: scopes the frontend requests in addition to "openid profile email offline_access"
+      # additionalScopes: "groups"
+      # Not settable here: metadata. It is a map, and Spring cannot bind map entries from environment
+      # variables, so set it through SPRING_APPLICATION_JSON or a mounted application.yml if needed.
     
 
 # Eviction tracking configuration
