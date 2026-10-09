@@ -81,18 +81,21 @@ public class OidcSecurityServiceProperties {
     private Duration jwksRequestTimeout = Duration.ofSeconds(10);
 
     /**
-     * How often each cached key set, and each provider's discovery document, is refreshed. The refresh starts on
-     * the first lookup after this has passed, which is served the cached copy meanwhile. A failed refresh keeps
-     * the cached copy, and is retried after this passes again. Keys an IdP publishes ahead of using them are
-     * picked up within this interval.
+     * How often each cached key set, and each provider's discovery document, is refreshed. Refreshes are lazy:
+     * one starts on the first lookup after this has passed, which is served the cached copy meanwhile. A failed
+     * refresh keeps the cached copy, and is retried after this passes again. Keys an IdP publishes ahead of using
+     * them are picked up by that refresh; on a pod with no lookups in between, the first token signed with a new
+     * key waits on one fetch instead, and is not rejected.
      */
     private Duration jwksRefreshInterval = Duration.ofHours(1);
 
     /**
-     * How long a key set may keep being used while every refresh fails, counted from its last successful fetch.
-     * After that, lookups need a successful fetch and fail while the IdP is unreachable. Unset (the default), the
-     * last fetched keys are used for as long as an outage lasts, as Microsoft.IdentityModel and go-oidc do.
-     * Setting it bounds how long a key the IdP has revoked can still be trusted while it cannot be reached.
+     * The longest a key set may be used, counted from its last successful fetch. Once a set is older, the next
+     * lookup waits on fetching it again, and fails while the IdP is unreachable. Must be longer than
+     * {@link #jwksRefreshInterval}, so it only takes effect when refreshes fail, or on a pod with no lookups for
+     * that long. Unset (the default), the last fetched keys are used for as long as an outage lasts, as
+     * Microsoft.IdentityModel and go-oidc do. Setting it bounds how long a key the IdP has revoked can still be
+     * trusted while it cannot be reached.
      */
     private Duration jwksMaxStaleness;
 

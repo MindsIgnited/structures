@@ -235,8 +235,8 @@ class JwksResilienceTest {
             assertNotNull(await(service.getKey(idp.issuer, "unknown-" + UUID.randomUUID())).error());
         }
 
-        assertTrue(idp.jwksHits.get() <= 2,
-                   "25 tokens with unknown key ids caused " + idp.jwksHits.get() + " JWKS fetches");
+        assertEquals(2, idp.jwksHits.get(),
+                     "25 tokens with unknown key ids should cause one refresh after the first load");
     }
 
     @Test
@@ -340,8 +340,14 @@ class JwksResilienceTest {
         DefaultJwksService service = newService(properties);
         assertNull(await(service.getKey(idp.issuer, "k1")).error());
 
+        // both slow to answer, so a lookup that waited on either refresh would take over half a second
+        idp.wellKnown = FakeIdp.delayed(Duration.ofMillis(600), "{\"issuer\":\"" + idp.issuer + "\",\"jwks_uri\":\"" + idp.jwksUri + "\"}");
+        idp.jwks = FakeIdp.delayed(Duration.ofMillis(600), jwks(Map.of("k1", keyPair1)));
         Thread.sleep(350);
+        long start = System.nanoTime();
         assertNull(await(service.getKey(idp.issuer, "k1")).error()); // served the cached copies of both
+        assertTrue(Duration.ofNanos(System.nanoTime() - start).compareTo(Duration.ofMillis(300)) < 0,
+                   "the lookup waited on a refresh");
 
         awaitHits(idp.wellKnownHits, 2);
         awaitHits(idp.jwksHits, 2);
@@ -360,6 +366,88 @@ class JwksResilienceTest {
             assertNull(outcome.error(), "a failed discovery refresh broke key lookups: " + outcome.error());
         }
         assertTrue(idp.wellKnownHits.get() > 1, "the discovery document was never refreshed");
+    }
+
+    @Test
+    void changedJwksUriIsUsedAfterTheDiscoveryRefresh() throws Exception {
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(300));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.movedJwks = FakeIdp.ok(jwks(Map.of("k1", keyPair1, "k2", keyPair2)));
+        idp.serveDiscovery(idp.movedJwksUri);
+        Thread.sleep(350);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error()); // starts the discovery refresh
+        awaitHits(idp.wellKnownHits, 2);
+
+        Outcome<Jwk<? extends Key>> moved = await(service.getKey(idp.issuer, "k2"));
+        assertNull(moved.error(), "the key set at the new jwks_uri was not used: " + moved.error());
+        assertEquals(1, idp.movedJwksHits.get(), "fetches from the new jwks_uri");
+    }
+
+    @Test
+    void changedJwksUriThatFailsDoesNotFallBackToTheOldKeys() throws Exception {
+        // documented: the first lookup after the discovery refresh loads the new URL, and fails with it
+        OidcSecurityServiceProperties properties = properties().setJwksRefreshInterval(Duration.ofMillis(300));
+        DefaultJwksService service = newService(properties);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error());
+
+        idp.movedJwks = FakeIdp.status(503);
+        idp.serveDiscovery(idp.movedJwksUri);
+        Thread.sleep(350);
+        assertNull(await(service.getKey(idp.issuer, "k1")).error()); // starts the discovery refresh
+        awaitHits(idp.wellKnownHits, 2);
+
+        Outcome<Jwk<? extends Key>> outcome = await(service.getKey(idp.issuer, "k1"));
+        assertNotNull(outcome.error(), "keys cached under the old jwks_uri were used");
+        assertTrue(outcome.error().getMessage().contains("certs-moved"), outcome.error().getMessage());
+    }
+
+    @Test
+    void failedFirstDiscoveryFetchIsRetriedAfterTheBackoff() throws Exception {
+        idp.wellKnown = FakeIdp.status(503);
+        DefaultJwksService service = newService(properties().setJwksRetryBackoff(Duration.ofMillis(500)));
+
+        for (int i = 0; i < 10; i++) {
+            assertNotNull(await(service.getKey(idp.issuer, "k1")).error());
+        }
+        assertEquals(1, idp.wellKnownHits.get(), "lookups within the backoff fetched the discovery document again");
+
+        idp.serveDiscovery();
+        Thread.sleep(600);
+        Outcome<Jwk<? extends Key>> recovered = await(service.getKey(idp.issuer, "k1"));
+        assertNull(recovered.error(), "not retried after the backoff: " + recovered.error());
+    }
+
+    @Test
+    void jwtLibraryErrorsAreSanitizedInTheLog() {
+        // JJWT copies the token's alg header into its error message, so a forged alg reaches the rejection log
+        String valid = token(idp.issuer, "k1", keyPair1);
+        String[] parts = valid.split("\\.");
+        String header = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "{\"alg\":\"RS256\\nERROR forged log line\",\"kid\":\"k1\"}".getBytes(StandardCharsets.UTF_8));
+        String forged = header + "." + parts[1] + "." + parts[2];
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(OidcSecurityService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        ch.qos.logback.classic.Level previous = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        logger.addAppender(appender);
+        try {
+            OidcSecurityServiceProperties properties = properties();
+            OidcSecurityService securityService = new OidcSecurityService(properties, newService(properties));
+            assertNotNull(await(securityService.authenticate(Map.of("authorization", "Bearer " + forged))).error());
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previous);
+        }
+
+        List<String> messages = appender.list.stream().map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage).toList();
+        assertTrue(messages.stream().anyMatch(m -> m.contains("forged log line")), "the rejection was not logged: " + messages);
+        assertTrue(messages.stream().noneMatch(m -> m.contains("\n")), "a control character from the token reached the log: " + messages);
     }
 
     // --- Key rotation --------------------------------------------------------------------------------------------
@@ -414,6 +502,12 @@ class JwksResilienceTest {
                      () -> newService(properties().setJwksRefreshInterval(null)));
         assertThrows(IllegalArgumentException.class,
                      () -> newService(properties().setJwksMaxStaleness(Duration.ZERO)));
+        // with the default 1 h refresh interval, keys would be evicted before a refresh was due
+        assertThrows(IllegalArgumentException.class,
+                     () -> newService(properties().setJwksMaxStaleness(Duration.ofMinutes(30))));
+        assertThrows(IllegalArgumentException.class,
+                     () -> newService(properties().setJwksMaxStaleness(Duration.ofHours(1))));
+        assertDoesNotThrow(() -> newService(properties().setJwksMaxStaleness(Duration.ofHours(2))));
         assertDoesNotThrow(() -> newService(properties().setJwksMaxStaleness(null)));
     }
 
@@ -576,17 +670,21 @@ class JwksResilienceTest {
         final ExecutorService executor = Executors.newCachedThreadPool();
         final String issuer;
         final String jwksUri;
+        final String movedJwksUri;
         final AtomicInteger wellKnownHits = new AtomicInteger();
         final AtomicInteger jwksHits = new AtomicInteger();
+        final AtomicInteger movedJwksHits = new AtomicInteger();
         final CountDownLatch released = new CountDownLatch(1);
         volatile Behavior wellKnown;
         volatile Behavior jwks;
+        volatile Behavior movedJwks = status(404);
 
         FakeIdp() throws IOException {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.setExecutor(executor);
             issuer = "http://127.0.0.1:" + server.getAddress().getPort() + "/realms/test";
             jwksUri = issuer + "/protocol/openid-connect/certs";
+            movedJwksUri = issuer + "/protocol/openid-connect/certs-moved";
             server.createContext("/realms/test/.well-known/openid-configuration", exchange -> {
                 wellKnownHits.incrementAndGet();
                 run(wellKnown, exchange);
@@ -595,10 +693,18 @@ class JwksResilienceTest {
                 jwksHits.incrementAndGet();
                 run(jwks, exchange);
             });
+            server.createContext("/realms/test/protocol/openid-connect/certs-moved", exchange -> {
+                movedJwksHits.incrementAndGet();
+                run(movedJwks, exchange);
+            });
             server.start();
         }
 
         void serveDiscovery() {
+            serveDiscovery(jwksUri);
+        }
+
+        void serveDiscovery(String jwksUri) {
             wellKnown = ok("{\"issuer\":\"" + issuer + "\",\"jwks_uri\":\"" + jwksUri + "\"}");
         }
 

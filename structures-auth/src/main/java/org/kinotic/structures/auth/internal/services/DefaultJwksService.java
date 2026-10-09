@@ -65,7 +65,6 @@ import reactor.netty.resources.ConnectionProvider;
 @ConditionalOnProperty(prefix = "oidc-security-service", name = "enabled", havingValue = "true", matchIfMissing = false)
 public class DefaultJwksService implements JwksService {
 
-    private static final int MAX_LOGGED_CLAIM_LENGTH = 200;
     private static final String KEY_SET = "JWKS";
     private static final String WELL_KNOWN = "OIDC discovery document";
 
@@ -92,8 +91,11 @@ public class DefaultJwksService implements JwksService {
         requirePositive("jwks-refresh-interval", properties.getJwksRefreshInterval());
         requireNotNegative("jwks-refresh-cooldown", properties.getJwksRefreshCooldown());
         requireNotNegative("jwks-retry-backoff", properties.getJwksRetryBackoff());
-        if (properties.getJwksMaxStaleness() != null) {
-            requirePositive("jwks-max-staleness", properties.getJwksMaxStaleness());
+        if (properties.getJwksMaxStaleness() != null
+                && properties.getJwksMaxStaleness().compareTo(properties.getJwksRefreshInterval()) <= 0) {
+            // otherwise keys would be evicted before a refresh is due, so logins would wait on a fetch every time
+            throw new IllegalArgumentException("oidc-security-service.jwks-max-staleness must be longer than jwks-refresh-interval ("
+                                               + properties.getJwksRefreshInterval() + "), got " + properties.getJwksMaxStaleness());
         }
         this.properties = properties;
         this.webClient = createWebClient(false);
@@ -132,6 +134,8 @@ public class DefaultJwksService implements JwksService {
                         failedLoads.put(failureKey, new FailedLoad(System.nanoTime(), CompletionErrors.unwrap(error)));
                     } else {
                         failedLoads.remove(failureKey);
+                        // a refresh error from before an eviction no longer describes the cached value
+                        failedRefreshes.remove(failureKey);
                     }
                 });
             }
@@ -272,10 +276,10 @@ public class DefaultJwksService implements JwksService {
     }
 
     /**
-     * When {@link OidcSecurityServiceProperties#getJwksMaxStaleness()} is set, evicts the key set once every
-     * refresh has failed for longer than that, so the lookup loads it, or fails. Checked before the lookup, which
-     * would otherwise start a refresh that is then thrown away. Compares the set, not the future holding it,
-     * since a failed refresh stores the same set in a new future.
+     * When {@link OidcSecurityServiceProperties#getJwksMaxStaleness()} is set, evicts the key set once it is
+     * older than that, counted from its last successful fetch, so the lookup loads it, or fails. Checked before
+     * the lookup, which would otherwise start a refresh that is then thrown away. Compares the completed set
+     * rather than holding on to the future, so a set replaced by a concurrent lookup is kept.
      */
     private void evictIfTooStale(String jwksUrl) {
         Duration maxStaleness = properties.getJwksMaxStaleness();
@@ -296,21 +300,21 @@ public class DefaultJwksService implements JwksService {
         if (jwk != null) {
             return CompletableFuture.completedFuture(jwk);
         }
-        CompletableFuture<KeySet> refresh = refreshForUnknownKid(jwksUrl);
-        if (refresh == null) {
-            return CompletableFuture.failedFuture(keyNotFound(issuer, kid));
-        }
-        return refresh.thenCompose(refreshed -> {
+        return refreshForUnknownKid(jwksUrl).thenCompose(refreshed -> {
             Jwk<? extends Key> rotated = refreshed.keys().get(kid);
             if (rotated != null) {
                 return CompletableFuture.completedFuture(rotated);
             }
             // The same set back means the refresh failed and kept it, so report why rather than a missing key
             Throwable refreshError = refreshed == keySet ? failedRefreshes.get(KEY_SET + " " + jwksUrl) : null;
-            return CompletableFuture.failedFuture(refreshError != null
-                                                          ? new JwksFetchException("Could not refresh the JWKS to find key id '"
-                                                                                           + sanitize(kid) + "': " + refreshError.getMessage(), refreshError)
-                                                          : keyNotFound(issuer, kid));
+            if (refreshError == null) {
+                return CompletableFuture.failedFuture(keyNotFound(issuer, kid));
+            }
+            rejections.log("Rejecting token from issuer {}, the JWKS could not be refreshed to find its key id {}: {}",
+                           issuer, kid, refreshError.getMessage());
+            return CompletableFuture.failedFuture(new JwksFetchException("Could not refresh the JWKS to find key id '"
+                                                                                 + UntrustedText.sanitize(kid) + "': "
+                                                                                 + refreshError.getMessage(), refreshError));
         });
     }
 
@@ -321,7 +325,7 @@ public class DefaultJwksService implements JwksService {
      * use that refresh, so a burst of tokens signed with a new key all wait on the one fetch. The cached set
      * keeps serving known key ids meanwhile, and stays cached if the refresh fails.
      *
-     * @return the refresh to look the key id up in, or null when the key set may not be refreshed yet
+     * @return the refresh to look the key id up in, the one started here or the recent one within the cooldown
      */
     private CompletableFuture<KeySet> refreshForUnknownKid(String jwksUrl) {
         long cooldown = properties.getJwksRefreshCooldown().toNanos();
@@ -333,21 +337,23 @@ public class DefaultJwksService implements JwksService {
             }
             return new UnknownKidRefresh(now, started);
         });
-        if (refresh != null && refresh.future() == started) {
+        if (refresh.future() == started) {
             // started here, outside compute, so the fetch is not set up while holding the map's lock
-            keySetCache.synchronous().refresh(jwksUrl).whenComplete((refreshed, error) -> {
-                if (error != null) {
-                    started.completeExceptionally(error);
-                } else {
-                    started.complete(refreshed);
-                }
-            });
+            try {
+                keySetCache.synchronous().refresh(jwksUrl).whenComplete((refreshed, error) -> {
+                    if (error != null) {
+                        started.completeExceptionally(error);
+                    } else {
+                        started.complete(refreshed);
+                    }
+                });
+            } catch (RuntimeException e) {
+                // other lookups within the cooldown wait on started, so it must complete
+                started.completeExceptionally(e);
+            }
         }
-        // A refresh started here is always used, even with a zero cooldown. One a concurrent lookup started after
-        // now is fine too, the difference is then negative.
-        return refresh != null && (refresh.future() == started || now - refresh.startedNanos() < cooldown)
-                ? refresh.future()
-                : null;
+        // Either the refresh started here, or one within the cooldown, which compute only keeps when it is
+        return refresh.future();
     }
 
     private CompletableFuture<KeySet> fetchKeySet(String jwksUrl) {
@@ -449,30 +455,15 @@ public class DefaultJwksService implements JwksService {
      * disabled. An {@link AuthenticationException}, so the gateway reports this message to the client.
      */
     private AuthenticationException notConfigured(String issuer) {
-        String safeIssuer = sanitize(issuer);
+        String safeIssuer = UntrustedText.sanitize(issuer);
         rejections.log("Rejecting token from issuer {}, no enabled OIDC provider has it as its authority", safeIssuer);
         return new AuthenticationException("Issuer not allowed: " + safeIssuer);
     }
 
     private JwksFetchException keyNotFound(String issuer, String kid) {
-        String safeKid = sanitize(kid);
+        String safeKid = UntrustedText.sanitize(kid);
         rejections.log("Rejecting token from issuer {}, its key id {} is not in the issuer's JWKS", issuer, safeKid);
         return new JwksFetchException("Key with kid '" + safeKid + "' not found in JWKS for issuer: " + issuer);
-    }
-
-    /**
-     * A claim from an unverified token, made safe to log or return: shortened, with control characters replaced
-     */
-    private static String sanitize(String claim) {
-        if (claim == null) {
-            return null;
-        }
-        String shortened = claim.length() > MAX_LOGGED_CLAIM_LENGTH
-                ? claim.substring(0, MAX_LOGGED_CLAIM_LENGTH) + "..."
-                : claim;
-        StringBuilder safe = new StringBuilder(shortened.length());
-        shortened.codePoints().forEach(c -> safe.appendCodePoint(Character.isISOControl(c) ? '?' : c));
-        return safe.toString();
     }
 
     private static void requirePositive(String name, Duration value) {

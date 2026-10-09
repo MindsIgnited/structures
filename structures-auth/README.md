@@ -157,7 +157,7 @@ oidc-security-service:
 | `jwks-connect-timeout` | duration | `5s` | TCP connect timeout for discovery and JWKS fetches |
 | `jwks-request-timeout` | duration | `10s` | End-to-end timeout for one discovery or JWKS fetch |
 | `jwks-refresh-interval` | duration | `1h` | How often each key set and discovery document is refreshed; a failed refresh keeps the cached copy |
-| `jwks-max-staleness` | duration | unset | How long the last fetched keys may be used while every refresh fails. Unset, they are used for as long as an outage lasts |
+| `jwks-max-staleness` | duration | unset | The longest a key set may be used, counted from its last successful fetch; must be longer than `jwks-refresh-interval`. Unset, the last fetched keys are used for as long as an outage lasts |
 | `jwks-refresh-cooldown` | duration | `30s` | Minimum time between key set refreshes caused by tokens with an unknown key id |
 | `jwks-retry-backoff` | duration | `5s` | After a fetch fails with nothing cached, how long lookups fail with that error before one fetches again |
 
