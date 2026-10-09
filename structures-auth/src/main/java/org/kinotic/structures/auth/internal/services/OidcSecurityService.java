@@ -38,6 +38,7 @@ public class OidcSecurityService implements SecurityService {
     
     private final OidcSecurityServiceProperties properties;
     private final JwksService jwksService;
+    private final RejectionLog rejections = new RejectionLog(log);
 
     @Override
     public CompletableFuture<Participant> authenticate(Map<String, String> authenticationInfo) {
@@ -71,8 +72,19 @@ public class OidcSecurityService implements SecurityService {
     }
 
     private CompletableFuture<Participant> verifyJwtToken(String token) {
-        return jwksService.getKeyFromToken(token)
-            .thenCompose(key -> validateTokenWithKey(token, key));
+        // Completed with the original error, not the CompletionException a dependent stage wraps it in, so the
+        // gateway sees an AuthenticationException as one and reports its message instead of a generic one
+        CompletableFuture<Participant> result = new CompletableFuture<>();
+        jwksService.getKeyFromToken(token)
+                   .thenCompose(key -> validateTokenWithKey(token, key))
+                   .whenComplete((participant, error) -> {
+                       if (error != null) {
+                           result.completeExceptionally(CompletionErrors.unwrap(error));
+                       } else {
+                           result.complete(participant);
+                       }
+                   });
+        return result;
     }
 
     private CompletableFuture<Participant> validateTokenWithKey(String token, Jwk<? extends Key> jwk) {
@@ -131,7 +143,8 @@ public class OidcSecurityService implements SecurityService {
 
             // Extract roles from claims
             List<String> roles = null;
-            if(oidcProvider.getRolesClaimPath() != null) {
+            // blank counts as unset, a Helm value left empty renders as an empty string
+            if(oidcProvider.getRolesClaimPath() != null && !oidcProvider.getRolesClaimPath().isBlank()) {
                 // function below will return an empty list if no roles are found at configured path
                 roles = extractRolesFromClaims(oidcProvider, claims);
                 if(roles.isEmpty()) {
@@ -153,7 +166,8 @@ public class OidcSecurityService implements SecurityService {
             return CompletableFuture.completedFuture(participant);
 
         } catch (JwtException e) {
-            log.error("JWT parsing/validation failed", e);
+            // an expired or forged token, anyone can send these
+            rejections.log("Rejecting token, JWT parsing/validation failed: {}", e.getMessage());
             return CompletableFuture.failedFuture(new RuntimeException("JWT parsing/validation failed", e));
         } catch (Exception e) {
             log.error("Unexpected error during JWT validation", e);
@@ -174,10 +188,7 @@ public class OidcSecurityService implements SecurityService {
             return null;
         }
 
-        List<OidcProvider> candidates = properties.getOidcProviders().stream()
-                .filter(p -> issuer.equals(p.getAuthority()))
-                .filter(OidcProvider::isEnabled)
-                .toList();
+        List<OidcProvider> candidates = properties.findEnabledProviders(issuer);
 
         if (candidates.isEmpty()) {
             log.warn("No enabled Oidc Providers configured for issuer: {}", issuer);
