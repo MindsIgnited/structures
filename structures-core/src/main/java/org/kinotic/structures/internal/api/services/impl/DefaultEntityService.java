@@ -30,6 +30,7 @@ import org.kinotic.structures.internal.api.hooks.ReadPreProcessor;
 import org.kinotic.structures.internal.api.services.ElasticVersion;
 import org.kinotic.structures.internal.api.services.EntityHolder;
 import org.kinotic.structures.internal.api.services.EntityService;
+import org.kinotic.structures.internal.utils.ElasticVersionConflicts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -649,12 +650,12 @@ public class DefaultEntityService implements EntityService {
                     .thenCompose(un -> delegatingUpsertPreProcessor.process(entity, context))
                     .thenCompose(entityHolder ->
                                          authService.authorize(operation, context)
-                                                    .thenCompose(un -> persistLogic.apply(entityHolder)));
+                                                    .thenCompose(un -> translateVersionConflict(persistLogic.apply(entityHolder))));
         }else{
             return validateContext(context)
                     .thenCompose(un -> authService.authorize(operation, context))
                     .thenCompose(un -> delegatingUpsertPreProcessor.process(entity, context))
-                    .thenCompose(persistLogic);
+                    .thenCompose(entityHolder -> translateVersionConflict(persistLogic.apply(entityHolder)));
         }
     }
 
@@ -700,18 +701,34 @@ public class DefaultEntityService implements EntityService {
         return esAsyncClient.bulk(br.build()).thenCompose(bulkResponse -> {
             if (bulkResponse.errors()) {
                 StringBuilder builder = new StringBuilder();
+                boolean onlyConflicts = true;
                 for (BulkResponseItem item : bulkResponse.items()) {
                     var error = item.error();
-                    if (error != null && error.reason() != null && builder.indexOf(error.reason()) == -1) {
-                        builder.append(error.reason()).append("\n");
+                    if (error != null) {
+                        onlyConflicts &= ElasticVersionConflicts.isConflict(item);
+                        if (error.reason() != null && builder.indexOf(error.reason()) == -1) {
+                            builder.append(error.reason()).append("\n");
+                        }
                     }
                 }
                 String errorMessage = !builder.isEmpty() ? builder.toString() : "Unknown error occurred during bulk operation";
+                if (onlyConflicts) {
+                    return CompletableFuture.failedFuture(ElasticVersionConflicts.bulkConflict(structure.getName(), errorMessage));
+                }
                 return CompletableFuture.failedFuture(new IllegalArgumentException("Bulk save failed with errors:\n" + errorMessage));
             } else {
                 return CompletableFuture.completedFuture(bulkResponse);
             }
         });
+    }
+
+    /**
+     * Turns a 409 from Elasticsearch into a {@link org.kinotic.structures.api.exceptions.VersionConflictException},
+     * so callers can tell a stale version from a server error
+     */
+    private <R> CompletableFuture<R> translateVersionConflict(CompletableFuture<R> future){
+        return future.exceptionallyCompose(throwable -> CompletableFuture.failedFuture(
+                ElasticVersionConflicts.translate(throwable, structure.getName(), objectMapper)));
     }
 
     private String extractTenant(Object object, String tenantIdFieldName){

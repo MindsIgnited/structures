@@ -314,6 +314,17 @@ try {
 }
 ```
 
+**When a write conflicts**
+
+A save or update that carries a stale version is refused. So is a save without a version for an id that already exists, since that save is a create. How the caller sees it depends on the API:
+
+- **TypeScript client**: the promise rejects with an error whose message contains `version conflict`.
+- **REST (OpenAPI)**: the response is `409 Conflict` with a body like `{"error": "Version conflict writing Order: ..."}`.
+- **GraphQL**: the response carries a GraphQL error whose message contains `version conflict`.
+- **Java**: the future fails with `org.kinotic.structures.api.exceptions.VersionConflictException`.
+
+To recover, read the entity again to get its current version, reapply the change, and retry. In a bulk save or bulk update, Elasticsearch applies each item on its own. Items that did not conflict are written, and the error lists the ones that did.
+
 ## Time Reference Decorators
 
 ### @TimeReference

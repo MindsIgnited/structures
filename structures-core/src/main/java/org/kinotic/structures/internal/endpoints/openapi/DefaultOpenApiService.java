@@ -367,6 +367,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                   structure,
                                                   1)
                 .requestBody(structureRequestBody);
+        addConflictResponse(saveOperation, structure);
         structurePathItem.post(saveOperation);
 
         // add the path item for all paths like basePath/structureApplication/structureName/
@@ -391,6 +392,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                     structure,
                                                     1)
                 .requestBody(structureRequestBody);
+        addConflictResponse(updateOperation, structure);
         updatePathItem.post(updateOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/update", updatePathItem);
 
@@ -403,6 +405,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                       structure,
                                                       -1)
                 .requestBody(OpenApiUtils.createArrayRequest(structureRefSchema, "List of entities to save"));
+        addConflictResponse(bulkSaveOperation, structure);
         bulkSavePathItem.post(bulkSaveOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/bulk", bulkSavePathItem);
 
@@ -415,6 +418,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         structure,
                                                         -1)
                 .requestBody(OpenApiUtils.createArrayRequest(structureRefSchema, "List of entities to update"));
+        addConflictResponse(bulkUpdateOperation, structure);
         bulkUpdatePathItem.post(bulkUpdateOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/bulk-update", bulkUpdatePathItem);
 
@@ -592,6 +596,16 @@ public class DefaultOpenApiService implements OpenApiService {
                                                                    new MediaType().schema(refSchema)));
         } else {
             return null;
+        }
+    }
+
+    /**
+     * Writes can conflict when the Structure uses optimistic locking, or is a stream where only creates are allowed
+     */
+    private static void addConflictResponse(Operation operation, Structure structure){
+        if(structure.isOptimisticLockingEnabled() || structure.isStream()){
+            operation.getResponses()
+                     .put("409", new ApiResponse().description("Conflict, the entity changed since its version was read or already exists"));
         }
     }
 

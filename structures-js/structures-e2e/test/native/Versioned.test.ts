@@ -89,12 +89,8 @@ describe('End To End Tests', () => {
          savedVehicle.color = 'Grey'
          await logFailure(entityService.update(savedVehicle), 'Failed to update vehicle')
 
-         // try and save same one again
-         try {
-             await entityService.update(savedVehicle)
-         } catch (e: any) {
-             expect(e.message).toEqual(expect.stringContaining('version conflict'))
-         }
+         // Updating with the version from before that update must be refused
+         await expect(entityService.update(savedVehicle)).rejects.toThrow('version conflict')
 
          await expect(entityService.deleteById(savedVehicle.id)).resolves.toBeNull()
      })
