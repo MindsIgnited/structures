@@ -700,7 +700,7 @@ public class DefaultEntityService implements EntityService {
 
         return esAsyncClient.bulk(br.build()).thenCompose(bulkResponse -> {
             if (bulkResponse.errors()) {
-                // Each conflict reason names its own document, a set keeps finding duplicates cheap for large calls
+                // Each conflict reason names its own document, so a set keeps dropping duplicates cheap for large calls
                 Set<String> reasons = new LinkedHashSet<>();
                 int errors = 0;
                 int conflicts = 0;

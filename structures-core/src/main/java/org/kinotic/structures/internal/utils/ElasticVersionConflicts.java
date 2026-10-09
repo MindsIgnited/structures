@@ -23,7 +23,6 @@ import java.util.Collection;
 public final class ElasticVersionConflicts {
 
     private static final int CONFLICT = 409;
-    private static final int MAX_LISTED_REASONS = 20;
 
     private ElasticVersionConflicts() {
     }
@@ -77,19 +76,13 @@ public final class ElasticVersionConflicts {
     }
 
     /**
-     * Lists bulk item reasons one per line, at most {@link #MAX_LISTED_REASONS} of them. Each conflict reason names
-     * its own document, so a large bulk call could otherwise produce a message as long as the request.
+     * Lists bulk item reasons one per line. Every reason is listed, since callers find the items that failed by
+     * reading the document ids out of them.
      */
     public static String listReasons(Collection<String> reasons) {
         StringBuilder builder = new StringBuilder();
-        int listed = 0;
         for(String reason : reasons){
-            if(listed == MAX_LISTED_REASONS){
-                builder.append("and ").append(reasons.size() - listed).append(" more\n");
-                break;
-            }
             builder.append(reason).append("\n");
-            listed++;
         }
         return builder.toString();
     }

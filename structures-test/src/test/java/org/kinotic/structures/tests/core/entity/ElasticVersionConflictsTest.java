@@ -79,14 +79,15 @@ class ElasticVersionConflictsTest {
     }
 
     @Test
-    void bulkConflictListsAtMostTwentyReasons() {
+    void bulkConflictListsEveryReason() {
         List<String> reasons = IntStream.range(0, 25).mapToObj(i -> "[kinotic-" + i + "]: version conflict").toList();
 
         String message = ElasticVersionConflicts.bulkConflict(structure(), 25, 25, reasons).getMessage();
 
-        Assertions.assertTrue(message.contains("[kinotic-19]"), message);
-        Assertions.assertFalse(message.contains("[kinotic-20]"), message);
-        Assertions.assertTrue(message.contains("and 5 more\n"), message);
+        // Callers find the failed items by the document ids in the reasons, so none may be left out
+        for(String reason : reasons){
+            Assertions.assertTrue(message.contains(reason + "\n"), message);
+        }
     }
 
     private VersionConflictException translate(Throwable failure, Structure structure) {

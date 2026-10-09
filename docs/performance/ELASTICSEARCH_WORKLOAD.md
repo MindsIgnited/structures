@@ -226,6 +226,33 @@ Follow-ups, not done yet:
 
   This fits with step 2 (chunks report their errors together at the end) and step 3 (the limiter
   reacts to the same 429s).
+- **Tell bulk callers which items failed.** Not done yet. A failed bulk call rejects with one
+  message that lists each distinct Elasticsearch reason, one per line. Callers can't get a list of
+  the failed items. The best they can do is parse ids out of that text, and that only works for
+  some failures:
+  - **Version conflict reasons** name the stored document id, e.g. `[kinotic-123]: version
+    conflict, ...`. On shared multi-tenant structures that id has the tenant prefixed.
+  - **Many other reasons, such as mapping errors, don't name the document.** Identical reasons are
+    listed once, so 50 items failing the same way show as one line.
+
+  The items that didn't fail are written either way, since Elasticsearch applies each bulk item on
+  its own. Keep listing every reason until this is done, because parsing them is the only option
+  callers have. Elasticsearch returns bulk results in request order, so each failure can be mapped
+  back to its position in the submitted array and to its entity id.
+
+  Over STOMP only the exception's message reaches the JS client. `EventBus` reads just the error
+  header, and Continuum's `ServiceExceptionWrapper` carries only the class, message and stack. So
+  the options are:
+  1. **A result instead of `void`** (preferred): bulk calls return something like
+     `{failures: [{index, id, status, reason}]}`. It works the same over STOMP, REST and Java
+     without changing Continuum. A call that partly failed would no longer reject, so callers that
+     ignore the result would miss failures. Ship it as new methods, or in a major version.
+  2. **A typed exception that carries the failures**: easy for the REST body, but over STOMP it
+     needs Continuum to serialize the extra fields and continuum-client-js to read them.
+  3. **JSON inside the message**: works on every transport today, but callers parse error text.
+     Avoid.
+
+  Do this together with the item above, so each failure also carries a status a client can act on.
 - **Keep Elasticsearch details out of single-write errors.** Found in the second review of PR #26,
   not done yet. The async client hands back any status it isn't told to expect as the low-level
   `ResponseException`. It does this for 429, 503 and 409 too (only 400-405 come back as typed
