@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
-import org.elasticsearch.client.ResponseException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -19,6 +18,7 @@ import org.kinotic.structures.api.domain.RawJson;
 import org.kinotic.structures.api.domain.Structure;
 import org.kinotic.structures.api.domain.idl.decorators.MultiTenancyType;
 import org.kinotic.structures.api.domain.idl.decorators.VersionDecorator;
+import org.kinotic.structures.api.exceptions.VersionConflictException;
 import org.kinotic.structures.api.services.ApplicationService;
 import org.kinotic.structures.api.services.EntitiesService;
 import org.kinotic.structures.api.services.StructureService;
@@ -32,7 +32,6 @@ import org.kinotic.structures.tests.core.support.TestHelper;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -139,7 +138,9 @@ public abstract class AbstractEntityRefreshTests extends ElasticTestBase {
         }else{
             CompletionException thrown = Assertions.assertThrows(CompletionException.class,
                                                                  () -> update(structure, fromSearch, context, VersionedPerson.class));
-            Assertions.assertTrue(isVersionConflict(thrown), () -> "Expected a version conflict but got " + thrown);
+            Assertions.assertInstanceOf(VersionConflictException.class,
+                                        thrown.getCause(),
+                                        () -> "Expected a version conflict but got " + thrown);
 
             VersionedPerson fromId = fromRawJson(entitiesService.findById(structure.getId(),
                                                                           updated.getId(),
@@ -165,19 +166,6 @@ public abstract class AbstractEntityRefreshTests extends ElasticTestBase {
                                  .thenCompose(created -> structureService.publish(created.getId())
                                                                          .thenCompose(v -> structureService.findById(created.getId())))
                                  .join();
-    }
-
-    private static boolean isVersionConflict(Throwable thrown) {
-        for(Throwable cause = thrown; cause != null; cause = cause.getCause()){
-            if(cause instanceof ElasticsearchException e && e.status() == 409){
-                return true;
-            }
-            // update sends its request through the low level client, which reports errors as a ResponseException
-            if(cause instanceof ResponseException e && e.getResponse().getStatusLine().getStatusCode() == 409){
-                return true;
-            }
-        }
-        return false;
     }
 
     /**

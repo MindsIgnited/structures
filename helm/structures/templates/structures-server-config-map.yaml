@@ -132,14 +132,31 @@ data:
   OIDC_SECURITY_SERVICE_ENABLED: "{{ .Values.oidc.enabled }}"
   OIDC_SECURITY_SERVICE_DEBUG: "{{ .Values.oidc.debug }}"
   OIDC_SECURITY_SERVICE_FRONTEND_CONFIGURATION_PATH: "{{ .Values.oidc.frontendConfigurationPath }}"
+  {{- if .Values.oidc.tenantIdFieldName }}
+  OIDC_SECURITY_SERVICE_TENANT_ID_FIELD_NAME: "{{ .Values.oidc.tenantIdFieldName }}"
+  {{- end }}
+  {{- /* Spring reads a bare number as milliseconds, so these need a unit, like 5s, or ISO-8601, like PT5S */}}
+  {{- range $key, $env := dict "jwksConnectTimeout" "JWKS_CONNECT_TIMEOUT" "jwksRequestTimeout" "JWKS_REQUEST_TIMEOUT" "jwksRefreshInterval" "JWKS_REFRESH_INTERVAL" "jwksMaxStaleness" "JWKS_MAX_STALENESS" "jwksRefreshCooldown" "JWKS_REFRESH_COOLDOWN" "jwksRetryBackoff" "JWKS_RETRY_BACKOFF" }}
+  {{- with index $.Values.oidc $key }}
+  {{- if not (regexMatch "(?i)^([0-9]+(ns|us|ms|s|m|h|d)|P[0-9A-Z.]+)$" (toString .)) }}
+  {{- fail (printf "oidc.%s must have a unit, such as 5s or 500ms, got %v" $key .) }}
+  {{- end }}
+  OIDC_SECURITY_SERVICE_{{ $env }}: "{{ . }}"
+  {{- end }}
+  {{- end }}
   {{- range $index,$value:= .Values.oidc.oidcProviders }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_PROVIDER: "{{ $value.provider }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_DISPLAY_NAME: "{{ $value.displayName }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ENABLED: "{{ $value.enabled }}"
+  {{- if $value.rolesClaimPath }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ROLES_CLAIM_PATH: "{{ $value.rolesClaimPath }}"
+  {{- end }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_AUDIENCE: "{{ $value.audience }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_CLIENT_ID: "{{ $value.clientId }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_AUTHORITY: "{{ $value.authority }}"
+  {{- if $value.jwksUri }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_JWKS_URI: "{{ $value.jwksUri }}"
+  {{- end }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_REDIRECT_URI: "{{ $value.redirectUri }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_POST_LOGOUT_REDIRECT_URI: "{{ $value.postLogoutRedirectUri }}"
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_SILENT_REDIRECT_URI: "{{ $value.silentRedirectUri }}"
@@ -148,6 +165,15 @@ data:
   {{- end }}
   {{- range $roleIndex,$roleValue:= $value.roles }}
   OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ROLES_{{ $roleIndex }}: "{{ $roleValue }}"
+  {{- end }}
+  {{- if $value.allowAnyDomain }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ALLOW_ANY_DOMAIN: "{{ $value.allowAnyDomain }}"
+  {{- end }}
+  {{- range $roleIndex,$roleValue:= $value.frontEndRoles }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_FRONT_END_ROLES_{{ $roleIndex }}: "{{ $roleValue }}"
+  {{- end }}
+  {{- if $value.additionalScopes }}
+  OIDC_SECURITY_SERVICE_OIDC_PROVIDERS_{{ $index }}_ADDITIONAL_SCOPES: "{{ $value.additionalScopes }}"
   {{- end }}
   {{- end }}
   {{- end }}

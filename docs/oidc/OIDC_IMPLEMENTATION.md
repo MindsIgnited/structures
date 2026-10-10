@@ -26,19 +26,19 @@ Handles JWKS (JSON Web Key Set) operations:
 - Extracts key information from JWT tokens
 - Provides efficient key lookup by issuer and key ID
 
-### 2. OidcAuthVerifier
+### 2. OidcSecurityService
 Main authentication component:
-- Implements SecurityService interface
-- Validates JWT tokens using JJWT 0.12.x
+- Implements the continuum `SecurityService` interface
+- Validates JWT tokens using JJWT
+- Rejects tokens whose issuer is not the authority of an enabled provider (`Issuer not allowed`)
+- Validates audience and required roles against the matching provider
 - Creates Participant objects from JWT claims
-- Handles issuer and audience validation
-- Supports multiple audience validation
 
-### 3. OidcAuthVerifierProperties
-Configuration properties for OIDC:
+### 3. OidcSecurityServiceProperties
+Configuration properties for OIDC, under `oidc-security-service`:
 - `enabled`: Enable/disable OIDC authentication
-- `allowedIssuers`: List of allowed OIDC issuers
-- `authorizationAudiences`: List of allowed audiences
+- `oidc-providers`: the providers, each with its `authority`, `audience`, roles and frontend settings
+- `jwks-*`: fetch and caching settings, see [Caching Strategy](#caching-strategy)
 
 ### 4. Frontend Integration
 Vue.js frontend components:
@@ -645,15 +645,106 @@ oidc-security-service:
 
 ## Caching Strategy
 
-### JWKS Key Cache
-- **TTL**: 1 hour
-- **Max Size**: 100 keys
-- **Purpose**: Cache individual public keys by issuer and key ID
+Keys are only ever fetched for an issuer that matches the `authority` of an enabled provider. A token from any
+other issuer, or from a disabled provider's issuer, is rejected with `Issuer not allowed` before anything is
+fetched.
+
+Cached documents are refreshed rather than expired. Once one is due, the next lookup starts a refresh in the
+background and is served the cached document meanwhile. A failed refresh keeps the cached document. An IdP
+outage, or a network problem between Structures and the IdP, therefore only fails lookups that need something
+not already cached.
+
+### JWKS Key Set Cache
+
+The key set of each provider is cached by JWKS URL, at most 100 of them. How it behaves in each situation:
+
+| Situation | What happens |
+|---|---|
+| Normal operation | The set is refreshed every `jwks-refresh-interval` (1 hour by default). Refreshes are lazy: the first lookup after the interval starts one and is served the cached set, so no login waits on it. |
+| A refresh fails | The cached set is kept and logged at warn with its age. The next refresh is attempted once `jwks-refresh-interval` passes again, not on every lookup. |
+| A long IdP outage | The last fetched keys keep working for as long as the outage lasts. Set `jwks-max-staleness`, longer than `jwks-refresh-interval`, to cap that. It is counted from the last successful fetch: once the keys are older, the next lookup waits on a fetch, and logins fail until the IdP is reachable. |
+| A token names an unknown key id | The provider may have rotated its keys, so the set is fetched again, at most once per `jwks-refresh-cooldown` (30 seconds by default). Tokens that arrive while that refresh runs, or within the cooldown after it, use its result, so a burst of tokens signed with a new key shares one fetch. |
+| Keys published ahead of use | Picked up by the next routine refresh, so no token waits on a fetch. On a pod with no logins between the key being published and first used, that refresh has not run yet, so the first such token waits on one fetch instead. It is not rejected. |
+| A refresh for an unknown key id fails | The token is rejected, and the fetch error is logged with the rejection. Clients see the gateway's generic authentication error. Tokens with known key ids keep working. |
+
+The cooldown counts only from refreshes that unknown key ids started, so a rotation just after a routine refresh
+is still picked up. A token signed with a rotated key is rejected only if it arrives within the cooldown after
+an unknown key id refresh that ran before the rotation.
+
+#### How this compares to other libraries
+
+Libraries differ mainly in what they do when a refresh fails while keys are cached:
+
+| Library | Routine refresh | Refresh fails while keys are cached | Unknown key id |
+|---|---|---|---|
+| Spring Security `NimbusJwtDecoder` (default) | Cache expires after 5 min | Validation fails | Refetch, not rate limited |
+| Nimbus `JWKSourceBuilder` (default) | 5 min, refreshed 30 s ahead | Fails, unless outage tolerance is enabled (off by default, then 50 min or forever) | Refetch, at most once per 30 s |
+| panva/jose | 10 min max age | Fails | Refetch, 30 s cooldown |
+| auth0 node-jwks-rsa | 10 min max age | Fails, unless a fallback window is set | Refetch, at most 10 per minute |
+| Microsoft.IdentityModel | Every 12 h | Keeps the current keys, no maximum age | Manual refresh at most every 5 min |
+| coreos/go-oidc | Keys do not expire | Keeps the cached keys | Refetch, not rate limited |
+| **Structures** | Every 1 h (`jwks-refresh-interval`) | Keeps the cached keys, optional `jwks-max-staleness` | Refetch, 30 s cooldown (`jwks-refresh-cooldown`) |
+
+Structures takes the availability side, as Microsoft.IdentityModel and go-oidc do: a network problem does not
+reject tokens that are still valid. The cost is that a key the IdP revokes while it cannot be reached is
+trusted until it can be; `jwks-max-staleness` bounds that for deployments that prefer to fail closed.
+
+#### Rotating keys without rejected logins
+
+Publish a new key before signing with it, and every pod picks it up in a routine refresh:
+
+- **Keycloak**: add the new key provider with the key *enabled* but not *active*, so it is published in the
+  JWKS but not used for signing. Wait at least `jwks-refresh-interval`, then make it active, and later disable
+  the old key once tokens signed with it have expired.
+- **Entra ID and Okta** publish upcoming keys ahead of use already.
+
+Without that, a rotation is still picked up through the unknown key id refresh, at the cost of one fetch.
 
 ### Well-known Configuration Cache
-- **TTL**: 24 hours
-- **Max Size**: 10 configurations
-- **Purpose**: Cache OIDC provider discovery documents
+- **Refresh**: every `jwks-refresh-interval`, like key sets; a failed refresh keeps the cached document, and
+  there is no maximum age
+- A lookup that finds both due refreshes both. The two run independently, neither waits for the other, and
+  the lookup is served the cached copies of both. The key set refresh uses the JWKS URL from the cached
+  document
+- A changed `jwks_uri` is used from the first lookup after the discovery refresh completes. That lookup waits
+  on loading the key set from the new URL, and fails if that load fails: keys cached under the old URL are
+  not used as a fallback
+- **Max Size**: 100 configurations
+- **Purpose**: Cache OIDC provider discovery documents, for their `jwks_uri`
+- A document without a `jwks_uri` is treated as a failure and not cached
+- Not used for a provider with `jwks-uri` configured
+
+### Failures and Timeouts
+- Failed fetches, empty key sets and broken discovery documents are never cached. With nothing cached, lookups
+  fail with the last error for `jwks-retry-backoff` (5 seconds by default) before one fetches again, which
+  bounds the requests and log lines an unreachable provider causes
+- Concurrent lookups of the same document share one fetch
+- Fetches do not reuse pooled connections, so a connection silently dropped by a NAT or load balancer cannot
+  stall a fetch until TCP gives up (around 15 minutes on Linux)
+- Every fetch is bounded:
+
+```yaml
+oidc-security-service:
+  jwks-connect-timeout: 5s   # TCP connect to the provider
+  jwks-request-timeout: 10s  # one discovery or JWKS fetch, end to end
+  jwks-refresh-interval: 1h  # how often each key set and discovery document is refreshed
+  jwks-max-staleness:        # unset: keep the last fetched keys through an outage; e.g. 24h to cap it
+  jwks-refresh-cooldown: 30s # minimum time between refreshes caused by unknown key ids
+  jwks-retry-backoff: 5s     # after a failed fetch with nothing cached, wait this long before fetching again
+```
+
+### Fetching keys from a different URL
+When the authority's public URL is not reachable from where Structures runs, set `jwks-uri` on the provider.
+Keys are then fetched from it and the discovery document is not used. The token's issuer must still match
+`authority`. `jwks-uri` is not included in the frontend configuration.
+
+```yaml
+oidc-security-service:
+  oidc-providers:
+    - provider: "keycloak"
+      authority: "https://auth.example.com/realms/structures"
+      jwks-uri: "http://keycloak.auth.svc:8080/realms/structures/protocol/openid-connect/certs"
+```
 
 ## Security Features
 
@@ -858,8 +949,8 @@ console.log('Stored state:', localStorage.getItem('oidc.state.your-client-id'));
 
 ## Performance Considerations
 
-1. **Cache Tuning**: Adjust cache TTL and size based on your OIDC provider
-2. **Network Timeouts**: Configure appropriate timeouts for JWKS fetching
+1. **Refresh Tuning**: `jwks-refresh-interval` and `jwks-refresh-cooldown` set how often Structures fetches from the IdP; the caches hold at most 100 key sets and 100 discovery documents
+2. **Network Timeouts**: `jwks-connect-timeout` and `jwks-request-timeout` bound every JWKS and discovery fetch
 3. **Memory Usage**: Monitor cache memory usage in production
 4. **Concurrent Requests**: The implementation is thread-safe and handles concurrent requests
 

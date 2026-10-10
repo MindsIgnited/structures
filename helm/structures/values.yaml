@@ -11,7 +11,7 @@ nameOverride: ""
 image:
   repository: mindsignited/structures-server
   pullPolicy: Always
-  tag: "3.7.0"
+  tag: "3.8.0"
   sha: ""
 
 # Migration configuration
@@ -22,7 +22,7 @@ migration:
   activeDeadlineSeconds: 300
   image:
     repository: mindsignited/structures-migration
-    tag: "3.7.0"
+    tag: "3.8.0"
     pullPolicy: Always
     sha: ""
 
@@ -126,6 +126,20 @@ oidc:
   enabled: false
   debug: true
   frontendConfigurationPath: "/app-config.override.json"
+  # JWT claim holding the tenant id, default "tenantId"
+  # tenantIdFieldName: "tenantId"
+  # Bounds on discovery and JWKS fetches, leave unset for the defaults. Durations need a unit, like 5s
+  # jwksConnectTimeout: "5s"
+  # jwksRequestTimeout: "10s"
+  # How often each key set and discovery document is refreshed. Rotate keys by publishing the new one at
+  # least this long before use
+  # jwksRefreshInterval: "1h"
+  # Unset keeps the last fetched keys through an IdP outage. Set, e.g. "24h" (longer than jwksRefreshInterval),
+  # logins fail once the keys are that old, counted from their last successful fetch, and the IdP still cannot
+  # be reached
+  # jwksMaxStaleness: "24h"
+  # jwksRefreshCooldown: "30s"
+  # jwksRetryBackoff: "5s"
   oidcProviders:
     - provider: "keycloak"
       displayName: "Keycloak"
@@ -138,9 +152,21 @@ oidc:
       audience: "structures-client"
       clientId: "structures-client"
       authority: "http://keycloak:8888/auth/realms/test"
+      # Optional: fetch keys from here instead of the authority's discovery document,
+      # e.g. an in-cluster service URL when the authority's public URL is not reachable from the pods
+      # jwksUri: "http://keycloak.auth.svc:8080/realms/test/protocol/openid-connect/certs"
       redirectUri: "http://localhost:9090/login"
       postLogoutRedirectUri: "http://localhost:9090"
       silentRedirectUri: "http://localhost:9090/login/silent-renew"
+      # Optional: match on issuer alone, skipping the email domain check. Needed for M2M tokens
+      # allowAnyDomain: false
+      # Optional: roles required to use the frontend through this provider, not checked by the backend
+      # frontEndRoles:
+      #   - "admin"
+      # Optional: scopes the frontend requests in addition to "openid profile email offline_access"
+      # additionalScopes: "groups"
+      # Not settable here: metadata. It is a map, and Spring cannot bind map entries from environment
+      # variables, so set it through SPRING_APPLICATION_JSON or a mounted application.yml if needed.
     
 
 # Eviction tracking configuration

@@ -15,6 +15,7 @@ import io.vertx.ext.web.handler.StaticHandler;
 import io.vertx.ext.web.healthchecks.HealthCheckHandler;
 import lombok.RequiredArgsConstructor;
 import org.kinotic.structures.api.config.StructuresProperties;
+import org.kinotic.structures.auth.api.config.OidcFrontendConfiguration;
 import org.kinotic.structures.auth.api.config.OidcSecurityServiceProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,8 +99,8 @@ public class WebServerNextVerticle extends AbstractVerticle {
      */
     private void handleFrontendConfiguration(RoutingContext context) {
         try {
-            // Convert to JSON
-            String jsonConfig = objectMapper.writeValueAsString(oidcSecurityServiceProperties);
+            // Only what the frontend reads, see OidcFrontendConfiguration
+            String jsonConfig = objectMapper.writeValueAsString(OidcFrontendConfiguration.from(oidcSecurityServiceProperties));
             
             // Send response
             HttpServerResponse response = context.response();

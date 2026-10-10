@@ -141,7 +141,11 @@ public class FrontendConfigurationIntegrationTest extends ElasticTestBase {
             assertTrue(provider.has("redirectUri"), "Provider should have 'redirectUri' field");
             assertTrue(provider.has("postLogoutRedirectUri"), "Provider should have 'postLogoutRedirectUri' field");
             assertTrue(provider.has("silentRedirectUri"), "Provider should have 'silentRedirectUri' field");
+            // backend only settings are not published
+            assertFalse(provider.has("audience"), "Provider should not have 'audience' field");
+            assertFalse(provider.has("rolesClaimPath"), "Provider should not have 'rolesClaimPath' field");
         }
+        assertFalse(config.has("tenantIdFieldName"), "Configuration should not have 'tenantIdFieldName' field");
         
     }
 
