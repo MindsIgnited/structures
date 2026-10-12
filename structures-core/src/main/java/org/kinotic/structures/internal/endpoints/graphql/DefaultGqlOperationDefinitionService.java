@@ -115,7 +115,25 @@ public class DefaultGqlOperationDefinitionService implements GqlOperationDefinit
                                           builder = addPolicyIfPresent(builder, args.getEntityOperationsMap().get(EntityOperation.DELETE_BY_ID));
                                           return builder.build();
                                       })
-                                      .dataFetcherDefinitionFunction(structure -> new DeleteDataFetcher(structure.getId(), entitiesService))
+                                      .dataFetcherDefinitionFunction(structure -> new DeleteDataFetcher(structure.getId(), entitiesService, false))
+                                      .build(),
+
+                // Sync operations are authorized with the same policies as the operation they refresh after
+                GqlOperationDefinition.builder()
+                                      .operationName("deleteSync")
+                                      .operationType(OperationDefinition.Operation.MUTATION)
+                                      .fieldDefinitionFunction(args -> {
+
+                                          GraphQLFieldDefinition.Builder builder = newFieldDefinition()
+                                                  .name("deleteSync" + args.getStructureName())
+                                                  .type(GraphQLID)
+                                                  .argument(newArgument().name("id")
+                                                                         .type(nonNull(GraphQLID)));
+
+                                          builder = addPolicyIfPresent(builder, args.getEntityOperationsMap().get(EntityOperation.DELETE_BY_ID));
+                                          return builder.build();
+                                      })
+                                      .dataFetcherDefinitionFunction(structure -> new DeleteDataFetcher(structure.getId(), entitiesService, true))
                                       .build(),
 
                 GqlOperationDefinition.builder()
@@ -183,7 +201,24 @@ public class DefaultGqlOperationDefinitionService implements GqlOperationDefinit
                                           builder = addPolicyIfPresent(builder, args.getEntityOperationsMap().get(EntityOperation.SAVE));
                                           return builder.build();
                                       })
-                                      .dataFetcherDefinitionFunction(structure -> new SaveDataFetcher(structure.getId(), entitiesService))
+                                      .dataFetcherDefinitionFunction(structure -> new SaveDataFetcher(structure.getId(), entitiesService, false))
+                                      .build(),
+
+                GqlOperationDefinition.builder()
+                                      .operationName("saveSync")
+                                      .operationType(OperationDefinition.Operation.MUTATION)
+                                      .fieldDefinitionFunction(args -> {
+
+                                          GraphQLFieldDefinition.Builder builder = newFieldDefinition()
+                                                  .name("saveSync" + args.getStructureName())
+                                                  .type(args.getOutputType())
+                                                  .argument(newArgument().name("input")
+                                                                         .type(nonNull(args.getInputType())));
+
+                                          builder = addPolicyIfPresent(builder, args.getEntityOperationsMap().get(EntityOperation.SAVE));
+                                          return builder.build();
+                                      })
+                                      .dataFetcherDefinitionFunction(structure -> new SaveDataFetcher(structure.getId(), entitiesService, true))
                                       .build(),
 
                 GqlOperationDefinition.builder()
@@ -255,7 +290,24 @@ public class DefaultGqlOperationDefinitionService implements GqlOperationDefinit
                                           builder = addPolicyIfPresent(builder, args.getEntityOperationsMap().get(EntityOperation.UPDATE));
                                           return builder.build();
                                       })
-                                      .dataFetcherDefinitionFunction(structure -> new UpdateDataFetcher(structure.getId(), entitiesService))
+                                      .dataFetcherDefinitionFunction(structure -> new UpdateDataFetcher(structure.getId(), entitiesService, false))
+                                      .build(),
+
+                GqlOperationDefinition.builder()
+                                      .operationName("updateSync")
+                                      .operationType(OperationDefinition.Operation.MUTATION)
+                                      .fieldDefinitionFunction(args -> {
+
+                                          GraphQLFieldDefinition.Builder builder = newFieldDefinition()
+                                                  .name("updateSync" + args.getStructureName())
+                                                  .type(args.getOutputType())
+                                                  .argument(newArgument().name("input")
+                                                                         .type(nonNull(args.getInputType())));
+
+                                          builder = addPolicyIfPresent(builder, args.getEntityOperationsMap().get(EntityOperation.UPDATE));
+                                          return builder.build();
+                                      })
+                                      .dataFetcherDefinitionFunction(structure -> new UpdateDataFetcher(structure.getId(), entitiesService, true))
                                       .build()
         );
     }

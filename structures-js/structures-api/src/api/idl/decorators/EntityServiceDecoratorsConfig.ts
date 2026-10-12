@@ -10,7 +10,8 @@ type MethodsOf<T> = {
 }[keyof T];
 
 // List of methods to exclude
-type ExcludedMethods = 'namedQuery' | 'namedQueryPage';
+// The Sync methods are authorized with the decorators of the method they refresh after, so they can't be decorated on their own
+type ExcludedMethods = 'namedQuery' | 'namedQueryPage' | 'deleteByIdSync' | 'saveSync' | 'updateSync';
 
 // Filtered methods from IEntityService
 type FilteredMethods<T> = Exclude<MethodsOf<T>, ExcludedMethods>;

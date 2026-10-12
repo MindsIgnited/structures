@@ -2,7 +2,9 @@ package org.kinotic.structures.api.domain;
 
 /**
  * Represents an operation that can be performed on an entity.
- * This list must be kept in sync with the list of operations in the EntityService interface
+ * This list must be kept in sync with the list of operations in the EntityService interface.
+ * The Sync writes (saveSync, updateSync, deleteByIdSync) have no values of their own, they are authorized as
+ * {@link #SAVE}, {@link #UPDATE} and {@link #DELETE_BY_ID}.
  */
 public enum EntityOperation {
 

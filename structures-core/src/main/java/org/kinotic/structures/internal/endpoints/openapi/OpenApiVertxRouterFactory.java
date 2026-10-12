@@ -203,6 +203,46 @@ public class OpenApiVertxRouterFactory {
 
               });
 
+        // Update entity, refreshing before returning
+        router.post(apiBasePath + ":structureApplication/:structureName/update-sync")
+              .consumes("application/json")
+              .produces("application/json")
+              .handler(bodyHandler)
+              .handler(ctx -> {
+
+                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+
+                  VertxFutures.onContext(vertx, entitiesService.updateSync(structureId,
+                                                                                new RawJson(ctx.body().buffer().getBytes()),
+                                                                                new RoutingContextToEntityContextAdapter(ctx)))
+                                        .handle(new ValueToJsonHandler<>(ctx, objectMapper))
+                                        .exceptionally(throwable -> {
+                                            VertxWebUtil.writeException(ctx, throwable);
+                                            return null;
+                                        });
+
+              });
+
+        // Save entity, refreshing before returning
+        router.post(apiBasePath + ":structureApplication/:structureName/save-sync")
+              .consumes("application/json")
+              .produces("application/json")
+              .handler(bodyHandler)
+              .handler(ctx -> {
+
+                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+
+                  VertxFutures.onContext(vertx, entitiesService.saveSync(structureId,
+                                                                              new RawJson(ctx.body().buffer().getBytes()),
+                                                                              new RoutingContextToEntityContextAdapter(ctx)))
+                                        .handle(new ValueToJsonHandler<>(ctx, objectMapper))
+                                        .exceptionally(throwable -> {
+                                            VertxWebUtil.writeException(ctx, throwable);
+                                            return null;
+                                        });
+
+              });
+
         // Update entity
         router.post(apiBasePath + ":structureApplication/:structureName/update")
               .consumes("application/json")
@@ -262,6 +302,27 @@ public class OpenApiVertxRouterFactory {
     private void addDeleteRoutes(Router router, BodyHandler bodyHandler, boolean admin) {
 
         if(admin){
+            // Admin Delete Entity By ID, refreshing before returning
+            router.delete(adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id/sync")
+                  .handler(ctx -> {
+
+                      String id = ctx.pathParam("id");
+                      Validate.notBlank(id, "id must not be null or blank");
+                      String tenantID = ctx.pathParam("tenantId");
+                      Validate.notBlank(tenantID, "tenantId must not be null or blank");
+
+                      String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+
+                      VertxFutures.onContext(vertx, entitiesService.deleteByIdSync(structureId,
+                                                                                        TenantSpecificId.create(id, tenantID),
+                                                                                        new RoutingContextToEntityContextAdapter(ctx)))
+                                            .handle(new NoValueHandler(ctx))
+                                            .exceptionally(throwable -> {
+                                                VertxWebUtil.writeException(ctx, throwable);
+                                                return null;
+                                            });
+                  });
+
             // Admin Delete Entity By ID
             router.delete(adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id")
                   .handler(ctx -> {
@@ -283,6 +344,25 @@ public class OpenApiVertxRouterFactory {
                                             });
                   });
         }else{
+            // Delete Entity By ID, refreshing before returning
+            router.delete(apiBasePath + ":structureApplication/:structureName/:id/sync")
+                  .handler(ctx -> {
+
+                      String id = ctx.pathParam("id");
+                      Validate.notNull(id, "id must not be null");
+
+                      String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+
+                      VertxFutures.onContext(vertx, entitiesService.deleteByIdSync(structureId,
+                                                                                        id,
+                                                                                        new RoutingContextToEntityContextAdapter(ctx)))
+                                            .handle(new NoValueHandler(ctx))
+                                            .exceptionally(throwable -> {
+                                                VertxWebUtil.writeException(ctx, throwable);
+                                                return null;
+                                            });
+                  });
+
             // Delete Entity By ID
             router.delete(apiBasePath + ":structureApplication/:structureName/:id")
                   .handler(ctx -> {

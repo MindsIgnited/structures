@@ -266,6 +266,10 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
 
             GraphQLFieldDefinition queryFieldDefinition = function.apply(fieldDefinitionData);
 
+            if (isDuplicate(queryBuilder, queryFieldDefinition, structure)) {
+                return;
+            }
+
             queryBuilder.field(queryFieldDefinition);
 
             codeRegistryBuilder.dataFetcher(FieldCoordinates.coordinates("Query", queryFieldDefinition.getName()),
@@ -276,6 +280,10 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
             if (fieldDefinitionData.getInputType() != null) {
 
                 GraphQLFieldDefinition mutationFieldDefinition = function.apply(fieldDefinitionData);
+
+                if (isDuplicate(mutationBuilder, mutationFieldDefinition, structure)) {
+                    return;
+                }
 
                 mutationBuilder.field(mutationFieldDefinition);
 
@@ -288,6 +296,23 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
                       definition.getOperationName(),
                       definition.getOperationType());
         }
+    }
+
+    /**
+     * Operation names are the operation followed by the structure name, so two structures can produce the same name,
+     * such as saveSync for Job and save for SyncJob. Adding the second would replace the first and its data fetcher,
+     * so the first is kept and the clash is logged.
+     */
+    private static boolean isDuplicate(GraphQLObjectType.Builder builder,
+                                       GraphQLFieldDefinition fieldDefinition,
+                                       Structure structure) {
+        boolean duplicate = builder.hasField(fieldDefinition.getName());
+        if (duplicate) {
+            log.error("GraphQL operation {} for structure {} is not available, another structure in the application already defines an operation with that name",
+                      fieldDefinition.getName(),
+                      structure.getId());
+        }
+        return duplicate;
     }
 
     private static GraphQLInputObjectType getGraphQLInputObjectType(GqlTypeHolder gqlTypeHolder) {
