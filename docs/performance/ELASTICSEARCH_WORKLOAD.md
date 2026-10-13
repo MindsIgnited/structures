@@ -228,21 +228,34 @@ should call it once per batch, not after every bulk call. No bulk Sync methods w
 
 **Name clashes.** GraphQL operation names and OpenAPI operationIds are the operation followed by
 the structure name, so `saveSync` for a structure `Job` and `save` for a structure `SyncJob` are
-both `saveSyncJob`. The non-Sync operation always keeps the name, whichever structure was
-published first. GraphQL adds the Sync mutations after everything else, and only where the name
-is free; a clashing one is left out, logged at WARN, so that structure has no GraphQL Sync
-mutation, while RPC and REST still have it. The OpenAPI spec leaves the Sync operation without
-an operationId, so generated clients name it from its path.
+both `saveSyncJob`. In GraphQL the name is the endpoint, so one would replace the other.
+Publishing a structure, or saving named queries, whose GraphQL operation names another published
+structure in the application already has is therefore refused (`GqlOperationNameValidator`, using
+the names listed in `GqlOperationNames`). `GqlOperationNameTests` checks those names against a
+generated schema, so the list can't drift from the generators.
 
-Because the non-Sync operation wins, publishing `SyncJob` after clients already use `Job`'s
-`saveSyncJob` moves that name to `SyncJob`'s plain save. Avoiding that for good means refusing to
-publish a structure whose name clashes, which is a follow-up, not done.
+OpenAPI isn't checked. Its paths include the structure name and never clash; only operationIds
+repeat, and that predates this change and is common: `Order` with multi-tenant selection and
+`OrderAdmin` both have `countOrderAdmin`, as do `Job`'s countByQuery and `JobByQuery`'s count.
+Refusing those would refuse applications that work today (the test suite's own `Person_testCount`
+and `Person_testCountByQuery` among them), and the only effect is on generated clients.
+
+Structures published before the check can still clash in GraphQL. For them the non-Sync
+operation keeps the name: GraphQL adds the Sync mutations after everything else and only where the
+name is free, logging a clashing one at WARN. In OpenAPI, where repeats are allowed, a Sync
+operation whose operationId another operation has is left without one. RPC and REST always have
+the Sync writes.
+
+A named query's OpenAPI operationId is the query name alone, so the same query name on two
+structures gives duplicate operationIds. That predates this change and isn't checked, since
+refusing it would refuse applications that work today.
 
 Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
 that each Sync write is searchable on return over RPC, REST and GraphQL, that `deleteByIdSync` on
 the admin service works, and that a policy denying `save`, `update` and `deleteById` denies the
-Sync writes too, and that a clashing name stays with the operation that had it. The e2e suite
-covers the TypeScript client and the REST routes.
+Sync writes too. It also checks that a clashing name from before the check stays with the
+non-Sync operation. `GqlOperationNameTests` covers the refusals. The e2e suite covers the TypeScript
+client and the REST routes.
 
 #### Other changes worth making
 

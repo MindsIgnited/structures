@@ -15,6 +15,7 @@ import org.kinotic.structures.api.services.StructureService;
 import org.kinotic.structures.internal.api.services.ElasticConversionResult;
 import org.kinotic.structures.internal.api.services.StructureConversionService;
 import org.kinotic.structures.internal.api.services.StructureDAO;
+import org.kinotic.structures.internal.endpoints.graphql.GqlOperationNameValidator;
 import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.utils.StructuresUtil;
 import org.springframework.context.ApplicationEventPublisher;
@@ -31,6 +32,7 @@ public class DefaultStructureService implements StructureService {
 
     private final ApplicationEventPublisher eventPublisher;
     private final CrudServiceTemplate crudServiceTemplate;
+    private final GqlOperationNameValidator gqlOperationNameValidator;
     private final ElasticsearchAsyncClient esAsyncClient;
     private final StructureConversionService structureConversionService;
     private final StructureDAO structureDAO;
@@ -172,32 +174,37 @@ public class DefaultStructureService implements StructureService {
                                 new IllegalStateException("Structure is already published"));
                     }
 
-                    ElasticConversionResult result = structureConversionService.convertToElasticMapping(structure);
-                    Map<String, Property> mappings = result.objectProperty().properties();
-                    String templateName = structure.getItemIndex() + "_tpl";
-                    boolean allowCustomRouting = structure.getMultiTenancyType() == MultiTenancyType.SHARED;
-
-                    CompletableFuture<Void> creationFuture = structure.isStream()
-                            ? crudServiceTemplate
-                            .createIndexTemplate(templateName,
-                                                 structure.getItemIndex() + "*",
-                                                 DataStreamVisibility.of(b -> b.allowCustomRouting(allowCustomRouting)),
-                                                 mappings)
-                            .thenCompose(v -> crudServiceTemplate.createDataStream(structure.getItemIndex()))
-                            : crudServiceTemplate
-                            .createIndex(structure.getItemIndex(), true, mappings);
-
-                    return creationFuture.thenCompose(v -> {
-                        structure.setPublished(true);
-                        structure.setPublishedTimestamp(new Date());
-                        structure.setUpdated(structure.getPublishedTimestamp());
-                        return structureDAO.save(structure)
-                                           .thenApply(structure1 -> {
-                                               this.eventPublisher.publishEvent(CacheEvictionEvent.localModifiedStructure(structure1.getApplicationId(), structure1.getId()));
-                                               return null;
-                                           });
-                    });
+                    return gqlOperationNameValidator.validatePublish(structure)
+                                                .thenCompose(v -> createIndexAndPublish(structure));
                 });
+    }
+
+    private CompletableFuture<Void> createIndexAndPublish(Structure structure) {
+        ElasticConversionResult result = structureConversionService.convertToElasticMapping(structure);
+        Map<String, Property> mappings = result.objectProperty().properties();
+        String templateName = structure.getItemIndex() + "_tpl";
+        boolean allowCustomRouting = structure.getMultiTenancyType() == MultiTenancyType.SHARED;
+
+        CompletableFuture<Void> creationFuture = structure.isStream()
+                ? crudServiceTemplate
+                .createIndexTemplate(templateName,
+                                     structure.getItemIndex() + "*",
+                                     DataStreamVisibility.of(b -> b.allowCustomRouting(allowCustomRouting)),
+                                     mappings)
+                .thenCompose(v -> crudServiceTemplate.createDataStream(structure.getItemIndex()))
+                : crudServiceTemplate
+                .createIndex(structure.getItemIndex(), true, mappings);
+
+        return creationFuture.thenCompose(v -> {
+            structure.setPublished(true);
+            structure.setPublishedTimestamp(new Date());
+            structure.setUpdated(structure.getPublishedTimestamp());
+            return structureDAO.save(structure)
+                               .thenApply(structure1 -> {
+                                   this.eventPublisher.publishEvent(CacheEvictionEvent.localModifiedStructure(structure1.getApplicationId(), structure1.getId()));
+                                   return null;
+                               });
+        });
     }
 
     @WithSpan

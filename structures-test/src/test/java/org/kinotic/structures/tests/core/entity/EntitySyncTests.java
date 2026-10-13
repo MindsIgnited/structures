@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,12 +44,18 @@ import org.kinotic.structures.api.services.security.AuthorizationServiceFactory;
 import org.kinotic.structures.api.services.security.graphos.PolicyAuthorizationRequest;
 import org.kinotic.structures.api.services.security.graphos.PolicyAuthorizationServiceFactory;
 import org.kinotic.structures.internal.api.domain.DefaultEntityContext;
+import org.kinotic.structures.internal.api.services.ElasticConversionResult;
+import org.kinotic.structures.internal.api.services.StructureConversionService;
+import org.kinotic.structures.internal.api.services.StructureDAO;
+import org.kinotic.structures.internal.api.services.impl.CrudServiceTemplate;
+import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.sample.DummyParticipant;
 import org.kinotic.structures.internal.sample.TestDataService;
 import org.kinotic.structures.support.elastic.ElasticTestBase;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -122,6 +129,14 @@ public class EntitySyncTests extends ElasticTestBase {
     private ApplicationService applicationService;
     @Autowired
     private ElasticsearchClient client;
+    @Autowired
+    private CrudServiceTemplate crudServiceTemplate;
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+    @Autowired
+    private StructureConversionService structureConversionService;
+    @Autowired
+    private StructureDAO structureDAO;
     @Autowired
     private EntitiesService entitiesService;
     @Autowired
@@ -224,14 +239,15 @@ public class EntitySyncTests extends ElasticTestBase {
     }
 
     /**
-     * saveSync for Clash and save for SyncClash share a name. The non-Sync operation must keep it, in GraphQL and as
-     * an OpenAPI operationId.
+     * saveSync for Clash and save for SyncClash share a name. Publishing the second is refused now, but two structures
+     * published before that check existed can still clash, and then the non-Sync operation must keep the name, in
+     * GraphQL and as an OpenAPI operationId.
      */
     @Test
     public void syncOperationNamesDoNotReplaceExistingOnes() throws Exception {
         String suffix = String.valueOf(System.nanoTime());
         Structure clash = createStructure("Clash", suffix, null, false);
-        Structure syncClash = createStructure("SyncClash", suffix, null, false);
+        Structure syncClash = createStructureWithoutTheNameCheck("SyncClash" + suffix);
         String sharedName = "saveSync" + clash.getName();
 
         String id = UUID.randomUUID().toString();
@@ -326,6 +342,31 @@ public class EntitySyncTests extends ElasticTestBase {
                                                 .thenCompose(created -> structureService.publish(created.getId())
                                                                                         .thenCompose(v -> structureService.findById(created.getId())))
                                                 .join();
+
+        client.indices().putSettings(b -> b.index(structure.getItemIndex())
+                                           .settings(s -> s.refreshInterval(t -> t.time("-1"))));
+        return structure;
+    }
+
+    /**
+     * Creates and publishes a Person structure the way publish did before it checked endpoint names, so it can clash
+     * with a structure already published
+     */
+    private Structure createStructureWithoutTheNameCheck(String name) throws IOException {
+        Structure toCreate = new Structure();
+        toCreate.setName(name);
+        toCreate.setApplicationId(APPLICATION_ID);
+        toCreate.setProjectId(APPLICATION_ID + "_default");
+        toCreate.setDescription("Defines a Person for the Sync write tests");
+        toCreate.setEntityDefinition(testDataService.createPersonSchema(MultiTenancyType.SHARED).setName(name));
+        Structure structure = structureService.create(toCreate).join();
+
+        ElasticConversionResult result = structureConversionService.convertToElasticMapping(structure);
+        crudServiceTemplate.createIndex(structure.getItemIndex(), true, result.objectProperty().properties()).join();
+        structure.setPublished(true);
+        structure.setPublishedTimestamp(new Date());
+        structureDAO.save(structure).join();
+        eventPublisher.publishEvent(CacheEvictionEvent.localModifiedStructure(structure.getApplicationId(), structure.getId()));
 
         client.indices().putSettings(b -> b.index(structure.getItemIndex())
                                            .settings(s -> s.refreshInterval(t -> t.time("-1"))));

@@ -19,6 +19,7 @@ import org.kinotic.structures.internal.api.services.sql.QueryExecutorFactory;
 import org.kinotic.structures.internal.api.services.sql.executors.QueryExecutor;
 import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.EvictionSourceType;
+import org.kinotic.structures.internal.endpoints.graphql.GqlOperationNameValidator;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -37,20 +38,28 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueriesDefinition> implements NamedQueriesService {
 
     private final AsyncLoadingCache<CacheKey, QueryExecutor> cache;
+    /**
+     * The index the {@link NamedQueriesDefinition}s are stored in
+     */
+    public static final String INDEX_NAME = "struct_named_query_service_definition";
+
     private final ConcurrentHashMap<String, List<CacheKey>> cacheKeyTracker = new ConcurrentHashMap<>();
     private final ApplicationEventPublisher eventPublisher;
+    private final GqlOperationNameValidator gqlOperationNameValidator;
 
     public DefaultNamedQueriesService(CrudServiceTemplate crudServiceTemplate,
                                       ElasticsearchAsyncClient esAsyncClient,
                                       QueryExecutorFactory queryExecutorFactory,
                                       ApplicationEventPublisher eventPublisher,
-                                      DefaultCaffeineCacheFactory cacheFactory) {
-        super("struct_named_query_service_definition",
+                                      DefaultCaffeineCacheFactory cacheFactory,
+                                      GqlOperationNameValidator gqlOperationNameValidator) {
+        super(INDEX_NAME,
               NamedQueriesDefinition.class,
               esAsyncClient,
               crudServiceTemplate);
 
         this.eventPublisher = eventPublisher;
+        this.gqlOperationNameValidator = gqlOperationNameValidator;
 
         cache = cacheFactory.<CacheKey, QueryExecutor>newBuilder()
                         .name("namedQueriesCache")
@@ -150,7 +159,8 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
     public CompletableFuture<NamedQueriesDefinition> save(NamedQueriesDefinition entity) {
         // TODO: preprocess queries to correct index name and add Metadata about query type to be used by other parts of the system
         //       The Query type information will speed up other areas the need this as well
-        return super.save(entity)
+        return gqlOperationNameValidator.validateNamedQueries(entity)
+                    .thenCompose(v -> super.save(entity))
                     .thenApply(namedQueriesDefinition -> {
                         this.eventPublisher.publishEvent(CacheEvictionEvent.localModifiedNamedQuery(entity.getApplicationId(), entity.getStructure(), entity.getId()));
                         return namedQueriesDefinition;
