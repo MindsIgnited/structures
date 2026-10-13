@@ -226,15 +226,19 @@ bypassed by calling `saveSync`.
 refresh after a batch, instead of one per write. It refreshes every shard of the index, so callers
 should call it once per batch, not after every bulk call. No bulk Sync methods were added.
 
-**GraphQL name clashes.** GraphQL operation names are the operation followed by the structure
-name, so `saveSync` for a structure `Job` and `save` for a structure `SyncJob` are both
-`saveSyncJob`. Adding the second used to replace the first silently, data fetcher included. Now
-`GqlSchemaHandlerCacheLoader` keeps the first and logs an error naming the other structure.
+**Name clashes.** GraphQL operation names and OpenAPI operationIds are the operation followed by
+the structure name, so `saveSync` for a structure `Job` and `save` for a structure `SyncJob` are
+both `saveSyncJob`. The operation that existed before the Sync ones keeps the name. GraphQL adds
+the Sync operations first, and a later operation with the same name replaces the earlier one (as
+named queries always could), logged at WARN, so that structure has no GraphQL Sync mutation; RPC
+and REST still have it. The OpenAPI spec leaves the Sync operation without an operationId, so
+generated clients name it from its path.
 
 Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
 that each Sync write is searchable on return over RPC, REST and GraphQL, that `deleteByIdSync` on
 the admin service works, and that a policy denying `save`, `update` and `deleteById` denies the
-Sync writes too. The e2e suite covers the TypeScript client and the REST routes.
+Sync writes too, and that a clashing name stays with the operation that had it. The e2e suite
+covers the TypeScript client and the REST routes.
 
 #### Other changes worth making
 

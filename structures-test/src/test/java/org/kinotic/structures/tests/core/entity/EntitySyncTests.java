@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -222,6 +223,49 @@ public class EntitySyncTests extends ElasticTestBase {
         Assertions.assertEquals(0L, count(structure));
     }
 
+    /**
+     * saveSync for Clash and save for SyncClash share a name. The operation that existed before the Sync ones must
+     * keep it, in GraphQL and as an OpenAPI operationId.
+     */
+    @Test
+    public void syncOperationNamesDoNotReplaceExistingOnes() throws Exception {
+        String suffix = String.valueOf(System.nanoTime());
+        Structure clash = createStructure("Clash", suffix, null, false);
+        Structure syncClash = createStructure("SyncClash", suffix, null, false);
+        String sharedName = "saveSync" + clash.getName();
+
+        String id = UUID.randomUUID().toString();
+        JsonNode saved = graphQl("mutation { %s(input: {id: \"%s\", firstName: \"Ada\", lastName: \"Lovelace\"}) { id } }"
+                                         .formatted(sharedName, id))
+                .path(sharedName);
+        Assertions.assertEquals(id, saved.path("id").asString(), saved::toString);
+        entitiesService.syncIndex(syncClash.getId(), context).join();
+        entitiesService.syncIndex(clash.getId(), context).join();
+        Assertions.assertEquals(1L, count(syncClash), "The mutation should still save " + syncClash.getName());
+        Assertions.assertEquals(0L, count(clash));
+
+        URI uri = URI.create("http://localhost:" + structuresProperties.getOpenApiPort()
+                                     + "/api-docs/" + APPLICATION_ID + "/openapi.json");
+        HttpResponse<String> response = send(HttpRequest.newBuilder().uri(uri).timeout(Duration.ofSeconds(30)).GET().build());
+        Assertions.assertEquals(200, response.statusCode(), response::body);
+        JsonNode paths = objectMapper.readTree(response.body()).path("paths");
+        String base = structuresProperties.getOpenApiPath() + APPLICATION_ID + "/";
+        Assertions.assertEquals(sharedName,
+                                paths.path(base + syncClash.getName().toLowerCase()).path("post").path("operationId").asString());
+        Assertions.assertTrue(paths.path(base + clash.getName().toLowerCase() + "/save-sync").path("post").path("operationId").isMissingNode());
+
+        Map<String, Integer> operationIds = new HashMap<>();
+        for (JsonNode pathItem : paths) {
+            for (JsonNode operation : pathItem) {
+                if (operation.has("operationId")) {
+                    operationIds.merge(operation.path("operationId").asString(), 1, Integer::sum);
+                }
+            }
+        }
+        operationIds.values().removeIf(n -> n == 1);
+        Assertions.assertTrue(operationIds.isEmpty(), () -> "Duplicate operationIds " + operationIds);
+    }
+
     @Test
     public void syncWritesUseThePoliciesOfTheWritesTheyRefreshAfter() throws IOException {
         List<EntityServiceDecorator> denied = List.of(new PolicyDecorator().setPolicies(List.of(List.of(DENIED_POLICY))));
@@ -253,7 +297,14 @@ public class EntitySyncTests extends ElasticTestBase {
     private Structure createStructure(String prefix,
                                       EntityServiceDecoratorsDecorator decorators,
                                       boolean tenantSelection) throws IOException {
-        String name = prefix + System.nanoTime();
+        return createStructure(prefix, String.valueOf(System.nanoTime()), decorators, tenantSelection);
+    }
+
+    private Structure createStructure(String prefix,
+                                      String suffix,
+                                      EntityServiceDecoratorsDecorator decorators,
+                                      boolean tenantSelection) throws IOException {
+        String name = prefix + suffix;
         // GraphQL names its types after the schema, which must be unique within the application
         ObjectC3Type schema = testDataService.createPersonSchema(MultiTenancyType.SHARED).setName(name);
         if (tenantSelection) {

@@ -28,6 +28,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
 /**
@@ -203,85 +204,13 @@ public class OpenApiVertxRouterFactory {
 
               });
 
-        // Update entity, refreshing before returning
-        router.post(apiBasePath + ":structureApplication/:structureName/update-sync")
-              .consumes("application/json")
-              .produces("application/json")
-              .handler(bodyHandler)
-              .handler(ctx -> {
+        // Update entity, and the same refreshing before returning
+        addEntityWriteRoute(router, bodyHandler, "/update", entitiesService::update);
+        addEntityWriteRoute(router, bodyHandler, "/update-sync", entitiesService::updateSync);
 
-                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                  VertxFutures.onContext(vertx, entitiesService.updateSync(structureId,
-                                                                                new RawJson(ctx.body().buffer().getBytes()),
-                                                                                new RoutingContextToEntityContextAdapter(ctx)))
-                                        .handle(new ValueToJsonHandler<>(ctx, objectMapper))
-                                        .exceptionally(throwable -> {
-                                            VertxWebUtil.writeException(ctx, throwable);
-                                            return null;
-                                        });
-
-              });
-
-        // Save entity, refreshing before returning
-        router.post(apiBasePath + ":structureApplication/:structureName/save-sync")
-              .consumes("application/json")
-              .produces("application/json")
-              .handler(bodyHandler)
-              .handler(ctx -> {
-
-                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                  VertxFutures.onContext(vertx, entitiesService.saveSync(structureId,
-                                                                              new RawJson(ctx.body().buffer().getBytes()),
-                                                                              new RoutingContextToEntityContextAdapter(ctx)))
-                                        .handle(new ValueToJsonHandler<>(ctx, objectMapper))
-                                        .exceptionally(throwable -> {
-                                            VertxWebUtil.writeException(ctx, throwable);
-                                            return null;
-                                        });
-
-              });
-
-        // Update entity
-        router.post(apiBasePath + ":structureApplication/:structureName/update")
-              .consumes("application/json")
-              .produces("application/json")
-              .handler(bodyHandler)
-              .handler(ctx -> {
-
-                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                  VertxFutures.onContext(vertx, entitiesService.update(structureId,
-                                                                            new RawJson(ctx.body().buffer().getBytes()),
-                                                                            new RoutingContextToEntityContextAdapter(ctx)))
-                                        .handle(new ValueToJsonHandler<>(ctx, objectMapper))
-                                        .exceptionally(throwable -> {
-                                            VertxWebUtil.writeException(ctx, throwable);
-                                            return null;
-                                        });
-
-              });
-
-        // Save entity
-        router.post(apiBasePath + ":structureApplication/:structureName")
-              .consumes("application/json")
-              .produces("application/json")
-              .handler(bodyHandler)
-              .handler(ctx -> {
-
-                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                  VertxFutures.onContext(vertx, entitiesService.save(structureId,
-                                                                          new RawJson(ctx.body().buffer().getBytes()),
-                                                                          new RoutingContextToEntityContextAdapter(ctx)))
-                                        .handle(new ValueToJsonHandler<>(ctx, objectMapper))
-                                        .exceptionally(throwable -> {
-                                            VertxWebUtil.writeException(ctx, throwable);
-                                            return null;
-                                        });
-
-              });
+        // Save entity, and the same refreshing before returning
+        addEntityWriteRoute(router, bodyHandler, "", entitiesService::save);
+        addEntityWriteRoute(router, bodyHandler, "/save-sync", entitiesService::saveSync);
 
         // Sync Structure
         router.get(apiBasePath + ":structureApplication/:structureName/util/sync")
@@ -301,87 +230,9 @@ public class OpenApiVertxRouterFactory {
 
     private void addDeleteRoutes(Router router, BodyHandler bodyHandler, boolean admin) {
 
-        if(admin){
-            // Admin Delete Entity By ID, refreshing before returning
-            router.delete(adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id/sync")
-                  .handler(ctx -> {
-
-                      String id = ctx.pathParam("id");
-                      Validate.notBlank(id, "id must not be null or blank");
-                      String tenantID = ctx.pathParam("tenantId");
-                      Validate.notBlank(tenantID, "tenantId must not be null or blank");
-
-                      String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                      VertxFutures.onContext(vertx, entitiesService.deleteByIdSync(structureId,
-                                                                                        TenantSpecificId.create(id, tenantID),
-                                                                                        new RoutingContextToEntityContextAdapter(ctx)))
-                                            .handle(new NoValueHandler(ctx))
-                                            .exceptionally(throwable -> {
-                                                VertxWebUtil.writeException(ctx, throwable);
-                                                return null;
-                                            });
-                  });
-
-            // Admin Delete Entity By ID
-            router.delete(adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id")
-                  .handler(ctx -> {
-
-                      String id = ctx.pathParam("id");
-                      Validate.notBlank(id, "id must not be null or blank");
-                      String tenantID = ctx.pathParam("tenantId");
-                      Validate.notBlank(tenantID, "tenantId must not be null or blank");
-
-                      String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                      VertxFutures.onContext(vertx, entitiesService.deleteById(structureId,
-                                                                                    TenantSpecificId.create(id, tenantID),
-                                                                                    new RoutingContextToEntityContextAdapter(ctx)))
-                                            .handle(new NoValueHandler(ctx))
-                                            .exceptionally(throwable -> {
-                                                VertxWebUtil.writeException(ctx, throwable);
-                                                return null;
-                                            });
-                  });
-        }else{
-            // Delete Entity By ID, refreshing before returning
-            router.delete(apiBasePath + ":structureApplication/:structureName/:id/sync")
-                  .handler(ctx -> {
-
-                      String id = ctx.pathParam("id");
-                      Validate.notNull(id, "id must not be null");
-
-                      String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                      VertxFutures.onContext(vertx, entitiesService.deleteByIdSync(structureId,
-                                                                                        id,
-                                                                                        new RoutingContextToEntityContextAdapter(ctx)))
-                                            .handle(new NoValueHandler(ctx))
-                                            .exceptionally(throwable -> {
-                                                VertxWebUtil.writeException(ctx, throwable);
-                                                return null;
-                                            });
-                  });
-
-            // Delete Entity By ID
-            router.delete(apiBasePath + ":structureApplication/:structureName/:id")
-                  .handler(ctx -> {
-
-                      String id = ctx.pathParam("id");
-                      Validate.notNull(id, "id must not be null");
-
-                      String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-
-                      VertxFutures.onContext(vertx, entitiesService.deleteById(structureId,
-                                                                                    id,
-                                                                                    new RoutingContextToEntityContextAdapter(ctx)))
-                                            .handle(new NoValueHandler(ctx))
-                                            .exceptionally(throwable -> {
-                                                VertxWebUtil.writeException(ctx, throwable);
-                                                return null;
-                                            });
-                  });
-        }
+        // Delete Entity By ID, and the same refreshing before returning
+        addDeleteByIdRoute(router, admin, false);
+        addDeleteByIdRoute(router, admin, true);
 
         // Delete Entity By Query
         router.post((admin ? adminApiBasePath : apiBasePath) + ":structureApplication/:structureName/delete/by-query")
@@ -404,6 +255,87 @@ public class OpenApiVertxRouterFactory {
                                             return null;
                                         });
               });
+    }
+
+    /**
+     * Adds a POST route that takes an entity as JSON and answers with the entity the write returns
+     * @param pathSuffix appended to the structure's path, such as "/update"
+     */
+    private void addEntityWriteRoute(Router router,
+                                     BodyHandler bodyHandler,
+                                     String pathSuffix,
+                                     EntityWrite write) {
+        router.post(apiBasePath + ":structureApplication/:structureName" + pathSuffix)
+              .consumes("application/json")
+              .produces("application/json")
+              .handler(bodyHandler)
+              .handler(ctx -> {
+
+                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+
+                  VertxFutures.onContext(vertx, write.apply(structureId,
+                                                            new RawJson(ctx.body().buffer().getBytes()),
+                                                            new RoutingContextToEntityContextAdapter(ctx)))
+                                        .handle(new ValueToJsonHandler<>(ctx, objectMapper))
+                                        .exceptionally(throwable -> {
+                                            VertxWebUtil.writeException(ctx, throwable);
+                                            return null;
+                                        });
+
+              });
+    }
+
+    /**
+     * Adds a DELETE route for an entity id, or with admin for a tenant and entity id
+     * @param sync true for the route that refreshes before returning, at the same path followed by "/sync"
+     */
+    private void addDeleteByIdRoute(Router router, boolean admin, boolean sync) {
+        String path = admin
+                ? adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id"
+                : apiBasePath + ":structureApplication/:structureName/:id";
+
+        router.delete(path + (sync ? "/sync" : ""))
+              .handler(ctx -> {
+
+                  String id = ctx.pathParam("id");
+                  String structureId;
+                  CompletableFuture<Void> delete;
+                  if(admin){
+                      Validate.notBlank(id, "id must not be null or blank");
+                      String tenantID = ctx.pathParam("tenantId");
+                      Validate.notBlank(tenantID, "tenantId must not be null or blank");
+
+                      structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                      TenantSpecificId tenantSpecificId = TenantSpecificId.create(id, tenantID);
+                      EntityContext context = new RoutingContextToEntityContextAdapter(ctx);
+                      delete = sync
+                              ? entitiesService.deleteByIdSync(structureId, tenantSpecificId, context)
+                              : entitiesService.deleteById(structureId, tenantSpecificId, context);
+                  }else{
+                      Validate.notNull(id, "id must not be null");
+
+                      structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                      EntityContext context = new RoutingContextToEntityContextAdapter(ctx);
+                      delete = sync
+                              ? entitiesService.deleteByIdSync(structureId, id, context)
+                              : entitiesService.deleteById(structureId, id, context);
+                  }
+
+                  VertxFutures.onContext(vertx, delete)
+                                        .handle(new NoValueHandler(ctx))
+                                        .exceptionally(throwable -> {
+                                            VertxWebUtil.writeException(ctx, throwable);
+                                            return null;
+                                        });
+              });
+    }
+
+    /**
+     * A single entity write on {@link EntitiesService}, such as save or update
+     */
+    @FunctionalInterface
+    private interface EntityWrite {
+        CompletableFuture<RawJson> apply(String structureId, RawJson entity, EntityContext context);
     }
 
     private void addNamedQueryRoutes(Router router, BodyHandler bodyHandler) {

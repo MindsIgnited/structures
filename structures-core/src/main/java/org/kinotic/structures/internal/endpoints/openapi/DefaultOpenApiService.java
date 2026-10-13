@@ -34,8 +34,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -100,6 +104,7 @@ public class DefaultOpenApiService implements OpenApiService {
 
                     IdlConverter<Schema<?>, OpenApiConversionState> converter
                             = structureConversionService.createOpenApiConverter();
+                    Set<Operation> syncOperations = Collections.newSetFromMap(new IdentityHashMap<>());
                     for(Structure structure : structures.getContent()){
 
                         Schema<?> schema = converter.convert(structure.getEntityDefinition());
@@ -108,11 +113,11 @@ public class DefaultOpenApiService implements OpenApiService {
                             components.addSchemas(structure.getName(), schema);
 
                             if(structure.isMultiTenantSelectionEnabled()){
-                                addAdminPathItems(paths, structure);
+                                addAdminPathItems(paths, structure, syncOperations);
                             }
 
                             // Add path items for the structure
-                            addDefaultPathItems(paths, structure);
+                            addDefaultPathItems(paths, structure, syncOperations);
 
                         }else{
                             log.error("Structure {} EntityDefinition did not convert to an OpenAPI ObjectSchema",
@@ -121,6 +126,8 @@ public class DefaultOpenApiService implements OpenApiService {
 
                         addNamedQueryPathItems(paths, basePath, structure, converter, components);
                     }
+
+                    removeClashingSyncOperationIds(paths, syncOperations);
 
                     // Add all the referenced schemas
                     Map<String, Schema<?>> referencedSchemas = converter.getConversionContext()
@@ -158,7 +165,7 @@ public class DefaultOpenApiService implements OpenApiService {
     }
 
     @WithSpan
-    private void addAdminPathItems(Paths paths, Structure structure){
+    private void addAdminPathItems(Paths paths, Structure structure, Set<Operation> syncOperations){
 
         String basePath = structuresProperties.getOpenApiAdminPath();
         String lowercaseApplication = structure.getApplicationId().toLowerCase();
@@ -208,6 +215,7 @@ public class DefaultOpenApiService implements OpenApiService {
                 .addParametersItem(OpenApiUtils.createPathParameter("tenantId", "The tenantId of the "+structureName+" to delete."))
                 .addParametersItem(OpenApiUtils.createPathParameter("id","The id of the "+structureName+" to delete."));
         syncByTenantAndIdPathItem.delete(deleteSyncOperation);
+        syncOperations.add(deleteSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/{tenantId}/{id}/sync", syncByTenantAndIdPathItem);
 
 
@@ -300,7 +308,7 @@ public class DefaultOpenApiService implements OpenApiService {
 
 
     @WithSpan
-    private void addDefaultPathItems(Paths paths, Structure structure){
+    private void addDefaultPathItems(Paths paths, Structure structure, Set<Operation> syncOperations){
 
         String basePath = structuresProperties.getOpenApiPath();
         String lowercaseApplication = structure.getApplicationId().toLowerCase();
@@ -339,6 +347,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         -1)
                 .addParametersItem(OpenApiUtils.createPathParameter("id", "The id of the "+structureName+" to delete."));
         syncByIdPathItem.delete(deleteSyncOperation);
+        syncOperations.add(deleteSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/{id}/sync", syncByIdPathItem);
 
 
@@ -406,6 +415,7 @@ public class DefaultOpenApiService implements OpenApiService {
                 .requestBody(structureRequestBody);
         addConflictResponse(saveSyncOperation, structure, false);
         saveSyncPathItem.post(saveSyncOperation);
+        syncOperations.add(saveSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/save-sync", saveSyncPathItem);
 
         // Sync Index operation
@@ -442,6 +452,7 @@ public class DefaultOpenApiService implements OpenApiService {
                 .requestBody(structureRequestBody);
         addConflictResponse(updateSyncOperation, structure, true);
         updateSyncPathItem.post(updateSyncOperation);
+        syncOperations.add(updateSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/update-sync", updateSyncPathItem);
 
 
@@ -644,6 +655,30 @@ public class DefaultOpenApiService implements OpenApiService {
                                                                    new MediaType().schema(refSchema)));
         } else {
             return null;
+        }
+    }
+
+    /**
+     * operationIds are the operation followed by the structure name, so saveSync for Job and save for SyncJob are both
+     * saveSyncJob. They must be unique, so a Sync operation whose id another operation already has is left without
+     * one, and the operation that existed before the Sync ones keeps its id. Clients generated from the spec then name
+     * the Sync operation from its path.
+     */
+    private static void removeClashingSyncOperationIds(Paths paths, Set<Operation> syncOperations){
+        Set<String> otherOperationIds = new HashSet<>();
+        for(PathItem pathItem : paths.values()){
+            for(Operation operation : pathItem.readOperations()){
+                if(!syncOperations.contains(operation) && operation.getOperationId() != null){
+                    otherOperationIds.add(operation.getOperationId());
+                }
+            }
+        }
+        for(Operation operation : syncOperations){
+            if(otherOperationIds.contains(operation.getOperationId())){
+                log.warn("OpenAPI operation {} is left without an operationId, another operation already has it",
+                         operation.getOperationId());
+                operation.setOperationId(null);
+            }
         }
     }
 

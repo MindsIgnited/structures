@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -132,6 +133,7 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
                         IdlConverter<GqlTypeHolder, GqlConversionState> converter
                                 = structureConversionService.createGqlConverter();
 
+                        List<Pair<Structure, GqlFieldDefinitionData>> structureFieldDefinitions = new ArrayList<>();
                         for (Structure structure : structuresPage.getContent()) {
 
                             GqlTypeHolder structureType = converter.convert(structure.getEntityDefinition());
@@ -170,8 +172,19 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
                                                             .entityOperationsMap(entityOperationsMap)
                                                             .build();
 
-                            // Add all graphQL operations to the schema
-                            addOperations(fieldDefinitionData, codeRegistryBuilder, mutationBuilder, queryBuilder, structure);
+                            structureFieldDefinitions.add(Pair.of(structure, fieldDefinitionData));
+                        }
+
+                        // Sync operations go first, so when a name clashes the operation that existed before them replaces them
+                        for (Pair<Structure, GqlFieldDefinitionData> pair : structureFieldDefinitions) {
+                            for (GqlOperationDefinition definition : gqlOperationDefinitionService.getSyncOperationDefinitions()) {
+                                addOperation(definition, pair.getRight(), codeRegistryBuilder, mutationBuilder, queryBuilder, pair.getLeft());
+                            }
+                        }
+
+                        // Add all graphQL operations to the schema
+                        for (Pair<Structure, GqlFieldDefinitionData> pair : structureFieldDefinitions) {
+                            addOperations(pair.getRight(), codeRegistryBuilder, mutationBuilder, queryBuilder, pair.getLeft());
                         }
 
                         // Add all type resolvers to the schema
@@ -266,10 +279,7 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
 
             GraphQLFieldDefinition queryFieldDefinition = function.apply(fieldDefinitionData);
 
-            if (isDuplicate(queryBuilder, queryFieldDefinition, structure)) {
-                return;
-            }
-
+            warnIfReplacing(queryBuilder, queryFieldDefinition, structure);
             queryBuilder.field(queryFieldDefinition);
 
             codeRegistryBuilder.dataFetcher(FieldCoordinates.coordinates("Query", queryFieldDefinition.getName()),
@@ -281,10 +291,7 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
 
                 GraphQLFieldDefinition mutationFieldDefinition = function.apply(fieldDefinitionData);
 
-                if (isDuplicate(mutationBuilder, mutationFieldDefinition, structure)) {
-                    return;
-                }
-
+                warnIfReplacing(mutationBuilder, mutationFieldDefinition, structure);
                 mutationBuilder.field(mutationFieldDefinition);
 
                 codeRegistryBuilder.dataFetcher(FieldCoordinates.coordinates("Mutation", mutationFieldDefinition.getName()),
@@ -300,19 +307,17 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
 
     /**
      * Operation names are the operation followed by the structure name, so two structures can produce the same name,
-     * such as saveSync for Job and save for SyncJob. Adding the second would replace the first and its data fetcher,
-     * so the first is kept and the clash is logged.
+     * such as saveSync for Job and save for SyncJob, and a named query can share a built-in operation's name.
+     * The operation added later replaces the earlier one along with its data fetcher, so this logs which one.
      */
-    private static boolean isDuplicate(GraphQLObjectType.Builder builder,
-                                       GraphQLFieldDefinition fieldDefinition,
-                                       Structure structure) {
-        boolean duplicate = builder.hasField(fieldDefinition.getName());
-        if (duplicate) {
-            log.error("GraphQL operation {} for structure {} is not available, another structure in the application already defines an operation with that name",
-                      fieldDefinition.getName(),
-                      structure.getId());
+    private static void warnIfReplacing(GraphQLObjectType.Builder builder,
+                                        GraphQLFieldDefinition fieldDefinition,
+                                        Structure structure) {
+        if (builder.hasField(fieldDefinition.getName())) {
+            log.warn("GraphQL operation {} for structure {} replaces an operation with the same name",
+                     fieldDefinition.getName(),
+                     structure.getId());
         }
-        return duplicate;
     }
 
     private static GraphQLInputObjectType getGraphQLInputObjectType(GqlTypeHolder gqlTypeHolder) {
