@@ -231,8 +231,13 @@ public class OpenApiVertxRouterFactory {
     private void addDeleteRoutes(Router router, BodyHandler bodyHandler, boolean admin) {
 
         // Delete Entity By ID, and the same refreshing before returning
-        addDeleteByIdRoute(router, admin, false);
-        addDeleteByIdRoute(router, admin, true);
+        if(admin){
+            addAdminDeleteByIdRoute(router, "", entitiesService::deleteById);
+            addAdminDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
+        }else{
+            addDeleteByIdRoute(router, "", entitiesService::deleteById);
+            addDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
+        }
 
         // Delete Entity By Query
         router.post((admin ? adminApiBasePath : apiBasePath) + ":structureApplication/:structureName/delete/by-query")
@@ -286,42 +291,47 @@ public class OpenApiVertxRouterFactory {
     }
 
     /**
-     * Adds a DELETE route for an entity id, or with admin for a tenant and entity id
-     * @param sync true for the route that refreshes before returning, at the same path followed by "/sync"
+     * Adds a DELETE route for an entity id
+     * @param pathSuffix appended to the entity's path, such as "/sync"
      */
-    private void addDeleteByIdRoute(Router router, boolean admin, boolean sync) {
-        String path = admin
-                ? adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id"
-                : apiBasePath + ":structureApplication/:structureName/:id";
-
-        router.delete(path + (sync ? "/sync" : ""))
+    private void addDeleteByIdRoute(Router router, String pathSuffix, DeleteById delete) {
+        router.delete(apiBasePath + ":structureApplication/:structureName/:id" + pathSuffix)
               .handler(ctx -> {
 
                   String id = ctx.pathParam("id");
-                  String structureId;
-                  CompletableFuture<Void> delete;
-                  if(admin){
-                      Validate.notBlank(id, "id must not be null or blank");
-                      String tenantID = ctx.pathParam("tenantId");
-                      Validate.notBlank(tenantID, "tenantId must not be null or blank");
+                  Validate.notNull(id, "id must not be null");
 
-                      structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-                      TenantSpecificId tenantSpecificId = TenantSpecificId.create(id, tenantID);
-                      EntityContext context = new RoutingContextToEntityContextAdapter(ctx);
-                      delete = sync
-                              ? entitiesService.deleteByIdSync(structureId, tenantSpecificId, context)
-                              : entitiesService.deleteById(structureId, tenantSpecificId, context);
-                  }else{
-                      Validate.notNull(id, "id must not be null");
+                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
 
-                      structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-                      EntityContext context = new RoutingContextToEntityContextAdapter(ctx);
-                      delete = sync
-                              ? entitiesService.deleteByIdSync(structureId, id, context)
-                              : entitiesService.deleteById(structureId, id, context);
-                  }
+                  VertxFutures.onContext(vertx, delete.apply(structureId,
+                                                             id,
+                                                             new RoutingContextToEntityContextAdapter(ctx)))
+                                        .handle(new NoValueHandler(ctx))
+                                        .exceptionally(throwable -> {
+                                            VertxWebUtil.writeException(ctx, throwable);
+                                            return null;
+                                        });
+              });
+    }
 
-                  VertxFutures.onContext(vertx, delete)
+    /**
+     * Adds an admin DELETE route for a tenant and entity id
+     * @param pathSuffix appended to the entity's path, such as "/sync"
+     */
+    private void addAdminDeleteByIdRoute(Router router, String pathSuffix, AdminDeleteById delete) {
+        router.delete(adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id" + pathSuffix)
+              .handler(ctx -> {
+
+                  String id = ctx.pathParam("id");
+                  Validate.notBlank(id, "id must not be null or blank");
+                  String tenantID = ctx.pathParam("tenantId");
+                  Validate.notBlank(tenantID, "tenantId must not be null or blank");
+
+                  String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+
+                  VertxFutures.onContext(vertx, delete.apply(structureId,
+                                                             TenantSpecificId.create(id, tenantID),
+                                                             new RoutingContextToEntityContextAdapter(ctx)))
                                         .handle(new NoValueHandler(ctx))
                                         .exceptionally(throwable -> {
                                             VertxWebUtil.writeException(ctx, throwable);
@@ -336,6 +346,22 @@ public class OpenApiVertxRouterFactory {
     @FunctionalInterface
     private interface EntityWrite {
         CompletableFuture<RawJson> apply(String structureId, RawJson entity, EntityContext context);
+    }
+
+    /**
+     * A delete by entity id on {@link EntitiesService}
+     */
+    @FunctionalInterface
+    private interface DeleteById {
+        CompletableFuture<Void> apply(String structureId, String id, EntityContext context);
+    }
+
+    /**
+     * A delete by tenant and entity id on {@link EntitiesService}
+     */
+    @FunctionalInterface
+    private interface AdminDeleteById {
+        CompletableFuture<Void> apply(String structureId, TenantSpecificId id, EntityContext context);
     }
 
     private void addNamedQueryRoutes(Router router, BodyHandler bodyHandler) {

@@ -19,8 +19,8 @@ public interface GqlOperationDefinitionService {
 
     /**
      * Returns the Sync variants of the built-in writes, saveSync, updateSync and deleteSync.
-     * They are added to the schema before every other operation, so that when a name clashes (saveSync for Job is
-     * saveSyncJob, and so is save for SyncJob) the operation that existed before them keeps the name.
+     * They are added to the schema after every other operation, and only where their name is free, so that when a
+     * name clashes (saveSync for Job is saveSyncJob, and so is save for SyncJob) the other operation keeps it.
      * @return the Sync {@link GqlOperationDefinition}s
      */
     List<GqlOperationDefinition> getSyncOperationDefinitions();

@@ -661,8 +661,8 @@ public class DefaultOpenApiService implements OpenApiService {
     /**
      * operationIds are the operation followed by the structure name, so saveSync for Job and save for SyncJob are both
      * saveSyncJob. They must be unique, so a Sync operation whose id another operation already has is left without
-     * one, and the operation that existed before the Sync ones keeps its id. Clients generated from the spec then name
-     * the Sync operation from its path.
+     * one, and the other operation keeps its id. Clients generated from the spec then name the Sync operation from its
+     * path.
      */
     private static void removeClashingSyncOperationIds(Paths paths, Set<Operation> syncOperations){
         Set<String> otherOperationIds = new HashSet<>();

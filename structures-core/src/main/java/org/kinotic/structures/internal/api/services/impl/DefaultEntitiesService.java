@@ -107,8 +107,11 @@ public class DefaultEntitiesService implements EntitiesService {
                 .thenCompose(entityService -> entityService.deleteById(id, context));
     }
 
+    @WithSpan
     @Override
-    public CompletableFuture<Void> deleteById(String structureId, TenantSpecificId id, EntityContext context) {
+    public CompletableFuture<Void> deleteById(@SpanAttribute("structureId") String structureId,
+                                              TenantSpecificId id,
+                                              EntityContext context) {
         return entityServiceCache.get(structureId)
                 .thenCompose(entityService -> entityService.deleteById(id, context));
     }
@@ -122,8 +125,11 @@ public class DefaultEntitiesService implements EntitiesService {
                 .thenCompose(entityService -> entityService.deleteByIdSync(id, context));
     }
 
+    @WithSpan
     @Override
-    public CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, EntityContext context) {
+    public CompletableFuture<Void> deleteByIdSync(@SpanAttribute("structureId") String structureId,
+                                                  TenantSpecificId id,
+                                                  EntityContext context) {
         return entityServiceCache.get(structureId)
                 .thenCompose(entityService -> entityService.deleteByIdSync(id, context));
     }

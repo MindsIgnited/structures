@@ -228,11 +228,15 @@ should call it once per batch, not after every bulk call. No bulk Sync methods w
 
 **Name clashes.** GraphQL operation names and OpenAPI operationIds are the operation followed by
 the structure name, so `saveSync` for a structure `Job` and `save` for a structure `SyncJob` are
-both `saveSyncJob`. The operation that existed before the Sync ones keeps the name. GraphQL adds
-the Sync operations first, and a later operation with the same name replaces the earlier one (as
-named queries always could), logged at WARN, so that structure has no GraphQL Sync mutation; RPC
-and REST still have it. The OpenAPI spec leaves the Sync operation without an operationId, so
-generated clients name it from its path.
+both `saveSyncJob`. The non-Sync operation always keeps the name, whichever structure was
+published first. GraphQL adds the Sync mutations after everything else, and only where the name
+is free; a clashing one is left out, logged at WARN, so that structure has no GraphQL Sync
+mutation, while RPC and REST still have it. The OpenAPI spec leaves the Sync operation without
+an operationId, so generated clients name it from its path.
+
+Because the non-Sync operation wins, publishing `SyncJob` after clients already use `Job`'s
+`saveSyncJob` moves that name to `SyncJob`'s plain save. Avoiding that for good means refusing to
+publish a structure whose name clashes, which is a follow-up, not done.
 
 Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
 that each Sync write is searchable on return over RPC, REST and GraphQL, that `deleteByIdSync` on

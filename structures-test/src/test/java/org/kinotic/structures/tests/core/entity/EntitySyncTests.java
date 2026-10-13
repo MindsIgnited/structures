@@ -224,8 +224,8 @@ public class EntitySyncTests extends ElasticTestBase {
     }
 
     /**
-     * saveSync for Clash and save for SyncClash share a name. The operation that existed before the Sync ones must
-     * keep it, in GraphQL and as an OpenAPI operationId.
+     * saveSync for Clash and save for SyncClash share a name. The non-Sync operation must keep it, in GraphQL and as
+     * an OpenAPI operationId.
      */
     @Test
     public void syncOperationNamesDoNotReplaceExistingOnes() throws Exception {
