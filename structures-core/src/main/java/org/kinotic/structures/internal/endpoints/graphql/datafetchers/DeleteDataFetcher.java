@@ -17,10 +17,15 @@ public class DeleteDataFetcher implements DataFetcher<CompletableFuture<String>>
 
     private final String structureId;
     private final EntitiesService entitiesService;
+    private final boolean sync;
 
-    public DeleteDataFetcher(String structureId, EntitiesService entitiesService) {
+    /**
+     * @param sync true to refresh before returning, so the deletion is searchable straight away
+     */
+    public DeleteDataFetcher(String structureId, EntitiesService entitiesService, boolean sync) {
         this.structureId = structureId;
         this.entitiesService = entitiesService;
+        this.sync = sync;
     }
 
     @Override
@@ -31,7 +36,9 @@ public class DeleteDataFetcher implements DataFetcher<CompletableFuture<String>>
 
         String id = environment.getArgument("id");
 
-        return entitiesService.deleteById(structureId, id, ec)
-                              .thenCompose(aVoid -> CompletableFuture.completedFuture(id));
+        CompletableFuture<Void> delete = sync
+                ? entitiesService.deleteByIdSync(structureId, id, ec)
+                : entitiesService.deleteById(structureId, id, ec);
+        return delete.thenCompose(aVoid -> CompletableFuture.completedFuture(id));
     }
 }

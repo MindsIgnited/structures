@@ -162,9 +162,10 @@ Below are the available options, their types, and default values. When you see a
   |-------|------------------|----------------------------|------|
   | `true` | after forcing a refresh | yes | each forced refresh writes a new small segment, which costs merges and cache churn when writes are heavy, and slows searches down |
   | `wait_for` | after the next scheduled refresh | yes | usually no extra work for Elasticsearch, but the call takes up to the index's refresh interval longer |
-  | `false` | straight away | no, after the next scheduled refresh or a `syncIndex` call | none |
+  | `false` | straight away | no, after the next scheduled refresh, a Sync write or a `syncIndex` call | none |
 
   Finding an entity by id sees the change straight away whatever the value. Bulk saves and updates never refresh.
+  `saveSync` and `updateSync` always force a refresh, whatever the value; see [Choosing a refresh mode](#choosing-a-refresh-mode).
 
   With `wait_for`, a write holds its connection to Elasticsearch while it waits, and reads share the same connections
   (10 per Elasticsearch host). Many concurrent `wait_for` writes queue behind each other and can hold up reads, so it
@@ -180,7 +181,43 @@ Below are the available options, their types, and default values. When you see a
   this problem.
 - **elasticRefreshAfterDelete** (`true` | `false` | `wait_for`, default: `true`):
   The same, for deleting an entity by id. With `false`, the entity drops out of searches after the next scheduled
-  refresh, or once `syncIndex` is called. Delete by query never refreshes.
+  refresh, or once `syncIndex` is called. `deleteByIdSync` always forces a refresh. Delete by query never refreshes.
+
+#### Choosing a refresh mode
+
+The two settings above decide what every single write does by default. Callers can still ask for a refresh on one
+write when they need to search for it straight away, so a server can run with `false`, the cheapest setting, and
+let only the callers that need it pay for a refresh:
+
+| Call | Refresh | Use it when |
+|------|---------|-------------|
+| `save`, `update` | `elasticRefreshAfterMutation` | the default for single writes |
+| `deleteById` | `elasticRefreshAfterDelete` | the default for deletes |
+| `saveSync`, `updateSync`, `deleteByIdSync` | always forced, on the shard the write touched | the caller searches for its own write straight afterwards |
+| `bulkSave`, `bulkUpdate`, `deleteByQuery` | none | bulk writes |
+| `syncIndex` | forces a refresh of every shard of the structure's index | after a batch of bulk writes the caller needs to search |
+
+Over REST the Sync writes are `POST .../{structure}/save-sync`, `POST .../{structure}/update-sync` and
+`DELETE .../{structure}/{id}/sync` (`DELETE .../{structure}/{tenantId}/{id}/sync` on the admin API). Over GraphQL
+they are the `saveSync<Structure>`, `updateSync<Structure>` and `deleteSync<Structure>` mutations. They are allowed
+or denied by the same policies as `save`, `update` and `deleteById`.
+
+**Why the Sync writes force a refresh instead of using `wait_for`.** Both make the write searchable by the time it
+returns, but `wait_for` has costs that grow under exactly the load that makes `false` worth setting:
+
+- The write holds its connection to Elasticsearch until the next scheduled refresh, and reads share those
+  connections (10 per Elasticsearch host), so concurrent `wait_for` writes can hold up reads.
+- The wait is up to the index's refresh interval: 1 second by default, longer on an index tuned to refresh less
+  often, and indefinitely on one with refreshes disabled (`refresh_interval: -1`).
+- Past 1,000 waiting writes on one shard (`index.max_refresh_listeners`), Elasticsearch forces a refresh anyway.
+
+A forced refresh returns as soon as the shard the write touched is refreshed, so the caller's wait doesn't depend on
+the index settings or on other traffic. The cost, a small new segment per call, is kept down because only the
+callers that ask for it pay it.
+
+**When to call `syncIndex`.** It refreshes every shard of the structure's index, so call it once after a batch of
+bulk writes, not after every bulk call. Callers that don't search for what they just wrote don't need it at all:
+their writes show up after the next scheduled refresh.
 
 #### Example (`application.yml`):
 ```yaml

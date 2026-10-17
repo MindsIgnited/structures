@@ -1,6 +1,6 @@
 # Working well with Elasticsearch
 
-**Status:** refresh settings for single writes done; write throttling planned. This is the place to
+**Status:** refresh settings and Sync writes for single writes done; write throttling planned. This is the place to
 record changes that make Structures easier on Elasticsearch. The first entry is throttling writes
 so they stop slowing reads.
 
@@ -18,6 +18,8 @@ so they stop slowing reads.
   `bulkUpdate`), as opposed to a single `save` or `update`.
 - **`syncIndex`:** a Structures call that forces a refresh of a structure's whole index, so
   everything written so far becomes searchable.
+- **Sync write:** `saveSync`, `updateSync` or `deleteByIdSync`, a single write that forces a
+  refresh of the shard it touched before returning, whatever the refresh settings say.
 
 ## Write throttling (October 2026)
 
@@ -128,7 +130,7 @@ Each takes one of three values, the same ones Elasticsearch's own `refresh` para
 |-------|------------------|----------------------------|-----------------------|
 | `true` (default) | after forcing a refresh | yes | a new small segment for every write |
 | `wait_for` | after the next scheduled refresh (within 1 s by default) | yes | usually none extra; the caller waits instead (see the limit below) |
-| `false` | straight away | no: after the next scheduled refresh, or a `syncIndex` call | none |
+| `false` | straight away | no: after the next scheduled refresh, a Sync write, or a `syncIndex` call | none |
 
 Find by id sees a change straight away whatever the value, because Elasticsearch reads a single
 document by id without waiting for a refresh. Bulk calls and delete by query never refresh.
@@ -140,8 +142,8 @@ variables.
 **Which value to use.** `wait_for` keeps the old guarantee (search sees a change as soon as the
 call returns) without the forced refresh, so it's the natural replacement for `true` where callers
 search their own writes. `false` is cheapest. It suits callers that don't search their own writes,
-or that call `syncIndex` only when they actually need to. The plan is to try both in test
-environments first.
+or that use a Sync write or `syncIndex` only when they actually need to (see "Done: Sync writes"
+below). The plan is to try both in test environments first.
 
 **`wait_for` holds a connection while it waits.** Reads and writes still share one pool of 10
 connections per Elasticsearch host (step 1 above would separate them). A `wait_for` write keeps
@@ -185,10 +187,100 @@ Follow-ups, not done yet:
   behaviour), would let bulk writers that search their own data use `wait_for` instead of
   `syncIndex`, which refreshes the whole index. Best left until the metrics are in, and until
   reads and writes have separate pools.
-- **Per-structure or per-call control.** The settings apply to every structure at once. A
-  structure-level option, or a per-request one, could override them, so only the busiest indexes
-  stop forcing refreshes while structures used by interactive apps keep the default. The enum
-  already fits this.
+- **Per-structure control.** The settings apply to every structure at once. A structure-level
+  option could override them, so only the busiest indexes stop forcing refreshes while structures
+  used by interactive apps keep the default. The enum already fits this. Per-call control is done:
+  see "Done: Sync writes" below.
+
+#### Done: Sync writes
+
+`saveSync`, `updateSync` and `deleteByIdSync` (and `deleteByIdSync` on the admin entities service)
+do what `save`, `update` and `deleteById` do, then force a refresh before returning, whatever
+`elasticRefreshAfterMutation` and `elasticRefreshAfterDelete` say. They follow the names Kinotic's
+`CrudService` uses. Over REST they are `save-sync`, `update-sync` and `{id}/sync`; over GraphQL,
+`saveSync<Structure>`, `updateSync<Structure>` and `deleteSync<Structure>`. A server can then run
+with both settings `false`, and only the callers that search their own writes straight away pay
+for a refresh.
+
+**They force a refresh (`refresh=true`) instead of using `wait_for`.** Kinotic's `saveSync` uses
+`wait_for`; we decided against it here, because its costs grow under the load that makes `false`
+worth setting:
+
+- A `wait_for` write holds a pooled connection until the next scheduled refresh, and reads share
+  that pool (see above), so concurrent Sync writes would hold up reads.
+- The wait is up to the refresh interval, so it grows if busy indexes move to a 5-10 s interval,
+  and never ends on an index with refreshes disabled.
+- Past 1,000 waiting writes on a shard, Elasticsearch forces a refresh anyway.
+
+A forced refresh touches only the shard the write went to, and returns as soon as that is done, so
+the caller's latency doesn't depend on index settings or other traffic. Its cost, one small
+segment per call, is paid only by the callers that ask for it.
+
+**They are authorized as the write they refresh after.** `saveSync` checks the same policies as
+`save`, `updateSync` as `update`, `deleteByIdSync` as `deleteById`, and GraphQL puts the same
+`@policy` directives on them. There are no new `EntityOperation` values, and the TypeScript
+`EntityServiceDecoratorsConfig` doesn't accept the Sync names, so a policy on `save` can't be
+bypassed by calling `saveSync`.
+
+**`syncIndex` stays.** It is the tool for bulk writers that need to search what they wrote: one
+refresh after a batch, instead of one per write. It refreshes every shard of the index, so callers
+should call it once per batch, not after every bulk call. No bulk Sync methods were added.
+
+**Name clashes.** GraphQL operation names and OpenAPI operationIds are the operation followed by
+the structure name, so `saveSync` for a structure `Job` and `save` for a structure `SyncJob` are
+both `saveSyncJob`. In GraphQL the name is the endpoint, so one would replace the other.
+Publishing a structure, or saving named queries, whose GraphQL operation names another published
+structure in the application already has is therefore refused (`GqlOperationNameValidator`).
+The built-in names, and whether each is a query or a mutation, come from the same
+`GqlOperationDefinition`s that build the schema; GraphQL keeps queries and mutations apart, so
+only names of the same kind clash. `GqlOperationNameTests` checks the result against a generated
+schema.
+
+- **Publish** checks every operation the structure generates, its stored named queries included.
+  Unpublishing deletes the index, and republishing is checked again, so it is refused if a
+  clashing structure was published in between. That's deliberate: a publish already fails for a
+  bad mapping or an Elasticsearch error, and failing is better than an endpoint that silently
+  points somewhere else.
+- **Saving named queries** checks only the named queries, since a save doesn't change the built-in
+  operations. Structures that already clash (published before the check) can still get new named
+  queries. Named queries are found by the exact structure name, so ones saved under another case
+  generate nothing and aren't checked; nor are ones saved before their structure exists, which
+  publishing checks instead.
+- **Concurrent publishes** of two clashing structures can both pass, since the check takes no
+  lock. Publishing is rare enough that this is accepted. If it happens, the schema keeps the
+  non-Sync operation for a clashing Sync one (below), and unpublishing either structure resolves
+  it.
+- **Paging:** the check reads every published structure and every named query in the
+  application, following cursors sorted by `id`, so there's no 10,000 result limit.
+
+Saving named queries also refuses ones that can't be run: the executor only supports a single
+`SELECT` with an aggregate, so a `DELETE`, `INSERT`, `UPDATE`, a `SELECT` without an aggregate,
+several statements, or an empty query are refused on save, instead of generating endpoints that
+fail on every call. `DefaultQueryExecutorFactory.validateNamedQuery` holds these rules and the
+executor uses it too.
+
+OpenAPI isn't checked. Its paths include the structure name and never clash; only operationIds
+repeat, and that predates this change and is common: `Order` with multi-tenant selection and
+`OrderAdmin` both have `countOrderAdmin`, as do `Job`'s countByQuery and `JobByQuery`'s count.
+Refusing those would refuse applications that work today (the test suite's own `Person_testCount`
+and `Person_testCountByQuery` among them), and the only effect is on generated clients.
+
+Structures published before the check can still clash in GraphQL. For them the non-Sync
+operation keeps the name: GraphQL adds the Sync mutations after everything else and only where the
+name is free, logging a clashing one at WARN. In OpenAPI, where repeats are allowed, a Sync
+operation whose operationId another operation has is left without one. RPC and REST always have
+the Sync writes.
+
+A named query's OpenAPI operationId is the query name alone, so the same query name on two
+structures gives duplicate operationIds. That predates this change and isn't checked, since
+refusing it would refuse applications that work today.
+
+Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
+that each Sync write is searchable on return over RPC, REST and GraphQL, that `deleteByIdSync` on
+the admin service works, and that a policy denying `save`, `update` and `deleteById` denies the
+Sync writes too. It also checks that a clashing name from before the check stays with the
+non-Sync operation. `GqlOperationNameTests` covers the refusals. The e2e suite covers the TypeScript
+client and the REST routes.
 
 #### Other changes worth making
 

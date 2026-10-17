@@ -107,10 +107,31 @@ public class DefaultEntitiesService implements EntitiesService {
                 .thenCompose(entityService -> entityService.deleteById(id, context));
     }
 
+    @WithSpan
     @Override
-    public CompletableFuture<Void> deleteById(String structureId, TenantSpecificId id, EntityContext context) {
+    public CompletableFuture<Void> deleteById(@SpanAttribute("structureId") String structureId,
+                                              TenantSpecificId id,
+                                              EntityContext context) {
         return entityServiceCache.get(structureId)
                 .thenCompose(entityService -> entityService.deleteById(id, context));
+    }
+
+    @WithSpan
+    @Override
+    public CompletableFuture<Void> deleteByIdSync(@SpanAttribute("structureId") String structureId,
+                                                  String id,
+                                                  EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.deleteByIdSync(id, context));
+    }
+
+    @WithSpan
+    @Override
+    public CompletableFuture<Void> deleteByIdSync(@SpanAttribute("structureId") String structureId,
+                                                  TenantSpecificId id,
+                                                  EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.deleteByIdSync(id, context));
     }
 
     @WithSpan
@@ -212,6 +233,15 @@ public class DefaultEntitiesService implements EntitiesService {
 
     @WithSpan
     @Override
+    public <T> CompletableFuture<T> saveSync(@SpanAttribute("structureId") String structureId,
+                                             T entity,
+                                             EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.saveSync(entity, context));
+    }
+
+    @WithSpan
+    @Override
     public <T> CompletableFuture<Page<T>> search(@SpanAttribute("structureId") String structureId,
                                                  String searchText,
                                                  Pageable pageable,
@@ -228,6 +258,15 @@ public class DefaultEntitiesService implements EntitiesService {
                                            EntityContext context) {
         return entityServiceCache.get(structureId)
                 .thenCompose(entityService -> entityService.update(entity, context));
+    }
+
+    @WithSpan
+    @Override
+    public <T> CompletableFuture<T> updateSync(@SpanAttribute("structureId") String structureId,
+                                               T entity,
+                                               EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.updateSync(entity, context));
     }
 
     /**

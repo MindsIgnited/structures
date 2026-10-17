@@ -19,10 +19,15 @@ public class UpdateDataFetcher implements DataFetcher<CompletableFuture<Map>> {
 
     private final String structureId;
     private final EntitiesService entitiesService;
+    private final boolean sync;
 
-    public UpdateDataFetcher(String structureId, EntitiesService entitiesService) {
+    /**
+     * @param sync true to refresh before returning, so the change is searchable straight away
+     */
+    public UpdateDataFetcher(String structureId, EntitiesService entitiesService, boolean sync) {
         this.structureId = structureId;
         this.entitiesService = entitiesService;
+        this.sync = sync;
     }
 
     @Override
@@ -33,6 +38,6 @@ public class UpdateDataFetcher implements DataFetcher<CompletableFuture<Map>> {
 
         Map entity = environment.getArgument("input");
 
-        return entitiesService.update(structureId, entity, ec);
+        return sync ? entitiesService.updateSync(structureId, entity, ec) : entitiesService.update(structureId, entity, ec);
     }
 }

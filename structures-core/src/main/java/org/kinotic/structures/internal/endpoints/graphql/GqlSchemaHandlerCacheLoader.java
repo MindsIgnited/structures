@@ -31,6 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -132,6 +133,7 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
                         IdlConverter<GqlTypeHolder, GqlConversionState> converter
                                 = structureConversionService.createGqlConverter();
 
+                        List<Pair<Structure, GqlFieldDefinitionData>> structureFieldDefinitions = new ArrayList<>();
                         for (Structure structure : structuresPage.getContent()) {
 
                             GqlTypeHolder structureType = converter.convert(structure.getEntityDefinition());
@@ -172,6 +174,16 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
 
                             // Add all graphQL operations to the schema
                             addOperations(fieldDefinitionData, codeRegistryBuilder, mutationBuilder, queryBuilder, structure);
+
+                            structureFieldDefinitions.add(Pair.of(structure, fieldDefinitionData));
+                        }
+
+                        // Sync operations go last, and only where their name is free, so they never take a name from
+                        // another operation (saveSync for Job and save for SyncJob are both saveSyncJob)
+                        for (Pair<Structure, GqlFieldDefinitionData> pair : structureFieldDefinitions) {
+                            for (GqlOperationDefinition definition : gqlOperationDefinitionService.getSyncOperationDefinitions()) {
+                                addOperation(definition, pair.getRight(), codeRegistryBuilder, mutationBuilder, queryBuilder, pair.getLeft(), true);
+                            }
                         }
 
                         // Add all type resolvers to the schema
@@ -244,12 +256,12 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
 
         // Add built in operations
         for (GqlOperationDefinition definition : gqlOperationDefinitionService.getBuiltInOperationDefinitions()) {
-            addOperation(definition, fieldDefinitionData, codeRegistryBuilder, mutationBuilder, queryBuilder, structure);
+            addOperation(definition, fieldDefinitionData, codeRegistryBuilder, mutationBuilder, queryBuilder, structure, false);
         }
 
         // Add named query operations
         for(GqlOperationDefinition definition : gqlOperationDefinitionService.getNamedQueryOperationDefinitions(structure)){
-            addOperation(definition, fieldDefinitionData, codeRegistryBuilder, mutationBuilder, queryBuilder, structure);
+            addOperation(definition, fieldDefinitionData, codeRegistryBuilder, mutationBuilder, queryBuilder, structure, false);
         }
     }
 
@@ -258,13 +270,18 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
                                      GraphQLCodeRegistry.Builder codeRegistryBuilder,
                                      GraphQLObjectType.Builder mutationBuilder,
                                      GraphQLObjectType.Builder queryBuilder,
-                                     Structure structure) {
+                                     Structure structure,
+                                     boolean onlyIfNameIsFree) {
 
         Function<GqlFieldDefinitionData, GraphQLFieldDefinition> function = definition.getFieldDefinitionFunction();
 
         if (definition.getOperationType() == OperationDefinition.Operation.QUERY) {
 
             GraphQLFieldDefinition queryFieldDefinition = function.apply(fieldDefinitionData);
+
+            if (onlyIfNameIsFree && isTaken(queryBuilder, queryFieldDefinition, structure)) {
+                return;
+            }
 
             queryBuilder.field(queryFieldDefinition);
 
@@ -277,6 +294,10 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
 
                 GraphQLFieldDefinition mutationFieldDefinition = function.apply(fieldDefinitionData);
 
+                if (onlyIfNameIsFree && isTaken(mutationBuilder, mutationFieldDefinition, structure)) {
+                    return;
+                }
+
                 mutationBuilder.field(mutationFieldDefinition);
 
                 codeRegistryBuilder.dataFetcher(FieldCoordinates.coordinates("Mutation", mutationFieldDefinition.getName()),
@@ -288,6 +309,22 @@ public class GqlSchemaHandlerCacheLoader implements AsyncCacheLoader<String, Gra
                       definition.getOperationName(),
                       definition.getOperationType());
         }
+    }
+
+    /**
+     * Operation names are the operation followed by the structure name, so two structures can produce the same name,
+     * such as saveSync for Job and save for SyncJob. Logs when the name is already taken.
+     */
+    private static boolean isTaken(GraphQLObjectType.Builder builder,
+                                   GraphQLFieldDefinition fieldDefinition,
+                                   Structure structure) {
+        boolean taken = builder.hasField(fieldDefinition.getName());
+        if (taken) {
+            log.warn("GraphQL operation {} for structure {} is not available, another operation already has the name",
+                     fieldDefinition.getName(),
+                     structure.getId());
+        }
+        return taken;
     }
 
     private static GraphQLInputObjectType getGraphQLInputObjectType(GqlTypeHolder gqlTypeHolder) {

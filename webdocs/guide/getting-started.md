@@ -264,6 +264,24 @@ export class Person {
 }
 ```
 
+### Entity and Named Query Names
+Structures generates GraphQL operations and OpenAPI operations for each published entity, named after the operation
+and the entity: `savePerson`, `findAllPerson`, `saveSyncPerson`, `getPersonById` and so on. A named query's GraphQL
+operation is named the same way, such as `findByLastNamePerson`.
+
+Two entities in the same application can produce the same GraphQL operation name. For example, `saveSync` for `Job`
+and `save` for `SyncJob` are both `saveSyncJob`. Structures refuses to publish an entity, or save named queries, whose
+GraphQL operation names another published entity in the application already has, and the error lists each clash.
+Queries and mutations are separate in GraphQL, so only names of the same kind clash; named queries are queries. A
+named query can't be named after a built-in query either: a named query `count` on `Person` would be `countPerson`.
+Rename the entity or the query to fix it. Unpublishing deletes an entity's data, and publishing it again is checked
+the same way, so it is refused if a clashing entity was published in the meantime.
+
+### Named Query Statements
+A named query must be a single `SELECT` statement with an aggregate, such as `COUNT` or `SUM`. Saving one that is
+anything else (a `DELETE`, `INSERT` or `UPDATE`, a `SELECT` without an aggregate, or several statements) is refused,
+since it couldn't be run.
+
 ## Structures CLI Commands Reference
 
 Here are the key CLI commands you'll use when working with Structures:

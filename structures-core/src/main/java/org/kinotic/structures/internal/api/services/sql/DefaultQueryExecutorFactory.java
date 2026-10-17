@@ -1,7 +1,6 @@
 package org.kinotic.structures.internal.api.services.sql;
 
 import lombok.RequiredArgsConstructor;
-import org.apache.commons.lang3.NotImplementedException;
 import org.kinotic.continuum.idl.api.schema.FunctionDefinition;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.NamedQueriesDefinition;
@@ -43,40 +42,52 @@ public class DefaultQueryExecutorFactory implements QueryExecutorFactory {
             throw new IllegalArgumentException("No query found with name " + queryName);
         }
 
-        // Sanity check, but should never happen if using the CLI
+        String statement = validateNamedQuery(namedQuery);
+        QueryExecutor queryExecutor = new AggregateQueryExecutor(structure,
+                                                                 elasticVertxClient,
+                                                                 statement,
+                                                                 structuresProperties);
+        AuthorizationService<NamedQueryOperation> authorizationService =
+                authorizationServiceFactory.createNamedQueryAuthorizationService(namedQuery).join();
+        return new ParameterProcessorExecutor(structure,
+                namedQuery,
+                new PreAuthorizationExecutor(authorizationService, queryExecutor));
+    }
+
+    /**
+     * Checks that a named query can be run, so saving one that can't is refused instead of every call to it failing.
+     * Only a single SELECT statement with an aggregate (such as COUNT or SUM) is supported so far.
+     * This naive approach to handling queries will be improved as we do more R&D on advanced approaches.
+     *
+     * @param namedQuery the named query
+     * @return the query's statement, trimmed
+     * @throws IllegalArgumentException if the named query can't be run
+     */
+    public static String validateNamedQuery(FunctionDefinition namedQuery) {
         QueryDecorator queryDecorator = namedQuery.findDecorator(QueryDecorator.class);
         if(queryDecorator == null
-                || queryDecorator.getStatements() == null){
-            throw new IllegalArgumentException("No Query defined");
+                || queryDecorator.getStatements() == null
+                || queryDecorator.getStatements().isBlank()){
+            throw new IllegalArgumentException("Named query " + namedQuery.getName() + " has no query defined");
         }
 
         String[] statements = queryDecorator.getStatements().split(";");
-        if(statements.length == 1){
-            QueryExecutor queryExecutor = createQueryExecutorForStatement(structure, statements[0], namedQuery);
-            AuthorizationService<NamedQueryOperation> authorizationService =
-                    authorizationServiceFactory.createNamedQueryAuthorizationService(namedQuery).join();
-            return new ParameterProcessorExecutor(structure,
-                    namedQuery,
-                    new PreAuthorizationExecutor(authorizationService, queryExecutor));
-        }else{
-            throw new IllegalArgumentException("Multiple statements not supported yet");
+        if(statements.length != 1){
+            throw new IllegalArgumentException("Named query " + namedQuery.getName() + " has multiple statements, which aren't supported yet");
         }
-    }
 
-    private QueryExecutor createQueryExecutorForStatement(Structure structure,
-                                                          String statement,
-                                                          FunctionDefinition namedQueryDefinition) {
-        // naive approach to how we handle these queries, this will be improved as we do more R&D on advanced approaches
-        SqlQueryType queryType = QueryUtils.determineQueryType(statement);
-        return switch (queryType) {
-            case AGGREGATE -> new AggregateQueryExecutor(structure,
-                                                         elasticVertxClient,
-                                                         statement,
-                                                         structuresProperties);
-            case DELETE -> throw new NotImplementedException("Delete not supported yet");
-            case INSERT -> throw new NotImplementedException("Insert not supported yet");
-            case SELECT -> throw new NotImplementedException("Select without aggregate not supported yet");
-            case UPDATE -> throw new NotImplementedException("Update not supported yet");
-        };
+        String statement = statements[0].trim();
+        SqlQueryType queryType;
+        try {
+            queryType = QueryUtils.determineQueryType(statement);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Named query " + namedQuery.getName() + " has an unsupported statement: " + statement, e);
+        }
+        if(queryType != SqlQueryType.AGGREGATE){
+            String what = queryType == SqlQueryType.SELECT ? "a SELECT without an aggregate" : "a " + queryType + " statement";
+            throw new IllegalArgumentException("Named query " + namedQuery.getName() + " is " + what
+                                                       + ", which isn't supported yet. Only a SELECT with an aggregate, such as COUNT or SUM, is.");
+        }
+        return statement;
     }
 }

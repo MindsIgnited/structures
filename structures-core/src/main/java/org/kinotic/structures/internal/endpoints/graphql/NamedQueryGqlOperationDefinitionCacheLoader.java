@@ -144,7 +144,10 @@ public class NamedQueryGqlOperationDefinitionCacheLoader implements AsyncCacheLo
         return builder.build();
     }
 
-    private static OperationDefinition.Operation getGqlOperationType(SqlQueryType queryType) {
+    /**
+     * @return the type of GraphQL operation generated for a named query of the given type
+     */
+    static OperationDefinition.Operation getGqlOperationType(SqlQueryType queryType) {
         return switch (queryType) {
             case AGGREGATE, SELECT -> OperationDefinition.Operation.QUERY;
             case DELETE, INSERT, UPDATE -> OperationDefinition.Operation.MUTATION;

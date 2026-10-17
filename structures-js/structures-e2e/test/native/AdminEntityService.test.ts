@@ -107,6 +107,18 @@ describe('End To End Tests', () => {
     )
 
     it<LocalTestContext>(
+        'Test Delete By Id Sync is searchable on return',
+        async ({entityService, adminEntityService}) => {
+            const savedPerson: PersonWithTenant = await logFailure(entityService.saveSync(createTestPersonWithTenant(1, 'tenant01')),
+                                                                   'Failed to save person for tenant01')
+            await expect(adminEntityService.count(['tenant01'])).resolves.toBe(1)
+
+            await expect(adminEntityService.deleteByIdSync({entityId: savedPerson.id as string, tenantId: 'tenant01'})).resolves.toBeNull()
+            await expect(adminEntityService.count(['tenant01'])).resolves.toBe(0)
+        }
+    )
+
+    it<LocalTestContext>(
         'Test FindByIds ',
         async ({entityService, adminEntityService}) => {
             await createTestPeopleWithTenantAndVerify(adminEntityService, entityService, 'tenant01', 100)
