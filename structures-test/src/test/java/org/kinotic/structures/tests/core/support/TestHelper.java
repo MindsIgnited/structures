@@ -2,6 +2,7 @@ package org.kinotic.structures.tests.core.support;
 
 import tools.jackson.core.JacksonException;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -9,11 +10,17 @@ import org.kinotic.structures.api.domain.EntityContext;
 import org.kinotic.structures.api.domain.Structure;
 import org.kinotic.structures.api.services.EntitiesService;
 import org.kinotic.structures.internal.api.domain.DefaultEntityContext;
+import org.kinotic.structures.internal.api.services.ElasticConversionResult;
+import org.kinotic.structures.internal.api.services.StructureConversionService;
+import org.kinotic.structures.internal.api.services.StructureDAO;
+import org.kinotic.structures.internal.api.services.impl.CrudServiceTemplate;
+import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.sample.Car;
 import org.kinotic.structures.internal.sample.DummyParticipant;
 import org.kinotic.structures.internal.sample.Person;
 import org.kinotic.structures.internal.sample.TestDataService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import tools.jackson.core.JsonParser;
@@ -34,6 +41,35 @@ public class TestHelper {
 
     @Autowired
     private EntitiesService entitiesService;
+
+    @Autowired
+    private CrudServiceTemplate crudServiceTemplate;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+
+    @Autowired
+    private StructureConversionService structureConversionService;
+
+    @Autowired
+    private StructureDAO structureDAO;
+
+    /**
+     * Publishes a structure the way publish did before it checked GraphQL operation names, so a test can set up two
+     * structures that clash, as they can in applications published before the check existed
+     *
+     * @param structure an unpublished structure
+     * @return the published structure
+     */
+    public Structure publishWithoutTheNameCheck(Structure structure) {
+        ElasticConversionResult result = structureConversionService.convertToElasticMapping(structure);
+        crudServiceTemplate.createIndex(structure.getItemIndex(), true, result.objectProperty().properties()).join();
+        structure.setPublished(true);
+        structure.setPublishedTimestamp(new Date());
+        Structure published = structureDAO.save(structure).join();
+        eventPublisher.publishEvent(CacheEvictionEvent.localModifiedStructure(published.getApplicationId(), published.getId()));
+        return published;
+    }
 
 
     public StructureAndPersonHolder createAndVerify(){

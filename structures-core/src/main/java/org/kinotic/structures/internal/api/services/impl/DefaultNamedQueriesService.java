@@ -15,6 +15,8 @@ import org.kinotic.structures.api.services.NamedQueriesService;
 import org.kinotic.structures.auth.internal.services.DefaultCaffeineCacheFactory;
 import org.kinotic.structures.api.domain.ParameterHolder;
 import org.kinotic.structures.internal.api.services.sql.QueryContext;
+import org.kinotic.continuum.idl.api.schema.FunctionDefinition;
+import org.kinotic.structures.internal.api.services.sql.DefaultQueryExecutorFactory;
 import org.kinotic.structures.internal.api.services.sql.QueryExecutorFactory;
 import org.kinotic.structures.internal.api.services.sql.executors.QueryExecutor;
 import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
@@ -159,6 +161,16 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
     public CompletableFuture<NamedQueriesDefinition> save(NamedQueriesDefinition entity) {
         // TODO: preprocess queries to correct index name and add Metadata about query type to be used by other parts of the system
         //       The Query type information will speed up other areas the need this as well
+        // Refuse queries that can't be run, rather than generating endpoints that fail on every call
+        try {
+            if (entity.getNamedQueries() != null) {
+                for (FunctionDefinition namedQuery : entity.getNamedQueries()) {
+                    DefaultQueryExecutorFactory.validateNamedQuery(namedQuery);
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.failedFuture(e);
+        }
         return gqlOperationNameValidator.validateNamedQueries(entity)
                     .thenCompose(v -> super.save(entity))
                     .thenApply(namedQueriesDefinition -> {

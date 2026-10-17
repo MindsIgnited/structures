@@ -230,9 +230,34 @@ should call it once per batch, not after every bulk call. No bulk Sync methods w
 the structure name, so `saveSync` for a structure `Job` and `save` for a structure `SyncJob` are
 both `saveSyncJob`. In GraphQL the name is the endpoint, so one would replace the other.
 Publishing a structure, or saving named queries, whose GraphQL operation names another published
-structure in the application already has is therefore refused (`GqlOperationNameValidator`, using
-the names listed in `GqlOperationNames`). `GqlOperationNameTests` checks those names against a
-generated schema, so the list can't drift from the generators.
+structure in the application already has is therefore refused (`GqlOperationNameValidator`).
+The built-in names, and whether each is a query or a mutation, come from the same
+`GqlOperationDefinition`s that build the schema; GraphQL keeps queries and mutations apart, so
+only names of the same kind clash. `GqlOperationNameTests` checks the result against a generated
+schema.
+
+- **Publish** checks every operation the structure generates, its stored named queries included.
+  Unpublishing deletes the index, and republishing is checked again, so it is refused if a
+  clashing structure was published in between. That's deliberate: a publish already fails for a
+  bad mapping or an Elasticsearch error, and failing is better than an endpoint that silently
+  points somewhere else.
+- **Saving named queries** checks only the named queries, since a save doesn't change the built-in
+  operations. Structures that already clash (published before the check) can still get new named
+  queries. Named queries are found by the exact structure name, so ones saved under another case
+  generate nothing and aren't checked; nor are ones saved before their structure exists, which
+  publishing checks instead.
+- **Concurrent publishes** of two clashing structures can both pass, since the check takes no
+  lock. Publishing is rare enough that this is accepted. If it happens, the schema keeps the
+  non-Sync operation for a clashing Sync one (below), and unpublishing either structure resolves
+  it.
+- **Paging:** the check reads every published structure and every named query in the
+  application, following cursors sorted by `id`, so there's no 10,000 result limit.
+
+Saving named queries also refuses ones that can't be run: the executor only supports a single
+`SELECT` with an aggregate, so a `DELETE`, `INSERT`, `UPDATE`, a `SELECT` without an aggregate,
+several statements, or an empty query are refused on save, instead of generating endpoints that
+fail on every call. `DefaultQueryExecutorFactory.validateNamedQuery` holds these rules and the
+executor uses it too.
 
 OpenAPI isn't checked. Its paths include the structure name and never clash; only operationIds
 repeat, and that predates this change and is common: `Order` with multi-tenant selection and

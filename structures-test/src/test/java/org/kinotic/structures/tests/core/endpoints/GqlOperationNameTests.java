@@ -12,19 +12,27 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+import graphql.language.OperationDefinition;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.apache.commons.text.WordUtils;
 import org.kinotic.continuum.idl.api.schema.ArrayC3Type;
+import org.kinotic.continuum.idl.api.schema.C3Type;
 import org.kinotic.continuum.idl.api.schema.FunctionDefinition;
+import org.kinotic.continuum.idl.api.schema.IntC3Type;
 import org.kinotic.continuum.idl.api.schema.ObjectC3Type;
 import org.kinotic.continuum.idl.api.schema.StringC3Type;
+import org.kinotic.continuum.idl.api.schema.VoidC3Type;
 import org.kinotic.continuum.idl.api.schema.decorators.C3Decorator;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.NamedQueriesDefinition;
@@ -36,7 +44,12 @@ import org.kinotic.structures.api.domain.idl.decorators.TenantIdDecorator;
 import org.kinotic.structures.api.services.ApplicationService;
 import org.kinotic.structures.api.services.NamedQueriesService;
 import org.kinotic.structures.api.services.StructureService;
+import org.kinotic.structures.internal.api.services.StructureDAO;
+import org.kinotic.structures.internal.endpoints.graphql.GqlOperationDefinition;
+import org.kinotic.structures.internal.endpoints.graphql.GqlOperationDefinitionService;
 import org.kinotic.structures.internal.endpoints.graphql.GqlOperationNames;
+import org.kinotic.structures.internal.utils.PagingUtils;
+import org.kinotic.structures.tests.core.support.TestHelper;
 import org.kinotic.structures.internal.sample.TestDataService;
 import org.kinotic.structures.support.elastic.ElasticTestBase;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,7 +91,13 @@ public class GqlOperationNameTests extends ElasticTestBase {
     @Autowired
     private StructuresProperties structuresProperties;
     @Autowired
+    private GqlOperationDefinitionService gqlOperationDefinitionService;
+    @Autowired
+    private StructureDAO structureDAO;
+    @Autowired
     private TestDataService testDataService;
+    @Autowired
+    private TestHelper testHelper;
 
     /**
      * Keeps {@link GqlOperationNames} in step with the schema generators, since the checks rely on it
@@ -88,22 +107,34 @@ public class GqlOperationNameTests extends ElasticTestBase {
         String applicationId = newApplicationId();
         Structure structure = create(applicationId, "Person", true);
         publish(structure);
-        NamedQueriesDefinition namedQueries = saveNamedQueries(structure, "listPeople", "pagePeople");
+        NamedQueriesDefinition namedQueries = saveNamedQueries(structure,
+                                                               structure.getName(),
+                                                               select(structure, "countPeople", false),
+                                                               select(structure, "pagePeopleCounts", true));
 
-        Set<String> expected = GqlOperationNames.forStructure(structure, namedQueries, null).keySet();
+        Map<GqlOperationNames.OperationName, String> expected
+                = GqlOperationNames.forStructure(builtInOperations(), structure, namedQueries, null);
 
         // One request per type, since the server refuses introspection that asks for fields twice
-        Set<String> generated = new HashSet<>();
-        for (String type : List.of("Query", "Mutation")) {
-            JsonNode fields = graphQl(applicationId, "{ __type(name: \"%s\") { fields { name } } }".formatted(type))
+        for (OperationDefinition.Operation type : List.of(OperationDefinition.Operation.QUERY,
+                                                          OperationDefinition.Operation.MUTATION)) {
+            String typeName = type == OperationDefinition.Operation.QUERY ? "Query" : "Mutation";
+            JsonNode fields = graphQl(applicationId, "{ __type(name: \"%s\") { fields { name } } }".formatted(typeName))
                     .path("__type")
                     .path("fields");
+            Set<String> generated = new HashSet<>();
             for (JsonNode field : fields) {
                 generated.add(field.path("name").asString());
             }
+            generated.removeIf(name -> name.startsWith("_")); // federation's _service and _entities
+
+            Set<String> expectedOfType = expected.keySet()
+                                                 .stream()
+                                                 .filter(name -> name.type() == type)
+                                                 .map(GqlOperationNames.OperationName::name)
+                                                 .collect(Collectors.toSet());
+            Assertions.assertEquals(expectedOfType, generated, typeName);
         }
-        generated.removeIf(name -> name.startsWith("_")); // federation's _service and _entities
-        Assertions.assertEquals(expected, generated);
     }
 
     @Test
@@ -114,7 +145,7 @@ public class GqlOperationNameTests extends ElasticTestBase {
         Structure syncJob = create(applicationId, "SyncJob" + suffix, false);
 
         IllegalArgumentException refused = assertRefused(() -> structureService.publish(syncJob.getId()).join());
-        Assertions.assertTrue(refused.getMessage().contains("GraphQL operation saveSyncJob" + suffix), refused::getMessage);
+        Assertions.assertTrue(refused.getMessage().contains("GraphQL mutation saveSyncJob" + suffix), refused::getMessage);
         Assertions.assertFalse(structureService.findById(syncJob.getId()).join().isPublished());
     }
 
@@ -157,13 +188,13 @@ public class GqlOperationNameTests extends ElasticTestBase {
     public void savingANamedQueryWithATakenNameIsRefused() {
         String applicationId = newApplicationId();
         String suffix = String.valueOf(System.nanoTime());
-        // saveX + Job is saveXJob, which is the save operation of structure XJob
+        // countX + Job is countXJob, which is the count query of structure XJob
         publish(create(applicationId, "XJob" + suffix, false));
         Structure job = create(applicationId, "Job" + suffix, false);
         publish(job);
 
-        IllegalArgumentException refused = assertRefused(() -> saveNamedQueries(job, "saveX"));
-        Assertions.assertTrue(refused.getMessage().contains("GraphQL operation saveXJob" + suffix), refused::getMessage);
+        IllegalArgumentException refused = assertRefused(() -> saveNamedQueries(job, job.getName(), select(job, "countX", false)));
+        Assertions.assertTrue(refused.getMessage().contains("GraphQL query countXJob" + suffix), refused::getMessage);
         Assertions.assertNull(namedQueriesService.findByApplicationAndStructure(applicationId, job.getName()).join());
     }
 
@@ -173,9 +204,129 @@ public class GqlOperationNameTests extends ElasticTestBase {
         Structure job = create(applicationId, "Job" + System.nanoTime(), false);
         publish(job);
 
-        IllegalArgumentException refused = assertRefused(() -> saveNamedQueries(job, "count"));
+        IllegalArgumentException refused = assertRefused(() -> saveNamedQueries(job, job.getName(), select(job, "count", false)));
         Assertions.assertTrue(refused.getMessage().contains("the count operation of structure " + job.getName()),
                               refused::getMessage);
+    }
+
+    /**
+     * Unpublishing deletes the index, so the republish is checked again like any publish
+     */
+    @Test
+    public void republishingIsRefusedIfAClashingStructureWasPublishedMeanwhile() {
+        String applicationId = newApplicationId();
+        String suffix = String.valueOf(System.nanoTime());
+        Structure job = create(applicationId, "Job" + suffix, false);
+        publish(job);
+        structureService.unPublish(job.getId()).join();
+        publish(create(applicationId, "SyncJob" + suffix, false));
+
+        IllegalArgumentException refused = assertRefused(() -> structureService.publish(job.getId()).join());
+        Assertions.assertTrue(refused.getMessage().contains("saveSyncJob" + suffix), refused::getMessage);
+    }
+
+    /**
+     * Applications published before the check can already clash. Saving named queries checks only the named queries,
+     * so those structures can still get new ones.
+     */
+    @Test
+    public void namedQueriesCanBeSavedForStructuresThatAlreadyClash() {
+        String applicationId = newApplicationId();
+        String suffix = String.valueOf(System.nanoTime());
+        Structure job = create(applicationId, "Job" + suffix, false);
+        publish(job);
+        Structure syncJob = testHelper.publishWithoutTheNameCheck(create(applicationId, "SyncJob" + suffix, false));
+
+        Assertions.assertDoesNotThrow(() -> saveNamedQueries(job, job.getName(), select(job, "countPeople", false)));
+        Assertions.assertDoesNotThrow(() -> saveNamedQueries(syncJob, syncJob.getName(), select(syncJob, "countPeople", false)));
+    }
+
+    /**
+     * GraphQL keeps queries and mutations apart. Named queries are queries, so one named deleteX on Job is the query
+     * deleteXJob, which doesn't clash with the delete mutation of XJob, while findAllX does clash with its findAll query.
+     */
+    @Test
+    public void namedQueriesOnlyClashWithOperationsOfTheSameType() {
+        String applicationId = newApplicationId();
+        String suffix = String.valueOf(System.nanoTime());
+        publish(create(applicationId, "XJob" + suffix, false));
+        Structure job = create(applicationId, "Job" + suffix, false);
+        publish(job);
+
+        Assertions.assertDoesNotThrow(() -> saveNamedQueries(job, job.getName(), select(job, "deleteX", false)));
+
+        IllegalArgumentException refused = assertRefused(() -> saveNamedQueries(job, job.getName(), select(job, "findAllX", false)));
+        Assertions.assertTrue(refused.getMessage().contains("GraphQL query findAllXJob" + suffix), refused::getMessage);
+    }
+
+    /**
+     * Only a single SELECT with an aggregate can be run, so other named queries are refused instead of generating
+     * operations that fail on every call
+     */
+    @Test
+    public void namedQueriesThatCantBeRunAreRefused() {
+        String applicationId = newApplicationId();
+        Structure job = create(applicationId, "Job" + System.nanoTime(), false);
+        publish(job);
+        String from = " FROM \"" + job.getId() + "\"";
+
+        Map<String, String> refusals = new LinkedHashMap<>();
+        refusals.put("DELETE" + from + " WHERE firstName = 'nobody'", "is a DELETE statement");
+        refusals.put("INSERT INTO \"" + job.getId() + "\" (firstName) VALUES ('nobody')", "is a INSERT statement");
+        refusals.put("UPDATE \"" + job.getId() + "\" SET firstName = 'nobody'", "is a UPDATE statement");
+        refusals.put("SELECT firstName" + from, "is a SELECT without an aggregate");
+        refusals.put("SELECT COUNT(firstName) as count" + from + "; SELECT COUNT(lastName) as count" + from, "has multiple statements");
+        refusals.put("   ", "has no query defined");
+        refusals.put("SHOW TABLES", "has an unsupported statement");
+
+        for (Map.Entry<String, String> refusal : refusals.entrySet()) {
+            FunctionDefinition query = namedQuery("badQuery", new VoidC3Type(), refusal.getKey());
+            IllegalArgumentException refused = assertRefused(() -> saveNamedQueries(job, job.getName(), query));
+            Assertions.assertTrue(refused.getMessage().contains("Named query badQuery " + refusal.getValue()), refused::getMessage);
+        }
+        Assertions.assertNull(namedQueriesService.findByApplicationAndStructure(applicationId, job.getName()).join());
+
+        // A statement on several lines, as a template literal gives, is accepted
+        Assertions.assertDoesNotThrow(() -> saveNamedQueries(job, job.getName(), namedQuery("countAll",
+                                                                                            new VoidC3Type(),
+                                                                                            "\n    SELECT COUNT(firstName) as count" + from + "\n")));
+    }
+
+    /**
+     * Named queries are found by the exact structure name, so ones saved with another case generate no operations and
+     * aren't checked
+     */
+    @Test
+    public void namedQueriesForAnotherCaseOfTheStructureNameAreNotChecked() {
+        String applicationId = newApplicationId();
+        String suffix = String.valueOf(System.nanoTime());
+        publish(create(applicationId, "XJob" + suffix, false));
+        Structure job = create(applicationId, "Job" + suffix, false);
+        publish(job);
+
+        // countXJob would clash with the count query of XJob if these were Job's named queries
+        Assertions.assertDoesNotThrow(() -> saveNamedQueries(job, job.getName().toLowerCase(), select(job, "countX", false)));
+    }
+
+    /**
+     * The check reads every published structure in the application, following cursors sorted by id
+     */
+    @Test
+    public void pagingFollowsCursorsToTheLastPage() {
+        String applicationId = newApplicationId();
+        List<String> ids = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            Structure structure = create(applicationId, "Paged" + i + "x" + System.nanoTime(), false);
+            publish(structure);
+            ids.add(structure.getId());
+        }
+
+        List<Structure> found = PagingUtils.findAll(pageable -> structureDAO.findAllPublishedForApplication(applicationId, pageable),
+                                                    "id",
+                                                    2)
+                                           .join();
+
+        Assertions.assertEquals(ids.stream().sorted().toList(), found.stream().map(Structure::getId).toList());
     }
 
     private static IllegalArgumentException assertRefused(Supplier<?> call) {
@@ -216,30 +367,46 @@ public class GqlOperationNameTests extends ElasticTestBase {
         structureService.publish(structure.getId()).join();
     }
 
+    private List<GqlOperationDefinition> builtInOperations() {
+        List<GqlOperationDefinition> ret = new ArrayList<>(gqlOperationDefinitionService.getBuiltInOperationDefinitions());
+        ret.addAll(gqlOperationDefinitionService.getSyncOperationDefinitions());
+        return ret;
+    }
+
     /**
-     * Saves SELECT named queries for the structure; each name ending in "page" returns a page, the rest a list
+     * A SELECT with an aggregate, the only kind of named query that can be run so far
+     *
+     * @param page true to return a page of results, otherwise a list
      */
-    private NamedQueriesDefinition saveNamedQueries(Structure structure, String... queryNames) {
-        List<FunctionDefinition> queries = new ArrayList<>();
-        for (String queryName : queryNames) {
-            ObjectC3Type result = new ObjectC3Type().setName(structure.getName() + queryName + "Result")
-                                                    .setNamespace("org.kinotic.endpointnames")
-                                                    .addProperty("firstName", new StringC3Type());
-            FunctionDefinition query = new FunctionDefinition().setName(queryName)
-                                                               .setParameters(new LinkedList<>())
-                                                               .setReturnType(queryName.toLowerCase().startsWith("page")
-                                                                                      ? new PageC3Type().setContentType(result)
-                                                                                      : new ArrayC3Type().setContains(result));
-            List<C3Decorator> decorators = new ArrayList<>();
-            decorators.add(new QueryDecorator().setStatements("SELECT firstName FROM \"" + structure.getId() + "\""));
-            query.setDecorators(decorators);
-            queries.add(query);
-        }
+    private static FunctionDefinition select(Structure structure, String queryName, boolean page) {
+        ObjectC3Type result = new ObjectC3Type().setName(structure.getName() + queryName + "Result")
+                                                .setNamespace("org.kinotic.endpointnames")
+                                                .addProperty("count", new IntC3Type())
+                                                .addProperty("lastName", new StringC3Type());
+        return namedQuery(queryName,
+                          page ? new PageC3Type().setContentType(result) : new ArrayC3Type().setContains(result),
+                          "SELECT COUNT(firstName) as count, lastName FROM \"" + structure.getId() + "\" GROUP BY lastName");
+    }
+
+    private static FunctionDefinition namedQuery(String queryName, C3Type returnType, String statement) {
+        FunctionDefinition query = new FunctionDefinition().setName(queryName)
+                                                           .setParameters(new LinkedList<>())
+                                                           .setReturnType(returnType);
+        List<C3Decorator> decorators = new ArrayList<>();
+        decorators.add(new QueryDecorator().setStatements(statement));
+        query.setDecorators(decorators);
+        return query;
+    }
+
+    /**
+     * @param structureName the structure name to save the named queries under, normally the structure's own
+     */
+    private NamedQueriesDefinition saveNamedQueries(Structure structure, String structureName, FunctionDefinition... queries) {
         NamedQueriesDefinition namedQueries = new NamedQueriesDefinition().setId(structure.getId())
                                                                           .setApplicationId(structure.getApplicationId())
                                                                           .setProjectId(structure.getProjectId())
-                                                                          .setStructure(structure.getName())
-                                                                          .setNamedQueries(queries);
+                                                                          .setStructure(structureName)
+                                                                          .setNamedQueries(new ArrayList<>(List.of(queries)));
         return namedQueriesService.save(namedQueries).join();
     }
 

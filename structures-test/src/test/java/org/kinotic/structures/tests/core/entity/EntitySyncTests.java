@@ -10,7 +10,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,18 +43,13 @@ import org.kinotic.structures.api.services.security.AuthorizationServiceFactory;
 import org.kinotic.structures.api.services.security.graphos.PolicyAuthorizationRequest;
 import org.kinotic.structures.api.services.security.graphos.PolicyAuthorizationServiceFactory;
 import org.kinotic.structures.internal.api.domain.DefaultEntityContext;
-import org.kinotic.structures.internal.api.services.ElasticConversionResult;
-import org.kinotic.structures.internal.api.services.StructureConversionService;
-import org.kinotic.structures.internal.api.services.StructureDAO;
-import org.kinotic.structures.internal.api.services.impl.CrudServiceTemplate;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.sample.DummyParticipant;
 import org.kinotic.structures.internal.sample.TestDataService;
 import org.kinotic.structures.support.elastic.ElasticTestBase;
+import org.kinotic.structures.tests.core.support.TestHelper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -129,14 +123,7 @@ public class EntitySyncTests extends ElasticTestBase {
     private ApplicationService applicationService;
     @Autowired
     private ElasticsearchClient client;
-    @Autowired
-    private CrudServiceTemplate crudServiceTemplate;
-    @Autowired
-    private ApplicationEventPublisher eventPublisher;
-    @Autowired
-    private StructureConversionService structureConversionService;
-    @Autowired
-    private StructureDAO structureDAO;
+
     @Autowired
     private EntitiesService entitiesService;
     @Autowired
@@ -149,6 +136,8 @@ public class EntitySyncTests extends ElasticTestBase {
     private StructuresProperties structuresProperties;
     @Autowired
     private TestDataService testDataService;
+    @Autowired
+    private TestHelper testHelper;
 
     private final Participant participant = new DummyParticipant();
     private final EntityContext context = new DefaultEntityContext(participant);
@@ -359,14 +348,7 @@ public class EntitySyncTests extends ElasticTestBase {
         toCreate.setProjectId(APPLICATION_ID + "_default");
         toCreate.setDescription("Defines a Person for the Sync write tests");
         toCreate.setEntityDefinition(testDataService.createPersonSchema(MultiTenancyType.SHARED).setName(name));
-        Structure structure = structureService.create(toCreate).join();
-
-        ElasticConversionResult result = structureConversionService.convertToElasticMapping(structure);
-        crudServiceTemplate.createIndex(structure.getItemIndex(), true, result.objectProperty().properties()).join();
-        structure.setPublished(true);
-        structure.setPublishedTimestamp(new Date());
-        structureDAO.save(structure).join();
-        eventPublisher.publishEvent(CacheEvictionEvent.localModifiedStructure(structure.getApplicationId(), structure.getId()));
+        Structure structure = testHelper.publishWithoutTheNameCheck(structureService.create(toCreate).join());
 
         client.indices().putSettings(b -> b.index(structure.getItemIndex())
                                            .settings(s -> s.refreshInterval(t -> t.time("-1"))));
