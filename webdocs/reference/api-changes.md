@@ -34,8 +34,12 @@ the new methods.
 | `DELETE /api/{app}/{structure}/{id}/sync` | `deleteSync<S>` | `DELETE /api/{app}/{structure}/{id}` (`delete<S>`) |
 | `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}/sync` | `deleteSync<S>Admin` | `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}` (`delete<S>Admin`) |
 
-The admin operation is in the spec only for structures with multi-tenant selection, as its plain twin is. GraphQL has
-no new operations.
+The admin operation is in the spec only for structures with multi-tenant selection, as its plain twin is.
+
+**GraphQL mutations**, for every structure: `saveSync<S>`, `updateSync<S>` and `deleteSync<S>`, with the same
+arguments, results and `@policy` directives as `save<S>`, `update<S>` and `delete<S>`. GraphQL names share one
+namespace per application, so where one of these would take the name of another operation (`saveSync` for `Job` is
+`saveSyncJob`, as is `save` for `SyncJob`), it is left out, and the other operation keeps the name.
 
 ### Changed
 
