@@ -72,6 +72,27 @@ public interface EntityService {
     CompletableFuture<Void> deleteById(TenantSpecificId id, EntityContext context);
 
     /**
+     * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
+     * away, whatever {@code elasticRefreshAfterDelete} is set to.
+     *
+     * @param id      must not be {@literal null}
+     * @param context the context for this operation
+     * @return {@link CompletableFuture} signaling when the deletion is searchable
+     */
+    CompletableFuture<Void> deleteByIdSync(String id, EntityContext context);
+
+    /**
+     * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
+     * away, whatever {@code elasticRefreshAfterDelete} is set to.
+     * NOTE: this method is only allowed if the {@link Structure#isMultiTenantSelectionEnabled()} is true
+     *
+     * @param id      must not be {@literal null}
+     * @param context the context for this operation
+     * @return {@link CompletableFuture} signaling when the deletion is searchable
+     */
+    CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, EntityContext context);
+
+    /**
      * Deletes any entities that match the given query.
      *
      * @param query       the query used to filter records to delete, must not be {@literal null}
@@ -173,6 +194,16 @@ public interface EntityService {
     <T> CompletableFuture<T> save(T entity, EntityContext context);
 
     /**
+     * Saves a given entity like {@link #save(Object, EntityContext)}, and refreshes before returning so the change
+     * shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
+     *
+     * @param entity  must not be {@literal null}
+     * @param context the context for this operation
+     * @return {@link CompletableFuture} emitting the saved entity once it is searchable
+     */
+    <T> CompletableFuture<T> saveSync(T entity, EntityContext context);
+
+    /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@link Pageable} object.
      *
      * @param searchText the text to search for entities for
@@ -184,7 +215,9 @@ public interface EntityService {
     <T> CompletableFuture<Page<T>> search(String searchText, Pageable pageable, Class<T> type, EntityContext context);
 
     /**
-     * This operation makes all the recent writes immediately available for search.
+     * This operation makes all the recent writes immediately available for search, by refreshing every shard of the
+     * structure's index. Use it once after a batch of bulk writes the caller needs to search; for a single write, the
+     * Sync variants refresh only the shard the write touched.
      * @param context the context for this operation
      * @return a {@link CompletableFuture} that will complete when the operation is complete
      */
@@ -201,5 +234,15 @@ public interface EntityService {
      * @return {@link CompletableFuture} emitting the saved entity
      */
     <T> CompletableFuture<T> update(T entity, EntityContext context);
+
+    /**
+     * Updates a given entity like {@link #update(Object, EntityContext)}, and refreshes before returning so the change
+     * shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
+     *
+     * @param entity  must not be {@literal null}
+     * @param context the context for this operation
+     * @return {@link CompletableFuture} emitting the updated entity once it is searchable
+     */
+    <T> CompletableFuture<T> updateSync(T entity, EntityContext context);
 
 }
