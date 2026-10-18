@@ -1,0 +1,75 @@
+# API Changes
+
+Changes to the APIs Structures exposes, by release: the Java and TypeScript services, the REST API and the OpenAPI spec
+it is described by. Each release's notes include its section.
+
+In the paths below, `{app}` is the application id and `{structure}` the structure name, both lowercase, under the
+configured `openApiPath` (`/api/` by default) or `openApiAdminPath` (`/admin/api/`). In operationIds, `<S>` is the
+structure name with its first letter capitalized.
+
+## 3.9.0
+
+Writes that refresh before returning, so they can be searched straight away whatever the refresh settings say. See
+[Choosing a refresh mode](./structures-server-config.md#choosing-a-refresh-mode) for when to use them.
+
+### Added
+
+**Services.** `@kinotic/structures-api` 3.7.0 and the Java `structures-api` 3.9.0:
+
+| Service | Methods |
+|---------|---------|
+| `JsonEntitiesService` (Java), `IEntitiesService` / `IEntityService` (TypeScript) | `saveSync`, `updateSync`, `deleteByIdSync` |
+| `AdminJsonEntitiesService` (Java), `IAdminEntitiesService` / `IAdminEntityService` (TypeScript) | `deleteByIdSync` (by tenant and entity id) |
+
+They take and return the same values as `save`, `update` and `deleteById`, and are allowed or denied by the same
+policies. Code that implements these interfaces itself, rather than using the classes Structures provides, has to add
+the new methods.
+
+**REST operations**, for every structure, all in the OpenAPI spec:
+
+| Method and path | operationId | Same as |
+|-----------------|-------------|---------|
+| `POST /api/{app}/{structure}/save-sync` | `saveSync<S>` | `POST /api/{app}/{structure}` (`save<S>`) |
+| `POST /api/{app}/{structure}/update-sync` | `updateSync<S>` | `POST /api/{app}/{structure}/update` (`update<S>`) |
+| `DELETE /api/{app}/{structure}/{id}/sync` | `deleteSync<S>` | `DELETE /api/{app}/{structure}/{id}` (`delete<S>`) |
+| `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}/sync` | `deleteSync<S>Admin` | `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}` (`delete<S>Admin`) |
+
+The admin operation is in the spec only for structures with multi-tenant selection, as its plain twin is. GraphQL has
+no new operations.
+
+### Changed
+
+**Empty 200 responses in the OpenAPI spec.** These operations answer 200 with an empty body and no `Content-Type`, but
+the spec described the response as `application/json` without a schema. It now describes them without content, which
+is how OpenAPI says there is no body. The server's responses are unchanged.
+
+| Method and path | operationId |
+|-----------------|-------------|
+| `DELETE /api/{app}/{structure}/{id}` | `delete<S>` |
+| `DELETE /api/{app}/{structure}/{id}/sync` | `deleteSync<S>` |
+| `POST /api/{app}/{structure}/delete/by-query` | `delete<S>ByQuery` |
+| `POST /api/{app}/{structure}/bulk` | `bulkSave<S>` |
+| `POST /api/{app}/{structure}/bulk-update` | `bulkUpdate<S>` |
+| `GET /api/{app}/{structure}/util/sync` | `sync<S>` |
+| `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}` | `delete<S>Admin` |
+| `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}/sync` | `deleteSync<S>Admin` |
+| `POST /admin/api/{app}/{structure}/delete/by-query` | `delete<S>ByQueryAdmin` |
+
+Clients generated from the spec get methods that return nothing for these, instead of an untyped JSON value. Clients
+that call the REST API directly are not affected.
+
+### Compatibility
+
+- **Older servers:** clients that call the new methods or operations need a 3.9.0 server; an older one answers
+  method not found, or 404 for the REST operations. Older clients work with a 3.9.0 server unchanged.
+- **Rolling upgrades:** while servers of both versions run, a call to a new method or operation can reach an older
+  server, so start using them once every server runs 3.9.0.
+- **Configuration and data:** no new settings, no changed defaults, no index or data changes. Going back to 3.8.0
+  is safe; only callers of the new methods and operations stop working.
+
+### Known issue
+
+A new operationId can repeat one that another structure already has: `saveSync` for a structure `Job` and `save` for a
+structure `SyncJob` are both `saveSyncJob`. The REST paths always differ, since each includes the structure name, so
+every operation works; only clients generated from the spec are affected, as they already were by repeats such as
+`Job`'s countByQuery and `JobByQuery`'s count (`countJobByQuery`).
