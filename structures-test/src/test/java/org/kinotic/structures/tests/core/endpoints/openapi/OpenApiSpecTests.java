@@ -225,6 +225,14 @@ public class OpenApiSpecTests extends ElasticTestBase {
                 if (!operation.path("responses").has("200")) {
                     problems.add(where + " documents no 200 response");
                 }
+                // A response with an empty body is documented without content, not as JSON without a schema
+                for (Map.Entry<String, JsonNode> response : operation.path("responses").properties()) {
+                    for (Map.Entry<String, JsonNode> mediaType : response.getValue().path("content").properties()) {
+                        if (mediaType.getValue().path("schema").isMissingNode()) {
+                            problems.add(where + " " + response.getKey() + " documents " + mediaType.getKey() + " content without a schema");
+                        }
+                    }
+                }
             }
         }
         operationIds.forEach((id, count) -> {

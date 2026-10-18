@@ -689,8 +689,12 @@ public class DefaultOpenApiService implements OpenApiService {
 
         }
 
-        content.addMediaType("application/json", mediaType);
-        response.setContent(content);
+        // Any other response type is a 200 with an empty body and no Content-Type (see NoValueHandler), which OpenAPI
+        // describes as a response without content. Documenting it as JSON would have clients parse an empty body.
+        if(mediaType.getSchema() != null){
+            content.addMediaType("application/json", mediaType);
+            response.setContent(content);
+        }
 
         return createOperation(operationSummary,
                                description,

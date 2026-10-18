@@ -215,8 +215,15 @@ describe('OpenAPI spec', () => {
                 problems.push(`${where} answered ${response.status}: ${JSON.stringify(response.data)}`)
                 continue
             }
+            // A 200 documented without content has an empty body; one documented as JSON has a JSON body of that shape
             const documented = operation.responses['200']?.content?.['application/json']?.schema
-            if (documented && response.data !== '') {
+            if (!documented) {
+                if (response.data !== '') {
+                    problems.push(`${where} is documented without a body but answered ${JSON.stringify(response.data)}`)
+                }
+            } else if (response.data === '' || !String(response.headers['content-type'] ?? '').includes('application/json')) {
+                problems.push(`${where} is documented as JSON but answered '${response.data}' as ${response.headers['content-type']}`)
+            } else {
                 problems.push(...conforms(response.data, documented, where))
             }
         }
