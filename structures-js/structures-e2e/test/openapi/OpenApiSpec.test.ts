@@ -92,6 +92,14 @@ describe('OpenAPI spec', () => {
             if (!operation.responses?.['200']) {
                 problems.push(`${where} documents no 200 response`)
             }
+            // A response with no body is documented without content, not as JSON without a schema
+            for (const [status, response] of Object.entries<Json>(operation.responses ?? {})) {
+                for (const [mediaType, media] of Object.entries<Json>(response.content ?? {})) {
+                    if (!media.schema) {
+                        problems.push(`${where} ${status} documents ${mediaType} content without a schema`)
+                    }
+                }
+            }
         }
         for (const [id, count] of operationIds) {
             if (count > 1) {
@@ -130,8 +138,8 @@ describe('OpenAPI spec', () => {
                 return {entityId: person.id, tenantId: TENANT}
             }
             if (name === structureSchemaName) {
-                // An update writes the saved entity again, a save writes a new one
-                return path.includes('/update') ? {...person, lastName: 'Updated'} : generatePerson(TENANT)
+                // An update (update, update-sync, bulk-update) writes the saved entity again, a save writes a new one
+                return /\/(update|update-sync|bulk-update)$/.test(path) ? {...person, lastName: 'Updated'} : generatePerson(TENANT)
             }
             if (resolved?.type === 'array') {
                 const items = resolve(resolved.items)
@@ -218,8 +226,8 @@ describe('OpenAPI spec', () => {
             // A 200 documented without content has an empty body; one documented as JSON has a JSON body of that shape
             const documented = operation.responses['200']?.content?.['application/json']?.schema
             if (!documented) {
-                if (response.data !== '') {
-                    problems.push(`${where} is documented without a body but answered ${JSON.stringify(response.data)}`)
+                if (response.data !== '' || response.headers['content-type']) {
+                    problems.push(`${where} is documented without a body but answered ${JSON.stringify(response.data)} as ${response.headers['content-type']}`)
                 }
             } else if (response.data === '' || !String(response.headers['content-type'] ?? '').includes('application/json')) {
                 problems.push(`${where} is documented as JSON but answered '${response.data}' as ${response.headers['content-type']}`)
@@ -227,6 +235,18 @@ describe('OpenAPI spec', () => {
                 problems.push(...conforms(response.data, documented, where))
             }
         }
+        // An error answers the documented ErrorResponse, here a 401 for a bad password
+        const count = ordered.find(o => o.method === 'get' && o.path.endsWith('/count/all'))!
+        const unauthorized = await http.get(baseUrl + count.path, {headers: {'Authorization': 'Basic ' + Buffer.from('admin:wrong').toString('base64')}})
+        if (unauthorized.status !== 401 || !String(unauthorized.headers['content-type']).includes('application/json')) {
+            problems.push(`a bad password answered ${unauthorized.status} as ${unauthorized.headers['content-type']}`)
+        } else {
+            problems.push(...conforms(unauthorized.data, count.operation.responses['401'].content['application/json'].schema, '401'))
+            if (typeof unauthorized.data?.error !== 'string') {
+                problems.push(`a bad password answered ${JSON.stringify(unauthorized.data)}`)
+            }
+        }
+
         expect(problems).toEqual([])
         expect(called).toBe(ordered.length)
         console.log(`Called ${called} documented operations`)

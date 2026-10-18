@@ -39,24 +39,42 @@ no new operations.
 
 ### Changed
 
-**Empty 200 responses in the OpenAPI spec.** These operations answer 200 with an empty body and no `Content-Type`, but
-the spec described the response as `application/json` without a schema. It now describes them without content, which
-is how OpenAPI says there is no body. The server's responses are unchanged.
+These change the OpenAPI spec, and two REST routes, to describe what the server really does. **Clients generated from
+the spec will change when regenerated**, as described for each; clients that call the REST API directly see only the
+406 change.
+
+**Responses with no body.** These operations answer 200 with an empty body and no `Content-Type`, but the spec
+described the response as `application/json` without a schema. It now describes them without content, which is how
+OpenAPI says there is no body. The server's responses are unchanged.
 
 | Method and path | operationId |
 |-----------------|-------------|
 | `DELETE /api/{app}/{structure}/{id}` | `delete<S>` |
-| `DELETE /api/{app}/{structure}/{id}/sync` | `deleteSync<S>` |
 | `POST /api/{app}/{structure}/delete/by-query` | `delete<S>ByQuery` |
 | `POST /api/{app}/{structure}/bulk` | `bulkSave<S>` |
 | `POST /api/{app}/{structure}/bulk-update` | `bulkUpdate<S>` |
 | `GET /api/{app}/{structure}/util/sync` | `sync<S>` |
 | `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}` | `delete<S>Admin` |
-| `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}/sync` | `deleteSync<S>Admin` |
 | `POST /admin/api/{app}/{structure}/delete/by-query` | `delete<S>ByQueryAdmin` |
 
-Clients generated from the spec get methods that return nothing for these, instead of an untyped JSON value. Clients
-that call the REST API directly are not affected.
+The two admin operations are in the spec only for structures with multi-tenant selection. The new `deleteSync<S>` and
+`deleteSync<S>Admin` are documented the same way.
+
+*Breaking for regenerated clients:* these methods now return nothing (`void`) instead of an untyped value, so code
+that used their result no longer compiles. Generators that parsed the old documented JSON, such as
+`typescript-fetch`, could fail on every successful call to them; those clients now work.
+
+**Error responses.** Errors (400, 401, 403 and 500 on every operation, and 409 where documented) answer
+`{"error": "<message>"}` as `application/json`, but the spec described them without content. They now reference a new
+`ErrorResponse` schema with a string `error` property. A 404 for an entity that isn't found has an empty body and is
+still documented without content. The server's responses are unchanged.
+
+*For regenerated clients:* they gain an `ErrorResponse` model, and can read the error message instead of an
+undocumented body.
+
+**`bulk` and `bulk-update` accept any `Accept` header.** `POST /api/{app}/{structure}/bulk` and
+`POST /api/{app}/{structure}/bulk-update` answered 406 to a request whose `Accept` header didn't include
+`application/json`, although they answer with no body. They now answer it like any other request, as the deletes do.
 
 ### Compatibility
 
@@ -66,6 +84,8 @@ that call the REST API directly are not affected.
   server, so start using them once every server runs 3.9.0.
 - **Configuration and data:** no new settings, no changed defaults, no index or data changes. Going back to 3.8.0
   is safe; only callers of the new methods and operations stop working.
+- **Generated clients:** regenerating from the 3.9.0 spec changes the methods listed under Changed, as described
+  there. Clients generated from an older spec work against a 3.9.0 server as they did before.
 
 ### Known issue
 

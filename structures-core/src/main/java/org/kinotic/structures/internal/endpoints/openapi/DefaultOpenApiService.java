@@ -46,20 +46,49 @@ import java.util.concurrent.CompletableFuture;
 public class DefaultOpenApiService implements OpenApiService {
     private static final Logger log = LoggerFactory.getLogger(DefaultOpenApiService.class);
 
+    // The component schema of every error response body
+    private static final String ERROR_RESPONSE = "ErrorResponse";
+
     private final NamedQueriesService namedQueriesService;
     private final StructureConversionService structureConversionService;
     private final StructureService structureService;
     private final StructuresProperties structuresProperties;
 
 
+    /**
+     * What the 200 response of an operation contains
+     */
+    private enum ResponseType {
+        /** A {@code CountResponse} */
+        COUNT,
+        /** One entity of the structure */
+        STRUCTURE,
+        /** A page of entities */
+        PAGE,
+        /** An array of entities */
+        ARRAY,
+        /** No body: an empty body and no Content-Type */
+        NONE
+    }
+
     private static ApiResponses getDefaultResponses(){
         ApiResponses responses = new ApiResponses();
-        responses.put("400", new ApiResponse().description("Bad Request"));
-        responses.put("401", new ApiResponse().description("Unauthorized"));
-        responses.put("403", new ApiResponse().description("Forbidden"));
+        responses.put("400", errorResponse("Bad Request"));
+        responses.put("401", errorResponse("Unauthorized"));
+        responses.put("403", errorResponse("Forbidden"));
+        // An entity that isn't found answers 404 with an empty body
         responses.put("404", new ApiResponse().description("Not Found"));
-        responses.put("500", new ApiResponse().description("Internal Server Error"));
+        responses.put("500", errorResponse("Internal Server Error"));
         return responses;
+    }
+
+    /**
+     * Errors answer with an {@value #ERROR_RESPONSE} body (see VertxWebUtil.writeException)
+     */
+    private static ApiResponse errorResponse(String description){
+        return new ApiResponse().description(description)
+                                .content(new Content().addMediaType("application/json",
+                                                                    new MediaType().schema(new Schema<>().$ref(Components.COMPONENTS_SCHEMAS_REF + ERROR_RESPONSE))));
     }
 
     @WithSpan
@@ -135,6 +164,12 @@ public class DefaultOpenApiService implements OpenApiService {
                                .description("Contains the total count of items");
                     components.addSchemas("CountResponse", countSchema);
 
+                    // The body of every error response
+                    ObjectSchema errorSchema = new ObjectSchema();
+                    errorSchema.addProperty("error", new StringSchema().description("What went wrong"))
+                               .description("Describes an error");
+                    components.addSchemas(ERROR_RESPONSE, errorSchema);
+
                     // Add TenantSpecificId schema
                     ObjectSchema tenantSpecificIdSchema = new ObjectSchema();
                     tenantSpecificIdSchema.description("A special Id that is used with Multi-tenant access endpoints")
@@ -178,7 +213,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                      "Gets " + structureName + " entities by their id and tenant.",
                                                      "get"+structureName+"ByIdAdmin",
                                                      structure,
-                                                     1)
+                                                     ResponseType.STRUCTURE)
                 .addParametersItem(OpenApiUtils.createPathParameter("tenantId", "The tenantId of the "+structureName+" to get."))
                 .addParametersItem(OpenApiUtils.createPathParameter("id","The id of the "+structureName+" to get."));
 
@@ -189,7 +224,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                     "Deletes " + structureName + " entities",
                                                     "delete"+structureName+"Admin",
                                                     structure,
-                                                    -1)
+                                                    ResponseType.NONE)
                 .addParametersItem(OpenApiUtils.createPathParameter("tenantId", "The tenantId of the "+structureName+" to delete."))
                 .addParametersItem(OpenApiUtils.createPathParameter("id","The id of the "+structureName+" to delete."));
 
@@ -204,7 +239,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         "Deletes " + structureName + " entities. Refreshes before returning, so the change shows in searches straight away.",
                                                         "deleteSync"+structureName+"Admin",
                                                         structure,
-                                                        -1)
+                                                        ResponseType.NONE)
                 .addParametersItem(OpenApiUtils.createPathParameter("tenantId", "The tenantId of the "+structureName+" to delete."))
                 .addParametersItem(OpenApiUtils.createPathParameter("id","The id of the "+structureName+" to delete."));
         syncByTenantAndIdPathItem.delete(deleteSyncOperation);
@@ -217,7 +252,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                            "Delete " + structureName + " entities by query and tenant selection list",
                                                            "delete"+structureName+"ByQueryAdmin",
                                                            structure,
-                                                           -1)
+                                                           ResponseType.NONE)
                 .requestBody(querySelectionRequest);
 
         deleteByQueryPathItem.post(deleteByQueryOperation);
@@ -229,7 +264,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                        "Find " + structureName + " entities by their ids.",
                                                        "find"+structureName+"ByIdsAdmin",
                                                        structure,
-                                                       3)
+                                                       ResponseType.ARRAY)
                 .requestBody(OpenApiUtils.createArrayRequest(tenantSpecificIdRef,"The array of TenantSpecificId's"));
 
         findByIdsPathItem.post(findByIdsOperation);
@@ -244,7 +279,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                      "Finds all " + structureName + " entities for the given tenants. Supports paging and sorting.",
                                                      "findAll"+structureName+"Admin",
                                                      structure,
-                                                     2)
+                                                     ResponseType.PAGE)
                 .requestBody(OpenApiUtils.createStringArrayRequest("The list of tenants to find all entities for"));
 
         OpenApiUtils.addPagingAndSortingParameters(findAllOperation);
@@ -261,7 +296,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                    "Gets total count of " + structureName + " entities for the given tenants.",
                                                    "count"+structureName+"Admin",
                                                    structure,
-                                                   0)
+                                                   ResponseType.COUNT)
                 .requestBody(OpenApiUtils.createStringArrayRequest("The list of tenants to count all entities for"));
         countPathItem.post(countOperation);
 
@@ -274,7 +309,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                           "Gets total count of "+structureName+" entities by query and tenant selection list",
                                                           "count"+structureName+"ByQueryAdmin",
                                                           structure,
-                                                          0)
+                                                          ResponseType.COUNT)
                 .requestBody(querySelectionRequest);
 
         countByQueryPathItem.post(countByQueryOperation);
@@ -287,7 +322,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                     "Searches for " + structureName + " entities matching the search query and tenant selection list. Supports paging and sorting.",
                                                     "search"+structureName+"Admin",
                                                     structure,
-                                                    2)
+                                                    ResponseType.PAGE)
                 .requestBody(querySelectionRequest);
 
         OpenApiUtils.addPagingAndSortingParameters(searchOperation);
@@ -315,7 +350,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                      "Gets " + structureName + " entities by their id.",
                                                      "get"+structureName+"ById",
                                                      structure,
-                                                     1)
+                                                     ResponseType.STRUCTURE)
                 .addParametersItem(OpenApiUtils.createPathParameter("id", "The id of the "+structureName+" to get."));
         byIdPathItem.get(getByIdOperation);
 
@@ -324,7 +359,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                     "Deletes " + structureName + " entities",
                                                     "delete"+structureName,
                                                     structure,
-                                                    -1)
+                                                    ResponseType.NONE)
                 .addParametersItem(OpenApiUtils.createPathParameter("id", "The id of the "+structureName+" to delete."));
         byIdPathItem.delete(deleteOperation);
 
@@ -336,7 +371,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         "Deletes " + structureName + " entities. Refreshes before returning, so the change shows in searches straight away.",
                                                         "deleteSync"+structureName,
                                                         structure,
-                                                        -1)
+                                                        ResponseType.NONE)
                 .addParametersItem(OpenApiUtils.createPathParameter("id", "The id of the "+structureName+" to delete."));
         syncByIdPathItem.delete(deleteSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/{id}/sync", syncByIdPathItem);
@@ -348,7 +383,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                            "Delete " + structureName + " entities by query",
                                                            "delete"+structureName+"ByQuery",
                                                            structure,
-                                                           -1)
+                                                           ResponseType.NONE)
                 .requestBody(OpenApiUtils.createTextRequest("The query filter for delete operation"));
         deleteByQueryPathItem.post(deleteByQueryOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/delete/by-query", deleteByQueryPathItem);
@@ -360,7 +395,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                        "Find " + structureName + " entities by their ids.",
                                                        "find"+structureName+"ByIds",
                                                        structure,
-                                                       3)
+                                                       ResponseType.ARRAY)
                 .requestBody(OpenApiUtils.createStringArrayRequest("The array of id's"));
         findByIdsPathItem.post(findByIdsOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/find/by-ids", findByIdsPathItem);
@@ -378,7 +413,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                     "Finds all " + structureName + " entities. Supports paging and sorting.",
                                                     "findAll"+structureName,
                                                     structure,
-                                                    2);
+                                                    ResponseType.PAGE);
         OpenApiUtils.addPagingAndSortingParameters(getAllOperation);
         structurePathItem.get(getAllOperation);
 
@@ -388,7 +423,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                   "Saves " + structureName + " entities.",
                                                   "save"+structureName,
                                                   structure,
-                                                  1)
+                                                  ResponseType.STRUCTURE)
                 .requestBody(structureRequestBody);
         addConflictResponse(saveOperation, structure, false);
         structurePathItem.post(saveOperation);
@@ -402,7 +437,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                       "Saves " + structureName + " entities. Refreshes before returning, so the change shows in searches straight away.",
                                                       "saveSync"+structureName,
                                                       structure,
-                                                      1)
+                                                      ResponseType.STRUCTURE)
                 .requestBody(structureRequestBody);
         addConflictResponse(saveSyncOperation, structure, false);
         saveSyncPathItem.post(saveSyncOperation);
@@ -415,7 +450,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                           + "Use it after bulk writes, the single entity writes have their own Sync operations.",
                                                   "sync"+structureName,
                                                   structure,
-                                                  -1);
+                                                  ResponseType.NONE);
         syncPathItem.get(syncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/util/sync", syncPathItem);
 
@@ -426,7 +461,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                     "Updates " + structureName + " entities.",
                                                     "update"+structureName,
                                                     structure,
-                                                    1)
+                                                    ResponseType.STRUCTURE)
                 .requestBody(structureRequestBody);
         addConflictResponse(updateOperation, structure, true);
         updatePathItem.post(updateOperation);
@@ -438,7 +473,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         "Updates " + structureName + " entities. Refreshes before returning, so the change shows in searches straight away.",
                                                         "updateSync"+structureName,
                                                         structure,
-                                                        1)
+                                                        ResponseType.STRUCTURE)
                 .requestBody(structureRequestBody);
         addConflictResponse(updateSyncOperation, structure, true);
         updateSyncPathItem.post(updateSyncOperation);
@@ -451,7 +486,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                       "Saves multiple " + structureName + " entities.",
                                                       "bulkSave"+structureName,
                                                       structure,
-                                                      -1)
+                                                      ResponseType.NONE)
                 .requestBody(OpenApiUtils.createArrayRequest(structureRefSchema, "List of entities to save"));
         addConflictResponse(bulkSaveOperation, structure, false);
         bulkSavePathItem.post(bulkSaveOperation);
@@ -464,7 +499,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         "Updates multiple " + structureName + " entities.",
                                                         "bulkUpdate"+structureName,
                                                         structure,
-                                                        -1)
+                                                        ResponseType.NONE)
                 .requestBody(OpenApiUtils.createArrayRequest(structureRefSchema, "List of entities to update"));
         addConflictResponse(bulkUpdateOperation, structure, true);
         bulkUpdatePathItem.post(bulkUpdateOperation);
@@ -477,7 +512,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                    "Gets total count of " + structureName + " entities.",
                                                    "count"+structureName,
                                                    structure,
-                                                   0);
+                                                   ResponseType.COUNT);
         countPathItem.get(countOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/count/all", countPathItem);
 
@@ -488,7 +523,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                           "Gets total count of "+structureName+" entities by query",
                                                           "count"+structureName+"ByQuery",
                                                           structure,
-                                                          0)
+                                                          ResponseType.COUNT)
                 .requestBody(OpenApiUtils.createTextRequest("The query to get counts for"));
         countByQueryPathItem.post(countByQueryOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/count/by-query", countByQueryPathItem);
@@ -500,7 +535,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                     "Searches for " + structureName + " entities matching the search criteria. Supports paging and sorting.",
                                                     "search"+structureName,
                                                     structure,
-                                                    2)
+                                                    ResponseType.PAGE)
                 .requestBody(OpenApiUtils.createTextRequest("The search criteria"));
 
         OpenApiUtils.addPagingAndSortingParameters(searchOperation);
@@ -654,7 +689,7 @@ public class DefaultOpenApiService implements OpenApiService {
     private static void addConflictResponse(Operation operation, Structure structure, boolean update){
         if(update || structure.isOptimisticLockingEnabled() || structure.isStream()){
             operation.getResponses()
-                     .put("409", new ApiResponse().description("Conflict, the entity was changed by another write, its version is stale, or it already exists"));
+                     .put("409", errorResponse("Conflict, the entity was changed by another write, its version is stale, or it already exists"));
         }
     }
 
@@ -662,36 +697,36 @@ public class DefaultOpenApiService implements OpenApiService {
                                       String description,
                                       String operationId,
                                       Structure structure,
-                                      int responseType) {
+                                      ResponseType responseType) {
 
         // create a response for the structure item
         ApiResponse response = new ApiResponse().description(operationSummary + " OK");
         Content content = new Content();
         MediaType mediaType = new MediaType();
 
-        if(responseType == 0){ // Count Response
+        if(responseType == ResponseType.COUNT){
 
             mediaType.setSchema(new Schema<>().$ref(Components.COMPONENTS_SCHEMAS_REF + "CountResponse"));
 
-        }else if(responseType == 1){ // Structure Response
+        }else if(responseType == ResponseType.STRUCTURE){
 
             mediaType.setSchema(new Schema<>().$ref(Components.COMPONENTS_SCHEMAS_REF + structure.getName()));
 
-        }else if(responseType == 2){ // Page Response
+        }else if(responseType == ResponseType.PAGE){
 
             ObjectSchema pageSchema = OpenApiUtils.createPageSchema(new Schema<>().$ref(Components.COMPONENTS_SCHEMAS_REF + structure.getName()));
             mediaType.setSchema(pageSchema);
 
-        }else if(responseType == 3){ // Array Response
+        }else if(responseType == ResponseType.ARRAY){
 
             mediaType.setSchema(new ArraySchema()
                                         .items(new Schema<>().$ref(Components.COMPONENTS_SCHEMAS_REF + structure.getName())));
 
         }
 
-        // Any other response type is a 200 with an empty body and no Content-Type (see NoValueHandler), which OpenAPI
-        // describes as a response without content. Documenting it as JSON would have clients parse an empty body.
-        if(mediaType.getSchema() != null){
+        // NONE is a 200 with an empty body and no Content-Type (see NoValueHandler), which OpenAPI describes as a
+        // response without content. Documenting it as JSON would have clients parse an empty body.
+        if(responseType != ResponseType.NONE){
             content.addMediaType("application/json", mediaType);
             response.setContent(content);
         }

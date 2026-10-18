@@ -7,8 +7,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -61,6 +63,10 @@ public class OpenApiSpecTests extends ElasticTestBase {
 
     // The REST default (8080) can be taken by a local KinD cluster or another server
     private static final int OPEN_API_PORT = freePort();
+
+    // DummySecurityService accepts these over basic auth
+    private static final String BASIC_AUTH = "Basic " + Base64.getEncoder()
+                                                              .encodeToString("guest:guest".getBytes(StandardCharsets.UTF_8));
 
     private static final String LIST_QUERY = "countPeople";
     private static final String PAGE_QUERY = "pagePeopleCounts";
@@ -125,24 +131,13 @@ public class OpenApiSpecTests extends ElasticTestBase {
 
     @Test
     public void everyDocumentedOperationIsARoute() {
-        List<Pattern> routes = new ArrayList<>();
-        Map<Pattern, Set<HttpMethod>> methods = new HashMap<>();
-        for (Route route : entityRoutes()) {
-            // A route's :param matches one path segment
-            Pattern pattern = Pattern.compile(Pattern.quote(route.getPath()).replaceAll(":[A-Za-z]+", "\\\\E[^/]+\\\\Q"));
-            routes.add(pattern);
-            methods.put(pattern, route.methods());
-        }
-
+        Set<String> routes = routeOperations();
         List<String> missing = new ArrayList<>();
         for (Map.Entry<String, JsonNode> path : spec.path("paths").properties()) {
-            String concrete = PATH_PARAMETER.matcher(path.getKey()).replaceAll("x");
             for (String method : operationMethods(path.getValue())) {
-                boolean found = routes.stream()
-                                      .anyMatch(pattern -> pattern.matcher(concrete).matches()
-                                              && methods.get(pattern).contains(HttpMethod.valueOf(method.toUpperCase())));
-                if (!found) {
-                    missing.add(method.toUpperCase() + " " + path.getKey());
+                String operation = method.toUpperCase() + " " + path.getKey();
+                if (!routes.contains(operation)) {
+                    missing.add(operation);
                 }
             }
         }
@@ -151,26 +146,57 @@ public class OpenApiSpecTests extends ElasticTestBase {
 
     @Test
     public void everyRouteIsDocumented() {
-        String application = structure.getApplicationId().toLowerCase();
-        String name = structure.getName().toLowerCase();
-
         List<String> undocumented = new ArrayList<>();
-        for (Route route : entityRoutes()) {
-            String queryName = route.getPath().contains("named-query-page") ? PAGE_QUERY : LIST_QUERY;
-            // The spec names each path parameter as the route does, and fills in the structure and query
-            String path = route.getPath()
-                               .replace(":structureApplication", application)
-                               .replace(":structureName", name)
-                               .replace(":queryName", queryName)
-                               .replaceAll(":([A-Za-z]+)", "{$1}");
-            JsonNode pathItem = spec.path("paths").path(path);
-            for (HttpMethod method : route.methods()) {
-                if (pathItem.path(method.name().toLowerCase()).isMissingNode()) {
-                    undocumented.add(method.name() + " " + path);
-                }
+        for (String operation : routeOperations()) {
+            String[] methodAndPath = operation.split(" ", 2);
+            if (spec.path("paths").path(methodAndPath[1]).path(methodAndPath[0].toLowerCase()).isMissingNode()) {
+                undocumented.add(operation);
             }
         }
         Assertions.assertEquals(List.of(), undocumented, "Routes missing from the spec");
+    }
+
+    /**
+     * Errors answer {"error": message} as application/json, except an entity that isn't found, which answers an empty 404
+     */
+    @Test
+    public void errorsAreDocumentedAsTheyAreAnswered() throws Exception {
+        JsonNode errorSchema = spec.path("components").path("schemas").path("ErrorResponse");
+        Assertions.assertEquals("string", errorSchema.path("properties").path("error").path("type").asString(), errorSchema::toString);
+
+        List<String> problems = new ArrayList<>();
+        for (Map.Entry<String, JsonNode> path : spec.path("paths").properties()) {
+            for (String method : operationMethods(path.getValue())) {
+                String where = method.toUpperCase() + " " + path.getKey();
+                for (Map.Entry<String, JsonNode> response : path.getValue().path(method).path("responses").properties()) {
+                    String ref = response.getValue().path("content").path("application/json").path("schema").path("$ref").asString();
+                    boolean error = !response.getKey().startsWith("2") && !response.getKey().equals("404");
+                    if (error && !ref.equals("#/components/schemas/ErrorResponse")) {
+                        problems.add(where + " " + response.getKey() + " doesn't document the ErrorResponse body");
+                    }
+                    if (response.getKey().equals("404") && response.getValue().has("content")) {
+                        problems.add(where + " 404 documents a body");
+                    }
+                }
+            }
+        }
+        Assertions.assertEquals(List.of(), problems);
+
+        // A request with no query, and one with a bad password, really answer an ErrorResponse
+        String api = structuresProperties.getOpenApiPath() + structure.getApplicationId().toLowerCase()
+                + "/" + structure.getName().toLowerCase();
+        for (String authorization : List.of(BASIC_AUTH, "Basic " + Base64.getEncoder().encodeToString("guest:wrong".getBytes(StandardCharsets.UTF_8)))) {
+            HttpResponse<String> response = send(HttpRequest.newBuilder()
+                                                            .uri(URI.create("http://localhost:" + structuresProperties.getOpenApiPort() + api + "/count/by-query"))
+                                                            .header("Authorization", authorization)
+                                                            .header("Content-Type", "text/plain")
+                                                            .POST(HttpRequest.BodyPublishers.ofString(""))
+                                                            .build());
+            Assertions.assertTrue(response.statusCode() >= 400, response::body);
+            Assertions.assertTrue(response.headers().firstValue("Content-Type").orElse("").startsWith("application/json"),
+                                  () -> response.statusCode() + " " + response.headers());
+            Assertions.assertTrue(objectMapper.readTree(response.body()).path("error").isString(), response::body);
+        }
     }
 
     @Test
@@ -320,6 +346,34 @@ public class OpenApiSpecTests extends ElasticTestBase {
         }
         Assertions.assertFalse(ret.isEmpty(), "No entity routes found");
         return ret;
+    }
+
+    /**
+     * @return each entity route as "METHOD path" in the spec's form: the structure and named queries filled in, and
+     * each :param written {param}
+     */
+    private Set<String> routeOperations() {
+        String application = structure.getApplicationId().toLowerCase();
+        String name = structure.getName().toLowerCase();
+        Set<String> ret = new TreeSet<>();
+        for (Route route : entityRoutes()) {
+            String queryName = route.getPath().contains("named-query-page") ? PAGE_QUERY : LIST_QUERY;
+            String path = route.getPath()
+                               .replace(":structureApplication", application)
+                               .replace(":structureName", name)
+                               .replace(":queryName", queryName)
+                               .replaceAll(":([A-Za-z]+)", "{$1}");
+            for (HttpMethod method : route.methods()) {
+                ret.add(method.name() + " " + path);
+            }
+        }
+        return ret;
+    }
+
+    private static HttpResponse<String> send(HttpRequest request) throws Exception {
+        try (HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        }
     }
 
     private void saveNamedQueries() {

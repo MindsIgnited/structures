@@ -164,10 +164,9 @@ public class OpenApiVertxRouterFactory {
 
     private void addCreateUpdateRoutes(Router router,
                                        BodyHandler bodyHandler) {
-        // Bulk save
+        // Bulk save, answering with no body, so no produces: a request accepting only other types isn't refused with 406
         router.post(apiBasePath + ":structureApplication/:structureName/bulk")
               .consumes("application/json")
-              .produces("application/json")
               .handler(bodyHandler)
               .handler(ctx -> {
 
@@ -187,7 +186,6 @@ public class OpenApiVertxRouterFactory {
         // Bulk Update
         router.post(apiBasePath + ":structureApplication/:structureName/bulk-update")
               .consumes("application/json")
-              .produces("application/json")
               .handler(bodyHandler)
               .handler(ctx -> {
 
