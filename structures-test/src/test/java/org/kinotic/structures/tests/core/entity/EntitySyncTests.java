@@ -62,12 +62,13 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 import tools.jackson.core.JsonParser;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.util.TokenBuffer;
 
 /**
  * With refreshes after single writes switched off, the Sync writes must still be searchable as soon as they return,
- * over RPC and REST, and must be authorized with the same policies as the writes they refresh after.
+ * over RPC, REST and GraphQL, and must be authorized with the same policies as the writes they refresh after.
  * Scheduled refreshes are switched off on every index here, so only a refresh a write asks for makes it searchable.
  */
 @SpringBootTest(properties = {"structures.elastic-refresh-after-mutation=false",
@@ -81,8 +82,9 @@ public class EntitySyncTests extends ElasticTestBase {
     private static final String BASIC_AUTH = "Basic " + Base64.getEncoder()
                                                               .encodeToString("guest:guest".getBytes(StandardCharsets.UTF_8));
 
-    // The REST default (8080) can be taken by a local KinD cluster or another server
+    // The REST and GraphQL defaults (8080, 4000) can be taken by a local KinD cluster or another server
     private static final int OPEN_API_PORT = freePort();
+    private static final int GRAPHQL_PORT = freePort();
 
     // Writes guarded by this policy are refused by DenyingPolicyConfiguration
     private static final String DENIED_POLICY = "denied";
@@ -93,6 +95,7 @@ public class EntitySyncTests extends ElasticTestBase {
     @DynamicPropertySource
     static void ports(DynamicPropertyRegistry registry) {
         registry.add("structures.open-api-port", () -> OPEN_API_PORT);
+        registry.add("structures.graphql-port", () -> GRAPHQL_PORT);
     }
 
     /**
@@ -199,6 +202,51 @@ public class EntitySyncTests extends ElasticTestBase {
         Assertions.assertEquals(0L, count(structure));
     }
 
+    @Test
+    public void graphQlSyncWritesAreSearchableOnReturn() throws Exception {
+        Structure structure = createStructure("GqlSync", null, false);
+        String name = structure.getName();
+
+        String id = UUID.randomUUID().toString();
+        JsonNode saved = graphQl("mutation { saveSync%s(input: {id: \"%s\", firstName: \"Ada\", lastName: \"Lovelace\"}) { id } }"
+                                         .formatted(name, id))
+                .path("saveSync" + name);
+        Assertions.assertEquals(id, saved.path("id").asString(), saved::toString);
+        Assertions.assertEquals(1L, count(structure));
+
+        JsonNode updated = graphQl("mutation { updateSync%s(input: {id: \"%s\", lastName: \"Synced\"}) { lastName } }"
+                                           .formatted(name, id))
+                .path("updateSync" + name);
+        Assertions.assertEquals("Synced", updated.path("lastName").asString());
+        Assertions.assertEquals(1L, countByQuery(structure, "lastName: Synced"));
+
+        JsonNode deleted = graphQl("mutation { deleteSync%s(id: \"%s\") }".formatted(name, id))
+                .path("deleteSync" + name);
+        Assertions.assertEquals(id, deleted.asString());
+        Assertions.assertEquals(0L, count(structure));
+    }
+
+    /**
+     * saveSync for Clash and save for SyncClash share a GraphQL name, and the non-Sync mutation must keep it
+     */
+    @Test
+    public void syncOperationNamesDoNotReplaceExistingOnes() throws Exception {
+        String suffix = String.valueOf(System.nanoTime());
+        Structure clash = createStructure("Clash", suffix, null, false);
+        Structure syncClash = createStructure("SyncClash", suffix, null, false);
+        String sharedName = "saveSync" + clash.getName();
+
+        String id = UUID.randomUUID().toString();
+        JsonNode saved = graphQl("mutation { %s(input: {id: \"%s\", firstName: \"Ada\", lastName: \"Lovelace\"}) { id } }"
+                                         .formatted(sharedName, id))
+                .path(sharedName);
+        Assertions.assertEquals(id, saved.path("id").asString(), saved::toString);
+        entitiesService.syncIndex(syncClash.getId(), context).join();
+        entitiesService.syncIndex(clash.getId(), context).join();
+        Assertions.assertEquals(1L, count(syncClash), "The mutation should still save " + syncClash.getName());
+        Assertions.assertEquals(0L, count(clash));
+    }
+
     /**
      * Denies one write at a time. Its Sync twin must be denied too, over RPC and REST and through the admin service,
      * while the other Sync writes stay allowed, so each Sync write is authorized as its own write and no other.
@@ -277,7 +325,15 @@ public class EntitySyncTests extends ElasticTestBase {
     private Structure createStructure(String prefix,
                                       EntityServiceDecoratorsDecorator decorators,
                                       boolean tenantSelection) throws IOException {
-        String name = prefix + System.nanoTime();
+        return createStructure(prefix, String.valueOf(System.nanoTime()), decorators, tenantSelection);
+    }
+
+    private Structure createStructure(String prefix,
+                                      String suffix,
+                                      EntityServiceDecoratorsDecorator decorators,
+                                      boolean tenantSelection) throws IOException {
+        String name = prefix + suffix;
+        // GraphQL names its types after the schema, which must be unique within the application
         ObjectC3Type schema = testDataService.createPersonSchema(MultiTenancyType.SHARED).setName(name);
         if (tenantSelection) {
             schema.addProperty("tenantId", new StringC3Type(), List.of(new TenantIdDecorator()));
@@ -358,6 +414,26 @@ public class EntitySyncTests extends ElasticTestBase {
                                          .method(method, publisher)
                                          .build();
         return send(request);
+    }
+
+    /**
+     * @return the data of a GraphQL response, after checking it has no errors
+     */
+    private JsonNode graphQl(String query) throws Exception {
+        URI uri = URI.create("http://localhost:" + structuresProperties.getGraphqlPort()
+                                     + structuresProperties.getGraphqlPath() + APPLICATION_ID);
+        HttpRequest request = HttpRequest.newBuilder()
+                                         .uri(uri)
+                                         .timeout(Duration.ofSeconds(30))
+                                         .header("Authorization", BASIC_AUTH)
+                                         .header("Content-Type", "application/json")
+                                         .POST(HttpRequest.BodyPublishers.ofByteArray(objectMapper.writeValueAsBytes(Map.of("query", query))))
+                                         .build();
+        HttpResponse<String> response = send(request);
+        Assertions.assertEquals(200, response.statusCode(), response::body);
+        JsonNode json = objectMapper.readTree(response.body());
+        Assertions.assertTrue(json.path("errors").isMissingNode() || json.path("errors").isEmpty(), response::body);
+        return json.path("data");
     }
 
     private static HttpResponse<String> send(HttpRequest request) throws Exception {

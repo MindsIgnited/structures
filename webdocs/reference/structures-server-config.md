@@ -198,9 +198,9 @@ let only the callers that need it pay for a refresh:
 | `syncIndex` | forces a refresh of every shard of the structure's index | after a batch of bulk writes the caller needs to search |
 
 Over REST the Sync writes are `POST .../{structure}/save-sync`, `POST .../{structure}/update-sync` and
-`DELETE .../{structure}/{id}/sync` (`DELETE .../{structure}/{tenantId}/{id}/sync` on the admin API). They aren't
-GraphQL mutations; GraphQL writes use the configured settings. They are allowed or denied by the same policies as
-`save`, `update` and `deleteById`.
+`DELETE .../{structure}/{id}/sync` (`DELETE .../{structure}/{tenantId}/{id}/sync` on the admin API). Over GraphQL
+they are the `saveSync<Structure>`, `updateSync<Structure>` and `deleteSync<Structure>` mutations. They are allowed
+or denied by the same policies as `save`, `update` and `deleteById`.
 
 **Why the Sync writes force a refresh instead of using `wait_for`.** Both make the write searchable by the time it
 returns, but `wait_for` has costs that grow under exactly the load that makes `false` worth setting:

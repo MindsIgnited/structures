@@ -201,11 +201,13 @@ do what `save`, `update` and `deleteById` do, then force a refresh before return
 then run with both settings `false`, and only the callers that search their own writes straight
 away pay for a refresh.
 
-**Not in GraphQL.** Production uses GraphQL only to read, and integrations write over RPC (STOMP
-over WebSocket) or REST, so the Sync writes aren't added as GraphQL mutations. That also avoids
-new GraphQL name clashes: GraphQL operations are named the operation followed by the structure
-name in one namespace per application, so `saveSync` for `Job` would be the same mutation as
-`save` for `SyncJob`.
+**In GraphQL** they are the mutations `saveSync<Structure>`, `updateSync<Structure>` and
+`deleteSync<Structure>`, with the same `@policy` directives as `save`, `update` and `delete`.
+GraphQL operations are named the operation followed by the structure name, in one namespace per
+application, so `saveSync` for `Job` is the same mutation as `save` for `SyncJob`. The Sync
+mutations are added after every other operation, and only where the name is free; a clashing one
+is left out and logged at WARN, so the existing mutation keeps its name and still writes where it
+did. RPC and REST always have the Sync writes.
 
 **They force a refresh (`refresh=true`) instead of using `wait_for`.** Kinotic's `saveSync` uses
 `wait_for`; we decided against it here, because its costs grow under the load that makes `false`
@@ -238,9 +240,10 @@ affected, as they already were by repeats such as `Job`'s countByQuery and `JobB
 Checking for these at publish, and before a CLI sync, is the next change.
 
 Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
-that each Sync write is searchable on return over RPC and REST, that `deleteByIdSync` on the admin
-service works, and that a policy denying `save`, `update` and `deleteById` denies the Sync writes
-too. The e2e suite covers the TypeScript client and the REST routes.
+that each Sync write is searchable on return over RPC, REST and GraphQL, that `deleteByIdSync` on
+the admin service works, that a policy denying `save`, `update` and `deleteById` denies the Sync
+writes too, and that a clashing GraphQL name stays with the non-Sync mutation. The e2e suite covers
+the TypeScript client and the REST routes.
 
 #### Other changes worth making
 
