@@ -144,6 +144,44 @@ jobs:
           cp -r */build/allure-results/* allure-results/ || true
           cp -r structures-js/*/allure-results/* allure-results/ || true
 
+      # The report is built in its own job below, so a problem there (such as the Allure action's
+      # base image pull being rate limited) can't skip the build, tests or publishing
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Check If Failure
+        if: ${{ steps.gradle_build.outcome == 'failure' || steps.run_e2e_tests.outcome == 'failure' }}
+        run: |
+          if [ "${{ steps.gradle_build.outcome }}" == "failure" ]; then
+            echo "Gradle Build failed."
+          fi
+
+          if [ "${{ steps.run_e2e_tests.outcome }}" == "failure" ]; then
+            echo "E2E Tests failed."
+          fi
+
+          # Optionally mark the job as failed
+          exit 1
+
+  test_report:
+    name: Test Report
+    needs: gradle_build_and_publish
+    # Published for failing runs too, which is when the report matters most
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: allure-results
+          path: allure-results
+
       - name: Get Allure history
         uses: actions/checkout@v4
         continue-on-error: true
@@ -178,17 +216,3 @@ jobs:
           state: 'success'
           sha: ${{ github.event.pull_request.head.sha || github.sha }}
           target_url: https://mindsignited.github.io/structures/allure/${{ github.run_number }}
-
-      - name: Check If Failure
-        if: ${{ steps.gradle_build.outcome == 'failure' || steps.run_e2e_tests.outcome == 'failure' }}
-        run: |
-          if [ "${{ steps.gradle_build.outcome }}" == "failure" ]; then
-            echo "Gradle Build failed."
-          fi
-
-          if [ "${{ steps.run_e2e_tests.outcome }}" == "failure" ]; then
-            echo "E2E Tests failed."
-          fi
-
-          # Optionally mark the job as failed
-          exit 1
