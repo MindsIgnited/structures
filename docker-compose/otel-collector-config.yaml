@@ -18,13 +18,15 @@ processors:
         action: insert
 
 exporters:
-  otlp/tempo:
+  otlp_grpc/tempo:
     endpoint: "tempo:4317"  # For traces to Tempo (gRPC)
     tls:
       insecure: true
-  loki:  # For logs to Loki (native Loki format)
-    endpoint: "http://loki:3100/loki/api/v1/push"
-  otlphttp/mimir:  # For metrics to Mimir (using OTLP protocol)
+  otlp_http/loki:  # For logs to Loki (native OTLP ingestion; the loki exporter was removed from contrib)
+    endpoint: "http://loki:3100/otlp"
+    tls:
+      insecure: true
+  otlp_http/mimir:  # For metrics to Mimir (using OTLP protocol)
     endpoint: "http://mimir:9009/otlp"
     tls:
       insecure: true
@@ -34,12 +36,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [resource, batch]
-      exporters: [otlp/tempo]
+      exporters: [otlp_grpc/tempo]
     logs:
       receivers: [otlp]
       processors: [resource, batch]
-      exporters: [loki]
+      exporters: [otlp_http/loki]
     metrics:
       receivers: [otlp]
       processors: [resource, batch]
-      exporters: [otlphttp/mimir]
+      exporters: [otlp_http/mimir]

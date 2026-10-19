@@ -77,8 +77,15 @@ bootBuildImage {
             ]
             : [])
     environment = [
+            // Adds /workspace/health-check (https://github.com/dmikusa/tiny-health-checker), used by the compose healthchecks
+            "BP_HEALTH_CHECKER_ENABLED"   : "true",
+            "THC_PATH"                    : "/health",
             "BPE_DELIM_JAVA_TOOL_OPTIONS" : " ",
             "BPE_APPEND_JAVA_TOOL_OPTIONS": "-XX:+UseG1GC -XX:+ScavengeBeforeFullGC -XX:+DisableExplicitGC ${igniteAddOpens}".toString()
+    ]
+    buildpacks = [
+            "urn:cnb:builder:paketo-buildpacks/java",
+            "docker.io/paketobuildpacks/health-checker" // https://github.com/paketo-buildpacks/health-checker
     ]
     docker {
         publishRegistry {
