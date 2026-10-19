@@ -513,9 +513,15 @@ describe('K8s Cache Eviction Tests', () => {
         await k8s.connectToPod(0);
 
         const cleanupEntitySvc: IEntityService<Vehicle> = Structures.createEntityService(applicationId, structureName);
-        // Awaited so the delete finishes before unPublish drops the index it runs against
-        await cleanupEntitySvc.deleteByQuery('*');
-        await cleanupEntitySvc.syncIndex();
+        // Awaited so the delete finishes before unPublish drops the index it runs against. A failure here must not
+        // skip the rest of the cleanup, which would leave the structure published on the shared cluster; unPublish
+        // removes the entities with the index regardless.
+        try {
+            await cleanupEntitySvc.deleteByQuery('*');
+            await cleanupEntitySvc.syncIndex();
+        } catch (error) {
+            console.warn('Cleanup: could not delete the test entities, continuing with unPublish:', error);
+        }
 
         await Structures.getStructureService().unPublish(structureId);
         await Structures.getStructureService().deleteById(structureId);

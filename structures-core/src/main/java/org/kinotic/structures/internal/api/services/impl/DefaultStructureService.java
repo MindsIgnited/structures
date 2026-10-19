@@ -122,9 +122,10 @@ public class DefaultStructureService implements StructureService {
                                 .failedFuture(new IllegalStateException("Structure must be Un-Published before Deleting"));
                     }
 
-                    return clusterCacheEvictionService
-                            .evictCaches(CacheEvictionEvent.localDeletedStructure(structure.getApplicationId(), structure.getId()))
-                            .thenCompose(v -> structureDAO.deleteById(structureId));
+                    // Evict once the structure is gone, so a node cannot reload it in between and keep it cached
+                    return structureDAO.deleteById(structureId)
+                                       .thenCompose(v -> clusterCacheEvictionService.evictCaches(
+                                               CacheEvictionEvent.localDeletedStructure(structure.getApplicationId(), structure.getId())));
                 });
     }
 

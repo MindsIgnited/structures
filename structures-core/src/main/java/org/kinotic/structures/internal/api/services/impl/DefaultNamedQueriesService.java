@@ -151,8 +151,11 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
         // TODO: preprocess queries to correct index name and add Metadata about query type to be used by other parts of the system
         //       The Query type information will speed up other areas the need this as well
         return super.save(entity)
+                    // The saved definition, since Elasticsearch generates the id when the entity has none
                     .thenCompose(namedQueriesDefinition -> clusterCacheEvictionService
-                            .evictCaches(CacheEvictionEvent.localModifiedNamedQuery(entity.getApplicationId(), entity.getStructure(), entity.getId()))
+                            .evictCaches(CacheEvictionEvent.localModifiedNamedQuery(namedQueriesDefinition.getApplicationId(),
+                                                                                    namedQueriesDefinition.getStructure(),
+                                                                                    namedQueriesDefinition.getId()))
                             .thenApply(v -> namedQueriesDefinition));
     }
 

@@ -37,8 +37,10 @@ dependencies {
     testImplementation 'com.graphql-java:graphql-java'
     testImplementation 'io.swagger.core.v3:swagger-core-jakarta'
     testImplementation 'io.swagger.core.v3:swagger-models-jakarta'
-    // ClusterCacheEvictionServiceTest drives the eviction retries against mocked Ignite compute futures
+    // ClusterCacheEvictionServiceTest drives the eviction retries against mocked Ignite compute futures, and reads
+    // the eviction metrics back from an in-memory reader
     testImplementation 'org.apache.ignite:ignite-core'
+    testImplementation 'io.opentelemetry:opentelemetry-sdk-testing'
     // Testcontainers 2 at the version the Boot BOM manages. Pinned by TestcontainersDockerApiTest.
     testImplementation 'org.testcontainers:testcontainers'
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
