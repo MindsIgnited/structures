@@ -17,9 +17,9 @@ import org.kinotic.structures.api.domain.ParameterHolder;
 import org.kinotic.structures.internal.api.services.sql.QueryContext;
 import org.kinotic.structures.internal.api.services.sql.QueryExecutorFactory;
 import org.kinotic.structures.internal.api.services.sql.executors.QueryExecutor;
+import org.kinotic.structures.internal.cache.ClusterCacheEvictionService;
 import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.EvictionSourceType;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -38,19 +38,19 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
 
     private final AsyncLoadingCache<CacheKey, QueryExecutor> cache;
     private final ConcurrentHashMap<String, List<CacheKey>> cacheKeyTracker = new ConcurrentHashMap<>();
-    private final ApplicationEventPublisher eventPublisher;
+    private final ClusterCacheEvictionService clusterCacheEvictionService;
 
     public DefaultNamedQueriesService(CrudServiceTemplate crudServiceTemplate,
                                       ElasticsearchAsyncClient esAsyncClient,
                                       QueryExecutorFactory queryExecutorFactory,
-                                      ApplicationEventPublisher eventPublisher,
+                                      ClusterCacheEvictionService clusterCacheEvictionService,
                                       DefaultCaffeineCacheFactory cacheFactory) {
         super("struct_named_query_service_definition",
               NamedQueriesDefinition.class,
               esAsyncClient,
               crudServiceTemplate);
 
-        this.eventPublisher = eventPublisher;
+        this.clusterCacheEvictionService = clusterCacheEvictionService;
 
         cache = cacheFactory.<CacheKey, QueryExecutor>newBuilder()
                         .name("namedQueriesCache")
@@ -151,10 +151,9 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
         // TODO: preprocess queries to correct index name and add Metadata about query type to be used by other parts of the system
         //       The Query type information will speed up other areas the need this as well
         return super.save(entity)
-                    .thenApply(namedQueriesDefinition -> {
-                        this.eventPublisher.publishEvent(CacheEvictionEvent.localModifiedNamedQuery(entity.getApplicationId(), entity.getStructure(), entity.getId()));
-                        return namedQueriesDefinition;
-                    });
+                    .thenCompose(namedQueriesDefinition -> clusterCacheEvictionService
+                            .evictCaches(CacheEvictionEvent.localModifiedNamedQuery(entity.getApplicationId(), entity.getStructure(), entity.getId()))
+                            .thenApply(v -> namedQueriesDefinition));
     }
 
     @Override
@@ -167,14 +166,11 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
                     }
                     
                     return super.deleteById(id)
-                            .thenApply(v -> {
-                                this.eventPublisher.publishEvent(
-                                        CacheEvictionEvent.localDeletedNamedQuery(
-                                                namedQuery.getApplicationId(), 
-                                                namedQuery.getStructure(), 
-                                                namedQuery.getId()));
-                                return null;
-                            });
+                            .thenCompose(v -> clusterCacheEvictionService.evictCaches(
+                                    CacheEvictionEvent.localDeletedNamedQuery(
+                                            namedQuery.getApplicationId(),
+                                            namedQuery.getStructure(),
+                                            namedQuery.getId())));
                 });
     }
 
