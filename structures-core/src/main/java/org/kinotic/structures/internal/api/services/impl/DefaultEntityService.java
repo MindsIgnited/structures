@@ -2,6 +2,7 @@ package org.kinotic.structures.internal.api.services.impl;
 
 import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.elasticsearch._types.OpType;
+import co.elastic.clients.elasticsearch._types.Refresh;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.DeleteRequest;
@@ -155,30 +156,25 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public CompletableFuture<Void> deleteById(String id, EntityContext context) {
-        return validateContext(context)
-                .thenCompose(un -> authService.authorize(EntityOperation.DELETE_BY_ID, context))
-                .thenApply(un -> composeId(id, context))
-                .thenCompose(composedId -> crudServiceTemplate
-                        .deleteById(structure.getItemIndex(),
-                                    composedId,
-                                    builder -> beforeDelete(builder, context))
-                        .thenApply(deleteResponse -> null));
+        return doDeleteById(id, context, structuresProperties.getElasticRefreshAfterDelete().toRefresh());
     }
 
     @WithSpan
     @Override
     public CompletableFuture<Void> deleteById(TenantSpecificId id, EntityContext context) {
-        // We set the tenant selection so validation below will know that a tenant specific operation is being used
-        context.setTenantSelection(List.of(id.tenantId()));
+        return doDeleteById(id, context, structuresProperties.getElasticRefreshAfterDelete().toRefresh());
+    }
 
-        return validateContext(context)
-                .thenCompose(un -> authService.authorize(EntityOperation.DELETE_BY_ID, context))
-                .thenApply(un -> composeId(id))
-                .thenCompose(composedId -> crudServiceTemplate
-                        .deleteById(structure.getItemIndex(),
-                                    composedId,
-                                    builder -> beforeDelete(builder, context))
-                        .thenApply(deleteResponse -> null));
+    @WithSpan
+    @Override
+    public CompletableFuture<Void> deleteByIdSync(String id, EntityContext context) {
+        return doDeleteById(id, context, Refresh.True);
+    }
+
+    @WithSpan
+    @Override
+    public CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, EntityContext context) {
+        return doDeleteById(id, context, Refresh.True);
     }
 
     @WithSpan
@@ -316,39 +312,13 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public <T> CompletableFuture<T> save(T entity, EntityContext context) {
-        return doPersist(entity,
-                         EntityOperation.SAVE,
-                         context,
-                         entityHolder -> esAsyncClient.index(i -> {
-                             i.routing(entityHolder.tenantId())
-                              .index(structure.getItemIndex())
-                              .id(entityHolder.getDocumentId())
-                              .document(entityHolder.entity())
-                              .refresh(structuresProperties.getElasticRefreshAfterMutation().toRefresh());
+        return doSave(entity, context, structuresProperties.getElasticRefreshAfterMutation().toRefresh());
+    }
 
-                             // When optimistic locking is enabled and no version is present we use create
-                             // We do this since there is no way to set an initial primary_term / seq_no combination
-                             // Or if using streams since this is the only supported operation
-                             ElasticVersion elasticVersion = entityHolder.getElasticVersionIfPresent();
-                             if((structure.isOptimisticLockingEnabled()
-                                     && elasticVersion == null)
-                                 || structure.isStream()
-                             ){
-
-                                 i.opType(OpType.Create);
-
-                             }else if(structure.isOptimisticLockingEnabled()
-                                     && elasticVersion != null){
-
-                                 i.ifPrimaryTerm(elasticVersion.primaryTerm());
-                                 i.ifSeqNo(elasticVersion.seqNo());
-                             }
-
-                             return i;
-                         }).thenApply(indexResponse -> postProcessSaveOrUpdate(entity,
-                                                                               entityHolder,
-                                                                               indexResponse.primaryTerm(),
-                                                                               indexResponse.seqNo())));
+    @WithSpan
+    @Override
+    public <T> CompletableFuture<T> saveSync(T entity, EntityContext context) {
+        return doSave(entity, context, Refresh.True);
     }
 
     @WithSpan
@@ -425,40 +395,13 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public <T> CompletableFuture<T> update(T entity, EntityContext context) {
-        return doPersist(entity,
-                         EntityOperation.UPDATE,
-                         context,
-                         entityHolder -> {
+        return doUpdate(entity, context, structuresProperties.getElasticRefreshAfterMutation().toRefresh());
+    }
 
-                             UpdateRequest<?,?> request = UpdateRequest.of(u -> {
-                                 u.routing(entityHolder.tenantId())
-                                  .index(structure.getItemIndex())
-                                  .id(entityHolder.getDocumentId())
-                                  .doc(entityHolder.entity())
-                                  .refresh(structuresProperties.getElasticRefreshAfterMutation().toRefresh());
-
-                                 ElasticVersion elasticVersion = entityHolder.getElasticVersionIfPresent();
-                                 if(structure.isOptimisticLockingEnabled()
-                                         && elasticVersion != null) {
-
-                                     u.ifPrimaryTerm(elasticVersion.primaryTerm())
-                                      .ifSeqNo(elasticVersion.seqNo());
-
-                                 } else if (structure.isOptimisticLockingEnabled()) {
-                                     throw new IllegalArgumentException("A Version must be provided when calling update");
-                                 }else{
-                                     u.docAsUpsert(true);
-                                 }
-                                 return u;
-                             });
-
-                             return esAsyncClient.update(request, entityHolder.entity().getClass())
-                                                 .thenApply(updateResponse ->
-                                                                    postProcessSaveOrUpdate(entity,
-                                                                                            entityHolder,
-                                                                                            updateResponse.primaryTerm(),
-                                                                                            updateResponse.seqNo()));
-                         });
+    @WithSpan
+    @Override
+    public <T> CompletableFuture<T> updateSync(T entity, EntityContext context) {
+        return doUpdate(entity, context, Refresh.True);
     }
 
     private String composeId(final String id, final EntityContext context){
@@ -555,6 +498,31 @@ public class DefaultEntityService implements EntityService {
         };
     }
 
+    private CompletableFuture<Void> doDeleteById(String id, EntityContext context, Refresh refresh) {
+        return validateContext(context)
+                .thenCompose(un -> authService.authorize(EntityOperation.DELETE_BY_ID, context))
+                .thenApply(un -> composeId(id, context))
+                .thenCompose(composedId -> crudServiceTemplate
+                        .deleteById(structure.getItemIndex(),
+                                    composedId,
+                                    builder -> beforeDelete(builder, context, refresh))
+                        .thenApply(deleteResponse -> null));
+    }
+
+    private CompletableFuture<Void> doDeleteById(TenantSpecificId id, EntityContext context, Refresh refresh) {
+        // We set the tenant selection so validation below will know that a tenant specific operation is being used
+        context.setTenantSelection(List.of(id.tenantId()));
+
+        return validateContext(context)
+                .thenCompose(un -> authService.authorize(EntityOperation.DELETE_BY_ID, context))
+                .thenApply(un -> composeId(id))
+                .thenCompose(composedId -> crudServiceTemplate
+                        .deleteById(structure.getItemIndex(),
+                                    composedId,
+                                    builder -> beforeDelete(builder, context, refresh))
+                        .thenApply(deleteResponse -> null));
+    }
+
     private <T> CompletableFuture<T> doFindById(String id, Class<T> type, EntityContext context) {
         if(FastestType.class.isAssignableFrom(type)){
             if(structure.isOptimisticLockingEnabled()){
@@ -636,6 +604,79 @@ public class DefaultEntityService implements EntityService {
                                   null);
             }
         }
+    }
+
+    private <T> CompletableFuture<T> doSave(T entity, EntityContext context, Refresh refresh) {
+        return doPersist(entity,
+                         EntityOperation.SAVE,
+                         context,
+                         entityHolder -> esAsyncClient.index(i -> {
+                             i.routing(entityHolder.tenantId())
+                              .index(structure.getItemIndex())
+                              .id(entityHolder.getDocumentId())
+                              .document(entityHolder.entity())
+                              .refresh(refresh);
+
+                             // When optimistic locking is enabled and no version is present we use create
+                             // We do this since there is no way to set an initial primary_term / seq_no combination
+                             // Or if using streams since this is the only supported operation
+                             ElasticVersion elasticVersion = entityHolder.getElasticVersionIfPresent();
+                             if((structure.isOptimisticLockingEnabled()
+                                     && elasticVersion == null)
+                                 || structure.isStream()
+                             ){
+
+                                 i.opType(OpType.Create);
+
+                             }else if(structure.isOptimisticLockingEnabled()
+                                     && elasticVersion != null){
+
+                                 i.ifPrimaryTerm(elasticVersion.primaryTerm());
+                                 i.ifSeqNo(elasticVersion.seqNo());
+                             }
+
+                             return i;
+                         }).thenApply(indexResponse -> postProcessSaveOrUpdate(entity,
+                                                                               entityHolder,
+                                                                               indexResponse.primaryTerm(),
+                                                                               indexResponse.seqNo())));
+    }
+
+    private <T> CompletableFuture<T> doUpdate(T entity, EntityContext context, Refresh refresh) {
+        return doPersist(entity,
+                         EntityOperation.UPDATE,
+                         context,
+                         entityHolder -> {
+
+                             UpdateRequest<?,?> request = UpdateRequest.of(u -> {
+                                 u.routing(entityHolder.tenantId())
+                                  .index(structure.getItemIndex())
+                                  .id(entityHolder.getDocumentId())
+                                  .doc(entityHolder.entity())
+                                  .refresh(refresh);
+
+                                 ElasticVersion elasticVersion = entityHolder.getElasticVersionIfPresent();
+                                 if(structure.isOptimisticLockingEnabled()
+                                         && elasticVersion != null) {
+
+                                     u.ifPrimaryTerm(elasticVersion.primaryTerm())
+                                      .ifSeqNo(elasticVersion.seqNo());
+
+                                 } else if (structure.isOptimisticLockingEnabled()) {
+                                     throw new IllegalArgumentException("A Version must be provided when calling update");
+                                 }else{
+                                     u.docAsUpsert(true);
+                                 }
+                                 return u;
+                             });
+
+                             return esAsyncClient.update(request, entityHolder.entity().getClass())
+                                                 .thenApply(updateResponse ->
+                                                                    postProcessSaveOrUpdate(entity,
+                                                                                            entityHolder,
+                                                                                            updateResponse.primaryTerm(),
+                                                                                            updateResponse.seqNo()));
+                         });
     }
 
     private <T> CompletableFuture<T> doPersist(T entity,
@@ -855,8 +896,8 @@ public class DefaultEntityService implements EntityService {
         return entity;
     }
 
-    private void beforeDelete(DeleteRequest.Builder builder, EntityContext context){
-        builder.refresh(structuresProperties.getElasticRefreshAfterDelete().toRefresh());
+    private void beforeDelete(DeleteRequest.Builder builder, EntityContext context, Refresh refresh){
+        builder.refresh(refresh);
         readPreProcessor.beforeDelete(structure, builder, context);
     }
 

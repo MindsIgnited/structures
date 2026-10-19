@@ -52,6 +52,11 @@ public class DefaultJsonEntitiesService implements JsonEntitiesService {
     }
 
     @Override
+    public CompletableFuture<Void> deleteByIdSync(String structureId, String id, Participant participant) {
+        return entitiesService.deleteByIdSync(structureId, id, new DefaultEntityContext(participant));
+    }
+
+    @Override
     public CompletableFuture<Void> deleteByQuery(String structureId, String query, Participant participant) {
         return entitiesService.deleteByQuery(structureId, query, new DefaultEntityContext(participant));
     }
@@ -110,6 +115,11 @@ public class DefaultJsonEntitiesService implements JsonEntitiesService {
     }
 
     @Override
+    public CompletableFuture<TokenBuffer> saveSync(String structureId, TokenBuffer entity, Participant participant) {
+        return entitiesService.saveSync(structureId, entity, new DefaultEntityContext(participant));
+    }
+
+    @Override
     public CompletableFuture<Page<FastestType>> search(String structureId,
                                                        String searchText,
                                                        Pageable pageable,
@@ -120,6 +130,11 @@ public class DefaultJsonEntitiesService implements JsonEntitiesService {
     @Override
     public CompletableFuture<TokenBuffer> update(String structureId, TokenBuffer entity, Participant participant) {
         return entitiesService.update(structureId, entity, new DefaultEntityContext(participant));
+    }
+
+    @Override
+    public CompletableFuture<TokenBuffer> updateSync(String structureId, TokenBuffer entity, Participant participant) {
+        return entitiesService.updateSync(structureId, entity, new DefaultEntityContext(participant));
     }
 
 }

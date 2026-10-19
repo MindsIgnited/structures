@@ -190,6 +190,55 @@ describe('End To End Tests', () => {
                 )).rejects.toHaveProperty('response.status', 404)
             }, 600000)
 
+            it('Can save, update and delete a person with Sync', async () => {
+                // A unique first name, so other tests' people in the same tenant don't change the counts
+                const testPerson = generatePerson(DEFAULT_TENANT)
+                testPerson.firstName = `Sync${faker.string.alpha(10)}`
+                const query = buildFirstNameQuery([testPerson])
+
+                const saveResponse = await axiosInstance.post<PersonWithTenant>(
+                    `${baseUrl}/api/openapi.admin/personwithtenant/save-sync`,
+                    testPerson
+                )
+                expect(saveResponse.status).toBe(200)
+                const saved = saveResponse.data
+                await expect(countWithTenants(axiosInstance, baseUrl, query, [DEFAULT_TENANT])).resolves.toBe(1)
+
+                const lastName = `Synced${faker.string.alpha(8)}`
+                const updateResponse = await axiosInstance.post<PersonWithTenant>(
+                    `${baseUrl}/api/openapi.admin/personwithtenant/update-sync`,
+                    {...saved, lastName}
+                )
+                expect(updateResponse.status).toBe(200)
+                expect(updateResponse.data.lastName).toBe(lastName)
+                await expect(countWithTenants(axiosInstance, baseUrl, `lastName:"${lastName}"`, [DEFAULT_TENANT])).resolves.toBe(1)
+
+                const deleteResponse = await axiosInstance.delete(
+                    `${baseUrl}/api/openapi.admin/personwithtenant/${saved.id}/sync`
+                )
+                expect(deleteResponse.status).toBe(200)
+                await expect(countWithTenants(axiosInstance, baseUrl, query, [DEFAULT_TENANT])).resolves.toBe(0)
+            })
+
+            it('Can delete a person by id and tenant with Sync', async () => {
+                const tenant = `tenantSync-${faker.string.uuid()}`
+                const testPerson = generatePerson(tenant)
+                const query = buildFirstNameQuery([testPerson])
+                const saveResponse = await axiosInstance.post<PersonWithTenant>(
+                    `${baseUrl}/api/openapi.admin/personwithtenant/save-sync`,
+                    testPerson,
+                    { headers: { tenantId: tenant } }
+                )
+                expect(saveResponse.status).toBe(200)
+                await expect(countWithTenants(axiosInstance, baseUrl, query, [tenant])).resolves.toBe(1)
+
+                const deleteResponse = await axiosInstance.delete(
+                    `${baseUrl}/admin/api/openapi.admin/personwithtenant/${tenant}/${saveResponse.data.id}/sync`
+                )
+                expect(deleteResponse.status).toBe(200)
+                await expect(countWithTenants(axiosInstance, baseUrl, query, [tenant])).resolves.toBe(0)
+            })
+
         })
 
         describe('Multitenant Selection Operations', () => {
