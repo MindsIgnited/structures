@@ -55,13 +55,15 @@ public class StructuresProperties {
      * What a single entity save or update asks of Elasticsearch before returning: force a refresh so the change is
      * searchable straight away ({@code true}), wait for the next scheduled refresh ({@code wait_for}), or neither
      * ({@code false}), in which case the change is searchable after the next scheduled refresh or a syncIndex call.
-     * Bulk saves and updates never refresh.
+     * Bulk saves and updates never refresh. {@code saveSync} and {@code updateSync} always force a refresh, whatever
+     * this is set to, so callers that search their own writes can ask for it per call.
      */
     @NotNull
     private ElasticRefreshPolicy elasticRefreshAfterMutation = ElasticRefreshPolicy.TRUE;
 
     /**
-     * The same as {@link #elasticRefreshAfterMutation}, for deleting an entity by id. Delete by query never refreshes.
+     * The same as {@link #elasticRefreshAfterMutation}, for deleting an entity by id. Delete by query never refreshes,
+     * and {@code deleteByIdSync} always forces a refresh.
      */
     @NotNull
     private ElasticRefreshPolicy elasticRefreshAfterDelete = ElasticRefreshPolicy.TRUE;

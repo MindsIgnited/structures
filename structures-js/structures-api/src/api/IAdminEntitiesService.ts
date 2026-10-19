@@ -43,6 +43,17 @@ export interface IAdminEntitiesService {
     deleteById(structureId: string, id: TenantSpecificId): Promise<void>
 
     /**
+     * Deletes the entity with the given id, and refreshes before returning, so the deletion shows in searches straight away,
+     * whatever elasticRefreshAfterDelete is set to on the server. Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to delete the entity for
+     * @param id          must not be {@literal null}
+     * @return {@link Promise} emitting when the deletion is searchable
+     * @throws IllegalArgumentException in case the given {@literal id} is {@literal null}
+     */
+    deleteByIdSync(structureId: string, id: TenantSpecificId): Promise<void>
+
+    /**
      * Deletes the entity with the given id.
      *
      * @param structureId the id of the structure to save the entity for
@@ -141,6 +152,10 @@ export class AdminEntitiesService implements IAdminEntitiesService {
 
     public deleteById(structureId: string, id: TenantSpecificId): Promise<void> {
         return this.serviceProxy.invoke('deleteById', [structureId, id])
+    }
+
+    public deleteByIdSync(structureId: string, id: TenantSpecificId): Promise<void> {
+        return this.serviceProxy.invoke('deleteByIdSync', [structureId, id])
     }
 
     public deleteByQuery(structureId: string, query: string, tenantSelection: TenantSelection): Promise<void> {

@@ -89,6 +89,24 @@ describe('End To End Tests', () => {
     )
 
     it<LocalTestContext>(
+        'Test Sync CRUD is searchable on return',
+        async ({entityService}) => {
+            const savedPerson: Person = await logFailure(entityService.saveSync(createTestPerson()), 'Failed to save person')
+            expect(savedPerson.id).toBeDefined()
+            await expect(entityService.count()).resolves.toBe(1)
+
+            savedPerson.lastName = 'Synced'
+            const updatedPerson: Person = await logFailure(entityService.updateSync(savedPerson), 'Failed to update person')
+            expect(updatedPerson.id).toBe(savedPerson.id)
+            expect(updatedPerson.lastName).toBe('Synced')
+            await expect(entityService.countByQuery('lastName: Synced')).resolves.toBe(1)
+
+            await expect(entityService.deleteByIdSync(savedPerson.id as string)).resolves.toBeNull()
+            await expect(entityService.count()).resolves.toBe(0)
+        }
+    )
+
+    it<LocalTestContext>(
         'Test FindByIds ',
         async ({entityService}) => {
             await createTestPeopleAndVerify(entityService, 100)

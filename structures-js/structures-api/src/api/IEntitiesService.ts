@@ -54,6 +54,17 @@ export interface IEntitiesService {
     deleteById(structureId: string, id: string): Promise<void>
 
     /**
+     * Deletes the entity with the given id, and refreshes before returning, so the deletion shows in searches straight away,
+     * whatever elasticRefreshAfterDelete is set to on the server. Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to delete the entity for
+     * @param id          must not be {@literal null}
+     * @return {@link Promise} emitting when the deletion is searchable
+     * @throws IllegalArgumentException in case the given {@literal id} is {@literal null}
+     */
+    deleteByIdSync(structureId: string, id: string): Promise<void>
+
+    /**
      * Deletes the entity with the given id.
      *
      * @param structureId the id of the structure to save the entity for
@@ -130,6 +141,17 @@ export interface IEntitiesService {
     save<T>(structureId: string, entity: T): Promise<T>
 
     /**
+     * Saves a given entity like {@link save}, and refreshes before returning, so the change shows in searches straight away,
+     * whatever elasticRefreshAfterMutation is set to on the server. Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to save the entity for
+     * @param entity      must not be {@literal null}
+     * @return {@link Promise} emitting the saved entity once it is searchable
+     * @throws IllegalArgumentException in case the given {@literal entity} is {@literal null}
+     */
+    saveSync<T>(structureId: string, entity: T): Promise<T>
+
+    /**
      * Returns a {@link IterablePage} of entities matching the search text and paging restriction provided in the {@link Pageable} object.
      * <p>
      * You can find more information about the search syntax <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html#query-string-syntax">here</a>
@@ -154,7 +176,9 @@ export interface IEntitiesService {
     searchSinglePage<T>(structureId: string, searchText: string, pageable: Pageable): Promise<Page<T>>
 
     /**
-     * This operation makes all the recent writes immediately available for search.
+     * This operation makes all the recent writes immediately available for search, by refreshing every shard of the
+     * structure's index. Use it once after a batch of bulk writes you need to search; for a single write, the
+     * Sync variants refresh only the shard the write touched.
      * @param structureId the id of the structure to sync the index for. (this is the {@link Structure#getApplication()} + "." + {@link Structure#getName()})
      * @return a Promise that resolves when the operation is complete
      */
@@ -172,6 +196,17 @@ export interface IEntitiesService {
      * @throws Error in case the given {@literal entity} is {@literal null}
      */
     update<T>(structureId: string, entity: T): Promise<T>
+
+    /**
+     * Updates a given entity like {@link update}, and refreshes before returning, so the change shows in searches straight away,
+     * whatever elasticRefreshAfterMutation is set to on the server. Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to update the entity for
+     * @param entity      must not be {@literal null}
+     * @return Promise emitting the updated entity once it is searchable
+     * @throws Error in case the given {@literal entity} is {@literal null}
+     */
+    updateSync<T>(structureId: string, entity: T): Promise<T>
 
 }
 
@@ -202,6 +237,10 @@ export class EntitiesService implements IEntitiesService {
 
     public deleteById(structureId: string, id: string): Promise<void> {
         return this.serviceProxy.invoke('deleteById', [structureId, id])
+    }
+
+    public deleteByIdSync(structureId: string, id: string): Promise<void> {
+        return this.serviceProxy.invoke('deleteByIdSync', [structureId, id])
     }
 
     public deleteByQuery(structureId: string, query: string): Promise<void> {
@@ -250,6 +289,10 @@ export class EntitiesService implements IEntitiesService {
         return this.serviceProxy.invoke('save', [structureId, entity])
     }
 
+    public saveSync<T>(structureId: string, entity: T): Promise<T> {
+        return this.serviceProxy.invoke('saveSync', [structureId, entity])
+    }
+
     public async search<T>(structureId: string, searchText: string, pageable: Pageable): Promise<IterablePage<T>> {
         const page: Page<T> = await this.searchSinglePage(structureId, searchText, pageable)
         return new FunctionalIterablePage(pageable, page,
@@ -266,6 +309,10 @@ export class EntitiesService implements IEntitiesService {
 
     public update<T>(structureId: string, entity: T): Promise<T>{
         return this.serviceProxy.invoke('update', [structureId, entity])
+    }
+
+    public updateSync<T>(structureId: string, entity: T): Promise<T>{
+        return this.serviceProxy.invoke('updateSync', [structureId, entity])
     }
 }
 

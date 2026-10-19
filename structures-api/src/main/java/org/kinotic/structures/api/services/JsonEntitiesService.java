@@ -73,6 +73,17 @@ public interface JsonEntitiesService {
     CompletableFuture<Void> deleteById(String structureId, String id, Participant participant);
 
     /**
+     * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
+     * away, whatever {@code elasticRefreshAfterDelete} is set to. Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to delete the entity for
+     * @param id          must not be {@literal null}
+     * @param participant the participant of the logged-in user
+     * @return {@link CompletableFuture} emitting when the deletion is searchable
+     */
+    CompletableFuture<Void> deleteByIdSync(String structureId, String id, Participant participant);
+
+    /**
      * Deletes any entities that match the given query.
      *
      * @param structureId the id of the structure to delete the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
@@ -154,6 +165,18 @@ public interface JsonEntitiesService {
     CompletableFuture<TokenBuffer> save(String structureId, TokenBuffer entity, Participant participant);
 
     /**
+     * Saves a given entity like {@link #save(String, TokenBuffer, Participant)}, and refreshes before returning so the
+     * change shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
+     * Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to save the entity for
+     * @param entity      must not be {@literal null}
+     * @param participant the participant of the logged-in user
+     * @return {@link CompletableFuture} emitting the saved entity once it is searchable
+     */
+    CompletableFuture<TokenBuffer> saveSync(String structureId, TokenBuffer entity, Participant participant);
+
+    /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@code Pageable} object.
      * <p>
      * You can find more information about the search syntax <a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html#query-string-syntax">here</a>
@@ -167,7 +190,9 @@ public interface JsonEntitiesService {
     CompletableFuture<Page<FastestType>> search(String structureId, String searchText, Pageable pageable, Participant participant);
 
     /**
-     * This operation makes all the recent writes immediately available for search.
+     * This operation makes all the recent writes immediately available for search, by refreshing every shard of the
+     * structure's index. Use it once after a batch of bulk writes the caller needs to search; for a single write, the
+     * Sync variants refresh only the shard the write touched.
      * @param structureId the id of the structure to sync the index for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
      * @param participant     the participant of the logged-in user
      * @return a {@link CompletableFuture} that will complete when the operation is complete
@@ -185,5 +210,17 @@ public interface JsonEntitiesService {
      * @return {@link CompletableFuture} emitting the saved entity
      */
     CompletableFuture<TokenBuffer> update(String structureId, TokenBuffer entity, Participant participant);
+
+    /**
+     * Updates a given entity like {@link #update(String, TokenBuffer, Participant)}, and refreshes before returning so
+     * the change shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
+     * Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to update the entity for
+     * @param entity      must not be {@literal null}
+     * @param participant the participant of the logged-in user
+     * @return {@link CompletableFuture} emitting the updated entity once it is searchable
+     */
+    CompletableFuture<TokenBuffer> updateSync(String structureId, TokenBuffer entity, Participant participant);
 
 }
