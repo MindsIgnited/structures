@@ -513,8 +513,9 @@ describe('K8s Cache Eviction Tests', () => {
         await k8s.connectToPod(0);
 
         const cleanupEntitySvc: IEntityService<Vehicle> = Structures.createEntityService(applicationId, structureName);
-        cleanupEntitySvc.deleteByQuery('*');
-        cleanupEntitySvc.syncIndex();
+        // Awaited so the delete finishes before unPublish drops the index it runs against
+        await cleanupEntitySvc.deleteByQuery('*');
+        await cleanupEntitySvc.syncIndex();
 
         await Structures.getStructureService().unPublish(structureId);
         await Structures.getStructureService().deleteById(structureId);
