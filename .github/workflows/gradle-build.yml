@@ -144,8 +144,8 @@ jobs:
           cp -r */build/allure-results/* allure-results/ || true
           cp -r structures-js/*/allure-results/* allure-results/ || true
 
-      # The report is built in its own job below, so a problem there (such as the Allure action's
-      # base image pull being rate limited) can't skip the build, tests or publishing
+      # The report is built in its own job below, so a problem there can't skip the build, tests or
+      # publishing
       - name: Upload test results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -189,15 +189,49 @@ jobs:
           ref: gh-pages
           path: gh-pages
 
-      - name: Generate Allure report
-        uses: simple-elf/allure-report-action@v1.15
-        id: allure-report
+      - name: Set up JDK
+        uses: actions/setup-java@v4
         with:
-          allure_results: allure-results
-          gh_pages: gh-pages
-          subfolder: allure
-          allure_report: allure-report
-          allure_history: allure-history
+          distribution: 'temurin'
+          java-version: 21
+
+      # The Allure CLI from Maven Central, retried, as a rate-limited or failed download is the
+      # one thing here that can fail on its own
+      - name: Install Allure
+        env:
+          ALLURE_VERSION: 2.44.0
+          ALLURE_SHA256: 7021a90828c00cd6ec992027cce48e8a94bd87fad43d0c2dcac4795cadc178d7
+        run: |
+          curl -fsSL --retry 5 --retry-delay 30 --retry-all-errors -o "$RUNNER_TEMP/allure.tgz" \
+            "https://repo.maven.apache.org/maven2/io/qameta/allure/allure-commandline/${ALLURE_VERSION}/allure-commandline-${ALLURE_VERSION}.tgz"
+          echo "${ALLURE_SHA256}  $RUNNER_TEMP/allure.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/allure.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/allure-${ALLURE_VERSION}/bin" >> "$GITHUB_PATH"
+
+      # What simple-elf/allure-report-action did, without its Docker image: carry the trend history over
+      # from gh-pages, generate the report, and lay it out under allure/<run number> for publishing. The
+      # earlier reports stay, as the deploy keeps the files already on gh-pages.
+      - name: Generate Allure report
+        env:
+          PAGES_URL: https://mindsignited.github.io/structures/allure
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -d gh-pages/allure/last-history ]; then
+            cp -r gh-pages/allure/last-history/. allure-results/history
+          fi
+          cat > allure-results/executor.json <<EOF
+          {"name":"GitHub Actions","type":"github","reportName":"Allure Report with history",
+           "url":"${PAGES_URL}","reportUrl":"${PAGES_URL}/${RUN_NUMBER}",
+           "buildUrl":"${RUN_URL}","buildName":"GitHub Actions Run #${RUN_ID}","buildOrder":"${RUN_NUMBER}"}
+          EOF
+          allure generate --clean allure-results -o allure-report
+
+          mkdir -p allure-history/allure
+          cp -r allure-report/. "allure-history/allure/${RUN_NUMBER}"
+          cp -r allure-report/history/. allure-history/allure/last-history
+          echo "<!DOCTYPE html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0; URL=${PAGES_URL}/${RUN_NUMBER}/index.html\"><meta http-equiv=\"Pragma\" content=\"no-cache\"><meta http-equiv=\"Expires\" content=\"0\">" > allure-history/allure/index.html
 
       - name: Deploy report to Github Pages
         uses: peaceiris/actions-gh-pages@v4
