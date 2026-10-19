@@ -1,6 +1,6 @@
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.163.1
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
@@ -13,7 +13,7 @@ services:
       - mimir
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.10.8  # 3.x needs a reworked tempo.yml
     command: ["-config.file=/etc/tempo/tempo.yml"]
     volumes:
       - ./tempo.yml:/etc/tempo/tempo.yml
@@ -22,13 +22,13 @@ services:
       - "3200:3200"  # Tempo HTTP
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.8
     ports:
       - "3100:3100"  # Loki API (logs)
     command: -config.file=/etc/loki/local-config.yaml
 
   mimir:
-    image: grafana/mimir:latest
+    image: grafana/mimir:3.2.2
     command: ["-target=all", "-config.file=/etc/mimir/mimir.yml"]
     volumes:
       - ./mimir.yml:/etc/mimir/mimir.yml

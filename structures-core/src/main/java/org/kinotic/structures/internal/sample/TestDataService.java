@@ -16,8 +16,8 @@ import org.kinotic.structures.api.services.ApplicationService;
 import org.kinotic.structures.api.services.StructureService;
 import org.kinotic.structures.auth.internal.services.DefaultCaffeineCacheFactory;
 import org.kinotic.structures.internal.utils.StructuresUtil;
+import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
-import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -265,25 +265,29 @@ public class TestDataService {
 
     private static class PeopleCacheLoader implements CacheLoader<String, List<Person>> {
 
-        private final ResourceLoader resourceLoader;
+        private final Resource peopleResource;
+        private final Resource peopleWithIdResource;
         private final ObjectMapper objectMapper;
 
         public PeopleCacheLoader(ResourceLoader resourceLoader,
                                  ObjectMapper objectMapper) {
 
-            this.resourceLoader = resourceLoader instanceof PathMatchingResourcePatternResolver 
-            ? (PathMatchingResourcePatternResolver) resourceLoader : new PathMatchingResourcePatternResolver(resourceLoader);
+            // Resolve here, on the thread that builds the context: the application context resolves classpath:
+            // against the calling thread's context class loader, and the async load runs on pool threads whose
+            // loader cannot see BOOT-INF/classes in a Boot jar. ClassPathResource keeps the loader it was given.
+            this.peopleResource = resourceLoader.getResource(PEOPLE_FILE);
+            this.peopleWithIdResource = resourceLoader.getResource(PEOPLE_WITH_ID_FILE);
             this.objectMapper = objectMapper;
         }
 
         @Override
         public @Nullable List<Person> load(String key) throws Exception {
             if(key.equals(PEOPLE_KEY)) {
-                return objectMapper.readValue(resourceLoader.getResource(PEOPLE_FILE).getInputStream(),
+                return objectMapper.readValue(peopleResource.getInputStream(),
                                               objectMapper.getTypeFactory()
                                                           .constructCollectionType(List.class, Person.class));
             }else if(key.equals(PEOPLE_WITH_ID_KEY)) {
-                return objectMapper.readValue(resourceLoader.getResource(PEOPLE_WITH_ID_FILE).getInputStream(),
+                return objectMapper.readValue(peopleWithIdResource.getInputStream(),
                                               objectMapper.getTypeFactory()
                                                           .constructCollectionType(List.class, Person.class));
             }else{
