@@ -63,6 +63,16 @@ export interface IEntityService<T> {
     deleteById(id: string): Promise<void>;
 
     /**
+     * Deletes the entity with the given id, and refreshes before returning, so the deletion shows in searches straight away,
+     * whatever elasticRefreshAfterDelete is set to on the server. Use it when you need to read your own write.
+     *
+     * @param id      must not be {@literal null}
+     * @return Promise signaling when the deletion is searchable
+     * @throws Error in case the given {@literal id} is {@literal null}
+     */
+    deleteByIdSync(id: string): Promise<void>;
+
+    /**
      * Deletes the entity with the given id.
      *
      * @param query      the query used to filter records to delete, must not be {@literal null}
@@ -125,6 +135,16 @@ export interface IEntityService<T> {
     save(entity: T): Promise<T>;
 
     /**
+     * Saves a given entity like {@link save}, and refreshes before returning, so the change shows in searches straight away,
+     * whatever elasticRefreshAfterMutation is set to on the server. Use it when you need to read your own write.
+     *
+     * @param entity  must not be {@literal null}
+     * @return Promise emitting the saved entity once it is searchable
+     * @throws Error in case the given {@literal entity} is {@literal null}
+     */
+    saveSync(entity: T): Promise<T>;
+
+    /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@link Pageable} object.
      *
      * @param searchText the text to search for entities for
@@ -134,7 +154,9 @@ export interface IEntityService<T> {
     search(searchText: string, pageable: Pageable): Promise<IterablePage<T>>;
 
     /**
-     * This operation makes all the recent writes immediately available for search.
+     * This operation makes all the recent writes immediately available for search, by refreshing every shard of the
+     * structure's index. Use it once after a batch of bulk writes you need to search; for a single write, the
+     * Sync variants refresh only the shard the write touched.
      * @return a Promise that resolves when the operation is complete
      */
     syncIndex(): Promise<void>
@@ -159,6 +181,16 @@ export interface IEntityService<T> {
      * @throws Error in case the given {@literal entity} is {@literal null}
      */
     update(entity: T): Promise<T>;
+
+    /**
+     * Updates a given entity like {@link update}, and refreshes before returning, so the change shows in searches straight away,
+     * whatever elasticRefreshAfterMutation is set to on the server. Use it when you need to read your own write.
+     *
+     * @param entity      must not be {@literal null}
+     * @return Promise emitting the updated entity once it is searchable
+     * @throws Error in case the given {@literal entity} is {@literal null}
+     */
+    updateSync(entity: T): Promise<T>;
 
 }
 
@@ -205,6 +237,10 @@ export class EntityService<T> implements IEntityService<T>{
         return this.entitiesService.deleteById(this.structureId, id)
     }
 
+    public deleteByIdSync(id: string): Promise<void>{
+        return this.entitiesService.deleteByIdSync(this.structureId, id)
+    }
+
     public deleteByQuery(query: string): Promise<void>{
         return this.entitiesService.deleteByQuery(this.structureId, query)
     }
@@ -234,6 +270,11 @@ export class EntityService<T> implements IEntityService<T>{
         return this.entitiesService.save(this.structureId, entityToSave)
     }
 
+    public async saveSync(entity: T): Promise<T>{
+        const entityToSave = await this.beforeSaveOrUpdate(entity)
+        return this.entitiesService.saveSync(this.structureId, entityToSave)
+    }
+
     public search(searchText: string, pageable: Pageable): Promise<IterablePage<T>>{
         return this.entitiesService.search(this.structureId, searchText, pageable)
     }
@@ -245,6 +286,11 @@ export class EntityService<T> implements IEntityService<T>{
     public async update(entity: T): Promise<T>{
         const entityToSave = await this.beforeSaveOrUpdate(entity)
         return this.entitiesService.update(this.structureId, entityToSave)
+    }
+
+    public async updateSync(entity: T): Promise<T>{
+        const entityToSave = await this.beforeSaveOrUpdate(entity)
+        return this.entitiesService.updateSync(this.structureId, entityToSave)
     }
 
     protected async beforeBulkSaveOrUpdate(entities: T[]): Promise<T[]>{

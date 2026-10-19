@@ -81,6 +81,7 @@ function sidebarReference() {
     {
       text: 'API',
       items: [
+        { text: 'API Changes', link: '/reference/api-changes' },
         { text: 'Decorators', link: '/reference/decorators' },
         { text: 'PolicyAuthorizationService', link: '/reference/graphos/policy-authorization-service' },
         { text: 'PolicyAuthorizer', link: '/reference/graphos/policy-authorizer' },
