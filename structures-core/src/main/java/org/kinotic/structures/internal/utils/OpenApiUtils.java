@@ -50,6 +50,18 @@ public class OpenApiUtils {
         addSortingParameters(operation);
     }
 
+    /**
+     * Adds the {@code waitFor} query parameter the Sync writes take
+     */
+    public static void addWaitForParameter(Operation operation){
+        operation.addParametersItem(new Parameter().name("waitFor")
+                                                   .in("query")
+                                                   .required(false)
+                                                   .schema(new BooleanSchema()._default(false))
+                                                   .description("True to wait for the next scheduled refresh instead of forcing one. "
+                                                                        + "The call then takes up to the index's refresh interval (1 second by default) longer."));
+    }
+
     public static void addSortingParameters(Operation operation){
         operation.addParametersItem(new Parameter().name("sort")
                                                    .in("query")

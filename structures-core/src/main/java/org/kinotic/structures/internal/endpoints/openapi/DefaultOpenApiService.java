@@ -242,6 +242,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         ResponseType.NONE)
                 .addParametersItem(OpenApiUtils.createPathParameter("tenantId", "The tenantId of the "+structureName+" to delete."))
                 .addParametersItem(OpenApiUtils.createPathParameter("id","The id of the "+structureName+" to delete."));
+        OpenApiUtils.addWaitForParameter(deleteSyncOperation);
         syncByTenantAndIdPathItem.delete(deleteSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/{tenantId}/{id}/sync", syncByTenantAndIdPathItem);
 
@@ -373,6 +374,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         structure,
                                                         ResponseType.NONE)
                 .addParametersItem(OpenApiUtils.createPathParameter("id", "The id of the "+structureName+" to delete."));
+        OpenApiUtils.addWaitForParameter(deleteSyncOperation);
         syncByIdPathItem.delete(deleteSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/{id}/sync", syncByIdPathItem);
 
@@ -439,6 +441,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                       structure,
                                                       ResponseType.STRUCTURE)
                 .requestBody(structureRequestBody);
+        OpenApiUtils.addWaitForParameter(saveSyncOperation);
         addConflictResponse(saveSyncOperation, structure, false);
         saveSyncPathItem.post(saveSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/save-sync", saveSyncPathItem);
@@ -475,6 +478,7 @@ public class DefaultOpenApiService implements OpenApiService {
                                                         structure,
                                                         ResponseType.STRUCTURE)
                 .requestBody(structureRequestBody);
+        OpenApiUtils.addWaitForParameter(updateSyncOperation);
         addConflictResponse(updateSyncOperation, structure, true);
         updateSyncPathItem.post(updateSyncOperation);
         paths.put(basePath + lowercaseApplication + "/" + lowercaseName + "/update-sync", updateSyncPathItem);

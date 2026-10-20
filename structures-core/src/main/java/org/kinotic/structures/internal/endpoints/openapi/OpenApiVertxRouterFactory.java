@@ -203,11 +203,13 @@ public class OpenApiVertxRouterFactory {
               });
 
         // Update entity, and the same refreshing before returning
-        addEntityWriteRoute(router, bodyHandler, "/update", entitiesService::update);
+        addEntityWriteRoute(router, bodyHandler, "/update",
+                            (structureId, entity, waitFor, context) -> entitiesService.update(structureId, entity, context));
         addEntityWriteRoute(router, bodyHandler, "/update-sync", entitiesService::updateSync);
 
         // Save entity, and the same refreshing before returning
-        addEntityWriteRoute(router, bodyHandler, "", entitiesService::save);
+        addEntityWriteRoute(router, bodyHandler, "",
+                            (structureId, entity, waitFor, context) -> entitiesService.save(structureId, entity, context));
         addEntityWriteRoute(router, bodyHandler, "/save-sync", entitiesService::saveSync);
 
         // Sync Structure
@@ -230,10 +232,12 @@ public class OpenApiVertxRouterFactory {
 
         // Delete Entity By ID, and the same refreshing before returning
         if(admin){
-            addAdminDeleteByIdRoute(router, "", entitiesService::deleteById);
+            addAdminDeleteByIdRoute(router, "",
+                                    (structureId, id, waitFor, context) -> entitiesService.deleteById(structureId, id, context));
             addAdminDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
         }else{
-            addDeleteByIdRoute(router, "", entitiesService::deleteById);
+            addDeleteByIdRoute(router, "",
+                               (structureId, id, waitFor, context) -> entitiesService.deleteById(structureId, id, context));
             addDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
         }
 
@@ -275,9 +279,17 @@ public class OpenApiVertxRouterFactory {
               .handler(ctx -> {
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                  boolean waitFor;
+                  try {
+                      waitFor = VertxWebUtil.getWaitFor(ctx);
+                  } catch (IllegalArgumentException e) {
+                      VertxWebUtil.writeException(ctx, e);
+                      return;
+                  }
 
                   VertxFutures.onContext(vertx, write.apply(structureId,
                                                             new RawJson(ctx.body().buffer().getBytes()),
+                                                            waitFor,
                                                             new RoutingContextToEntityContextAdapter(ctx)))
                                         .handle(new ValueToJsonHandler<>(ctx, objectMapper))
                                         .exceptionally(throwable -> {
@@ -300,9 +312,17 @@ public class OpenApiVertxRouterFactory {
                   Validate.notNull(id, "id must not be null");
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                  boolean waitFor;
+                  try {
+                      waitFor = VertxWebUtil.getWaitFor(ctx);
+                  } catch (IllegalArgumentException e) {
+                      VertxWebUtil.writeException(ctx, e);
+                      return;
+                  }
 
                   VertxFutures.onContext(vertx, delete.apply(structureId,
                                                              id,
+                                                             waitFor,
                                                              new RoutingContextToEntityContextAdapter(ctx)))
                                         .handle(new NoValueHandler(ctx))
                                         .exceptionally(throwable -> {
@@ -326,9 +346,17 @@ public class OpenApiVertxRouterFactory {
                   Validate.notBlank(tenantID, "tenantId must not be null or blank");
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                  boolean waitFor;
+                  try {
+                      waitFor = VertxWebUtil.getWaitFor(ctx);
+                  } catch (IllegalArgumentException e) {
+                      VertxWebUtil.writeException(ctx, e);
+                      return;
+                  }
 
                   VertxFutures.onContext(vertx, delete.apply(structureId,
                                                              TenantSpecificId.create(id, tenantID),
+                                                             waitFor,
                                                              new RoutingContextToEntityContextAdapter(ctx)))
                                         .handle(new NoValueHandler(ctx))
                                         .exceptionally(throwable -> {
@@ -339,27 +367,30 @@ public class OpenApiVertxRouterFactory {
     }
 
     /**
-     * A single entity write on {@link EntitiesService}, such as save or update
+     * A single entity write on {@link EntitiesService}, such as save or update.
+     * {@code waitFor} is the request's waitFor parameter, which only the Sync writes use.
      */
     @FunctionalInterface
     private interface EntityWrite {
-        CompletableFuture<RawJson> apply(String structureId, RawJson entity, EntityContext context);
+        CompletableFuture<RawJson> apply(String structureId, RawJson entity, boolean waitFor, EntityContext context);
     }
 
     /**
-     * A delete by entity id on {@link EntitiesService}
+     * A delete by entity id on {@link EntitiesService}.
+     * {@code waitFor} is the request's waitFor parameter, which only the Sync delete uses.
      */
     @FunctionalInterface
     private interface DeleteById {
-        CompletableFuture<Void> apply(String structureId, String id, EntityContext context);
+        CompletableFuture<Void> apply(String structureId, String id, boolean waitFor, EntityContext context);
     }
 
     /**
-     * A delete by tenant and entity id on {@link EntitiesService}
+     * A delete by tenant and entity id on {@link EntitiesService}.
+     * {@code waitFor} is the request's waitFor parameter, which only the Sync delete uses.
      */
     @FunctionalInterface
     private interface AdminDeleteById {
-        CompletableFuture<Void> apply(String structureId, TenantSpecificId id, EntityContext context);
+        CompletableFuture<Void> apply(String structureId, TenantSpecificId id, boolean waitFor, EntityContext context);
     }
 
     private void addNamedQueryRoutes(Router router, BodyHandler bodyHandler) {

@@ -78,10 +78,12 @@ public interface JsonEntitiesService {
      *
      * @param structureId the id of the structure to delete the entity for
      * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param participant the participant of the logged-in user
      * @return {@link CompletableFuture} emitting when the deletion is searchable
      */
-    CompletableFuture<Void> deleteByIdSync(String structureId, String id, Participant participant);
+    CompletableFuture<Void> deleteByIdSync(String structureId, String id, boolean waitFor, Participant participant);
 
     /**
      * Deletes any entities that match the given query.
@@ -171,10 +173,12 @@ public interface JsonEntitiesService {
      *
      * @param structureId the id of the structure to save the entity for
      * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param participant the participant of the logged-in user
      * @return {@link CompletableFuture} emitting the saved entity once it is searchable
      */
-    CompletableFuture<TokenBuffer> saveSync(String structureId, TokenBuffer entity, Participant participant);
+    CompletableFuture<TokenBuffer> saveSync(String structureId, TokenBuffer entity, boolean waitFor, Participant participant);
 
     /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@code Pageable} object.
@@ -218,9 +222,11 @@ public interface JsonEntitiesService {
      *
      * @param structureId the id of the structure to update the entity for
      * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param participant the participant of the logged-in user
      * @return {@link CompletableFuture} emitting the updated entity once it is searchable
      */
-    CompletableFuture<TokenBuffer> updateSync(String structureId, TokenBuffer entity, Participant participant);
+    CompletableFuture<TokenBuffer> updateSync(String structureId, TokenBuffer entity, boolean waitFor, Participant participant);
 
 }

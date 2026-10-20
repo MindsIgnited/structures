@@ -19,7 +19,8 @@ so they stop slowing reads.
 - **`syncIndex`:** a Structures call that forces a refresh of a structure's whole index, so
   everything written so far becomes searchable.
 - **Sync write:** `saveSync`, `updateSync` or `deleteByIdSync`, a single write that forces a
-  refresh of the shard it touched before returning, whatever the refresh settings say.
+  refresh of the shard it touched before returning, whatever the refresh settings say. Called with
+  `waitFor`, it waits for the next scheduled refresh instead.
 
 ## Write throttling (October 2026)
 
@@ -221,6 +222,13 @@ A forced refresh touches only the shard the write went to, and returns as soon a
 the caller's latency doesn't depend on index settings or other traffic. Its cost, one small
 segment per call, is paid only by the callers that ask for it.
 
+**`waitFor` opts one call into `wait_for`.** Each Sync write takes an optional `waitFor` flag
+(`false` by default): the last argument in TypeScript, a `boolean` before the `Participant` in
+Java, and the `waitFor=true` query parameter over REST. With it, the write uses `refresh=wait_for`
+for that call, so callers that can wait up to the refresh interval spare Elasticsearch the extra
+segment. The costs above still apply to those calls, so it suits occasional writes, not
+high-volume ones.
+
 **They are authorized as the write they refresh after.** `saveSync` checks the same policies as
 `save`, `updateSync` as `update`, `deleteByIdSync` as `deleteById`. There are no new
 `EntityOperation` values, and the TypeScript
@@ -240,7 +248,8 @@ Checking for these at publish, and before a CLI sync, is the next change.
 Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
 that each Sync write is searchable on return over RPC and REST, that `deleteByIdSync` on the admin
 service works, and that a policy denying `save`, `update` and `deleteById` denies the Sync writes
-too. The e2e suite covers the TypeScript client and the REST routes.
+too. With `waitFor`, it checks each write is still waiting until the test refreshes the index, which
+a forced refresh would not be, and that REST answers 400 to a `waitFor` that isn't a boolean. The e2e suite covers the TypeScript client and the REST routes.
 
 #### Other changes worth making
 

@@ -59,10 +59,12 @@ export interface IEntitiesService {
      *
      * @param structureId the id of the structure to delete the entity for
      * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                    up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return {@link Promise} emitting when the deletion is searchable
      * @throws IllegalArgumentException in case the given {@literal id} is {@literal null}
      */
-    deleteByIdSync(structureId: string, id: string): Promise<void>
+    deleteByIdSync(structureId: string, id: string, waitFor?: boolean): Promise<void>
 
     /**
      * Deletes the entity with the given id.
@@ -146,10 +148,12 @@ export interface IEntitiesService {
      *
      * @param structureId the id of the structure to save the entity for
      * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                    up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return {@link Promise} emitting the saved entity once it is searchable
      * @throws IllegalArgumentException in case the given {@literal entity} is {@literal null}
      */
-    saveSync<T>(structureId: string, entity: T): Promise<T>
+    saveSync<T>(structureId: string, entity: T, waitFor?: boolean): Promise<T>
 
     /**
      * Returns a {@link IterablePage} of entities matching the search text and paging restriction provided in the {@link Pageable} object.
@@ -203,10 +207,12 @@ export interface IEntitiesService {
      *
      * @param structureId the id of the structure to update the entity for
      * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                    up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return Promise emitting the updated entity once it is searchable
      * @throws Error in case the given {@literal entity} is {@literal null}
      */
-    updateSync<T>(structureId: string, entity: T): Promise<T>
+    updateSync<T>(structureId: string, entity: T, waitFor?: boolean): Promise<T>
 
 }
 
@@ -239,8 +245,8 @@ export class EntitiesService implements IEntitiesService {
         return this.serviceProxy.invoke('deleteById', [structureId, id])
     }
 
-    public deleteByIdSync(structureId: string, id: string): Promise<void> {
-        return this.serviceProxy.invoke('deleteByIdSync', [structureId, id])
+    public deleteByIdSync(structureId: string, id: string, waitFor?: boolean): Promise<void> {
+        return this.serviceProxy.invoke('deleteByIdSync', [structureId, id, waitFor ?? false])
     }
 
     public deleteByQuery(structureId: string, query: string): Promise<void> {
@@ -289,8 +295,8 @@ export class EntitiesService implements IEntitiesService {
         return this.serviceProxy.invoke('save', [structureId, entity])
     }
 
-    public saveSync<T>(structureId: string, entity: T): Promise<T> {
-        return this.serviceProxy.invoke('saveSync', [structureId, entity])
+    public saveSync<T>(structureId: string, entity: T, waitFor?: boolean): Promise<T> {
+        return this.serviceProxy.invoke('saveSync', [structureId, entity, waitFor ?? false])
     }
 
     public async search<T>(structureId: string, searchText: string, pageable: Pageable): Promise<IterablePage<T>> {
@@ -311,8 +317,8 @@ export class EntitiesService implements IEntitiesService {
         return this.serviceProxy.invoke('update', [structureId, entity])
     }
 
-    public updateSync<T>(structureId: string, entity: T): Promise<T>{
-        return this.serviceProxy.invoke('updateSync', [structureId, entity])
+    public updateSync<T>(structureId: string, entity: T, waitFor?: boolean): Promise<T>{
+        return this.serviceProxy.invoke('updateSync', [structureId, entity, waitFor ?? false])
     }
 }
 

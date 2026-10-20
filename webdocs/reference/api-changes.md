@@ -21,8 +21,10 @@ Writes that refresh before returning, so they can be searched straight away what
 | `JsonEntitiesService` (Java), `IEntitiesService` / `IEntityService` (TypeScript) | `saveSync`, `updateSync`, `deleteByIdSync` |
 | `AdminJsonEntitiesService` (Java), `IAdminEntitiesService` / `IAdminEntityService` (TypeScript) | `deleteByIdSync` (by tenant and entity id) |
 
-They take and return the same values as `save`, `update` and `deleteById`, and are allowed or denied by the same
-policies. Code that implements these interfaces itself, rather than using the classes Structures provides, has to add
+They take the same values as `save`, `update` and `deleteById`, plus a `waitFor` flag, and return the same values.
+They are allowed or denied by the same policies. By default they force a refresh; with `waitFor` they wait for the next
+scheduled refresh instead. In TypeScript `waitFor` is an optional last argument; in Java it is a `boolean` before the
+`Participant`. Code that implements these interfaces itself, rather than using the classes Structures provides, has to add
 the new methods.
 
 **REST operations**, for every structure, all in the OpenAPI spec:
@@ -34,8 +36,9 @@ the new methods.
 | `DELETE /api/{app}/{structure}/{id}/sync` | `deleteSync<S>` | `DELETE /api/{app}/{structure}/{id}` (`delete<S>`) |
 | `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}/sync` | `deleteSync<S>Admin` | `DELETE /admin/api/{app}/{structure}/{tenantId}/{id}` (`delete<S>Admin`) |
 
-The admin operation is in the spec only for structures with multi-tenant selection, as its plain twin is. GraphQL has
-no new operations.
+Each takes an optional `waitFor` query parameter (`true` or `false`, default `false`), described in the spec; any other
+value is a 400. The admin operation is in the spec only for structures with multi-tenant selection, as its plain twin
+is. GraphQL has no new operations.
 
 ### Changed
 

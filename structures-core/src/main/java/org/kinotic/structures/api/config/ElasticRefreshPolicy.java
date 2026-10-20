@@ -6,11 +6,13 @@ import co.elastic.clients.elasticsearch._types.Refresh;
  * What a single entity write asks of Elasticsearch before returning, so its change shows up in searches.
  * The values mirror the Elasticsearch refresh parameter, and bind from {@code true}, {@code false} and {@code wait_for}.
  * <p>
- * The Sync writes ({@code saveSync}, {@code updateSync}, {@code deleteByIdSync}) ignore the policy and always use
- * {@link #TRUE}. {@link #WAIT_FOR} would hold a pooled connection, which reads share, until the next scheduled
- * refresh, and its wait grows with the index's refresh interval, so it costs most under the heavy writes that make
- * {@link #FALSE} worth setting. A forced refresh touches only the shard the write went to and returns once that is
- * done, and only the callers that ask for it pay for it.
+ * The Sync writes ({@code saveSync}, {@code updateSync}, {@code deleteByIdSync}) ignore the policy. They use
+ * {@link #TRUE}, or {@link #WAIT_FOR} when the caller passes {@code waitFor}. Forcing is their default because
+ * {@link #WAIT_FOR} holds a pooled connection, which reads share, until the next scheduled refresh, and its wait grows
+ * with the index's refresh interval, so it costs most under the heavy writes that make {@link #FALSE} worth setting.
+ * A forced refresh touches only the shard the write went to and returns once that is done, and only the callers that
+ * ask for it pay for it. {@code waitFor} suits callers that can wait out the refresh interval, to spare Elasticsearch
+ * the extra segment.
  */
 public enum ElasticRefreshPolicy {
 
