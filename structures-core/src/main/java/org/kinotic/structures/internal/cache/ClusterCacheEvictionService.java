@@ -30,6 +30,7 @@ import java.util.concurrent.TimeoutException;
  * on the result, so a change is only reported once the whole cluster has dropped its stale caches. Nothing here
  * blocks: those calls run on Elasticsearch client and Vert.x threads, so the broadcast, its timeout and the delay
  * between retries are all asynchronous, and run on a Vert.x context rather than on the threads that complete them.
+ * The Ignite calls that can block, starting a broadcast and cancelling one that timed out, run on worker threads.
  *
  * Includes OpenTelemetry metrics for monitoring cache eviction health and
  * performance.
@@ -112,10 +113,24 @@ public class ClusterCacheEvictionService {
             return CompletableFuture.completedFuture(null);
         }
 
-        // The caller's own context when it runs on Vert.x, otherwise an event loop context of its own
-        Context context = vertx.getOrCreateContext();
+        CompletableFuture<Void> clusterEviction;
+        try {
+            if (structuresProperties.getClusterEviction().getMaxCacheSyncRetryAttempts() < 1) {
+                log.warn("Cluster cache eviction is turned off (max-cache-sync-retry-attempts < 1), so other nodes keep their caches for: {}:{}:{}",
+                         event.getApplicationId(), event.getStructureId(), event.getNamedQueryId());
+                return CompletableFuture.completedFuture(null);
+            }
 
-        return evictCachesClusterWideWithRetry(context, event, System.currentTimeMillis())
+            // The caller's own context when it runs on Vert.x, otherwise an event loop context of its own
+            Context context = vertx.getOrCreateContext();
+
+            clusterEviction = evictCachesClusterWideWithRetry(context, event, System.currentTimeMillis());
+        } catch (Exception e) {
+            // The change this eviction is for has already been made, so it must not fail because of the eviction
+            clusterEviction = CompletableFuture.failedFuture(e);
+        }
+
+        return clusterEviction
                 .exceptionally(e -> {
                     log.error("Failed to handle cache eviction (source: {})", event.getSource(), e);
                     return null;
@@ -200,7 +215,34 @@ public class ClusterCacheEvictionService {
         ClusterEvictionProperties clusterEviction = structuresProperties.getClusterEviction();
         int maxAttempts = clusterEviction.getMaxCacheSyncRetryAttempts();
 
-        CompletableFuture<Throwable> broadcast;
+        // Ignite can block while it looks up the servers and sends them the task, so that runs on a worker thread,
+        // unordered so one stuck broadcast does not hold up the others on this context
+        return context.executeBlocking(() -> startBroadcast(context, event, timestamp, attempt, maxAttempts), false)
+                      .toCompletionStage()
+                      .toCompletableFuture()
+                      .thenCompose(broadcast -> {
+                          if (broadcast.result() == null) {
+                              // No point retrying if no servers available, but an earlier attempt that failed still counts
+                              return CompletableFuture.completedFuture(previousFailure == null
+                                                                               ? new AttemptOutcome(AttemptResult.NO_SERVERS, attempt, null)
+                                                                               : new AttemptOutcome(AttemptResult.FAILURE, attempt - 1, previousFailure));
+                          }
+                          return broadcast.result().thenCompose(failure -> completeAttempt(context, event, timestamp, attempt,
+                                                                                           broadcast.serverCount(), failure));
+                      });
+    }
+
+    /**
+     * Looks up the server nodes and broadcasts the eviction to them. This can block, so it must not run on an event loop.
+     *
+     * @return the number of server nodes, and the broadcast's outcome as {@link #awaitBroadcast} reports it, which is
+     *         null when there are no server nodes
+     */
+    private StartedBroadcast startBroadcast(Context context,
+                                            CacheEvictionEvent event,
+                                            long timestamp,
+                                            int attempt,
+                                            int maxAttempts) {
         int serverCount = 0;
         try {
             ClusterGroup servers = ignite.cluster().forServers();
@@ -209,10 +251,7 @@ public class ClusterCacheEvictionService {
             if (serverCount == 0) {
                 log.warn("No server nodes available for cluster cache eviction (attempt {}/{})",
                         attempt, maxAttempts);
-                // No point retrying if no servers available, but an earlier attempt that failed still counts
-                return CompletableFuture.completedFuture(previousFailure == null
-                                                                 ? new AttemptOutcome(AttemptResult.NO_SERVERS, attempt, null)
-                                                                 : new AttemptOutcome(AttemptResult.FAILURE, attempt - 1, previousFailure));
+                return new StartedBroadcast(0, null);
             }
 
             // Log cluster state for debugging
@@ -230,37 +269,51 @@ public class ClusterCacheEvictionService {
 
             // Broadcast to all current server nodes using the same timestamp for
             // idempotency
-            broadcast = awaitBroadcast(context,
-                                       ignite.compute(servers).broadcastAsync(task),
-                                       clusterEviction.getCacheSyncTimeoutMs());
+            return new StartedBroadcast(serverCount,
+                                        awaitBroadcast(context,
+                                                       ignite.compute(servers).broadcastAsync(task),
+                                                       structuresProperties.getClusterEviction().getCacheSyncTimeoutMs()));
         } catch (Exception e) {
-            broadcast = CompletableFuture.completedFuture(e);
+            // Counted as a failed attempt, so it is retried like a broadcast that failed
+            return new StartedBroadcast(serverCount, CompletableFuture.completedFuture(e));
+        }
+    }
+
+    /**
+     * Records the outcome of a broadcast, and schedules the next attempt if it failed and attempts remain.
+     *
+     * @param failure why the broadcast failed or timed out, or null if every server node evicted
+     */
+    private CompletableFuture<AttemptOutcome> completeAttempt(Context context,
+                                                              CacheEvictionEvent event,
+                                                              long timestamp,
+                                                              int attempt,
+                                                              int nodes,
+                                                              Throwable failure) {
+        ClusterEvictionProperties clusterEviction = structuresProperties.getClusterEviction();
+        int maxAttempts = clusterEviction.getMaxCacheSyncRetryAttempts();
+
+        if (failure == null) {
+            log.debug(
+                    "{} cache eviction successfully completed on all {} cluster nodes for: {}:{}:{} (timestamp: {}, attempt {}/{})",
+                    event.getEvictionSourceType(), nodes,
+                    event.getApplicationId(), event.getStructureId(), event.getNamedQueryId(),
+                    timestamp, attempt, maxAttempts);
+            return CompletableFuture.completedFuture(new AttemptOutcome(AttemptResult.SUCCESS, attempt, null));
         }
 
-        int nodes = serverCount;
-        return broadcast.thenCompose(failure -> {
-            if (failure == null) {
-                log.debug(
-                        "{} cache eviction successfully completed on all {} cluster nodes for: {}:{}:{} (timestamp: {}, attempt {}/{})",
-                        event.getEvictionSourceType(), nodes,
-                        event.getApplicationId(), event.getStructureId(), event.getNamedQueryId(),
-                        timestamp, attempt, maxAttempts);
-                return CompletableFuture.completedFuture(new AttemptOutcome(AttemptResult.SUCCESS, attempt, null));
-            }
+        log.warn("{} cache eviction failed on cluster for: {}:{}:{} (timestamp: {}, attempt {}/{}): {}",
+                event.getEvictionSourceType(), event.getApplicationId(),
+                event.getStructureId(), event.getNamedQueryId(),
+                timestamp, attempt, maxAttempts, failure.toString());
 
-            log.warn("{} cache eviction failed on cluster for: {}:{}:{} (timestamp: {}, attempt {}/{}): {}",
-                    event.getEvictionSourceType(), event.getApplicationId(),
-                    event.getStructureId(), event.getNamedQueryId(),
-                    timestamp, attempt, maxAttempts, failure.toString());
+        if (attempt >= maxAttempts) {
+            return CompletableFuture.completedFuture(new AttemptOutcome(AttemptResult.FAILURE, attempt, failure));
+        }
 
-            if (attempt >= maxAttempts) {
-                return CompletableFuture.completedFuture(new AttemptOutcome(AttemptResult.FAILURE, attempt, failure));
-            }
-
-            log.debug("Waiting {}ms before retry attempt {}", clusterEviction.getCacheSyncRetryDelayMs(), attempt + 1);
-            return delay(context, clusterEviction.getCacheSyncRetryDelayMs())
-                    .thenCompose(ignored -> attemptClusterEviction(context, event, timestamp, attempt + 1, failure));
-        });
+        log.debug("Waiting {}ms before retry attempt {}", clusterEviction.getCacheSyncRetryDelayMs(), attempt + 1);
+        return delay(context, clusterEviction.getCacheSyncRetryDelayMs())
+                .thenCompose(ignored -> attemptClusterEviction(context, event, timestamp, attempt + 1, failure));
     }
 
     /**
@@ -275,11 +328,10 @@ public class ClusterCacheEvictionService {
         CompletableFuture<Throwable> ret = new CompletableFuture<>();
         long timerId = vertx.setTimer(Math.max(1, timeoutMs), id -> context.runOnContext(v -> {
             if (ret.complete(new TimeoutException("Cluster cache eviction did not complete within " + timeoutMs + "ms"))) {
-                try {
-                    igniteFuture.cancel();
-                } catch (Exception e) {
-                    log.debug("Could not cancel the timed out cluster cache eviction broadcast", e);
-                }
+                // Cancelling sends a request to every node the task went to, the one that never answered included,
+                // and that can block, so it runs on a worker thread
+                context.executeBlocking(igniteFuture::cancel, false)
+                       .onFailure(e -> log.debug("Could not cancel the timed out cluster cache eviction broadcast", e));
             }
         }));
         igniteFuture.listen(done -> context.runOnContext(v -> {
@@ -307,6 +359,13 @@ public class ClusterCacheEvictionService {
     }
 
     private record AttemptOutcome(AttemptResult result, int attempts, Throwable lastException) {
+    }
+
+    /**
+     * @param serverCount the server nodes the broadcast went to
+     * @param result      the broadcast's outcome, null when there were no server nodes and so no broadcast
+     */
+    private record StartedBroadcast(int serverCount, CompletableFuture<Throwable> result) {
     }
 
 }

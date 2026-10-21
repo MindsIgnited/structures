@@ -24,7 +24,8 @@ import lombok.experimental.Accessors;
 public class ClusterEvictionProperties {
     
     /**
-     * The maximum number of retry attempts for cluster cache sync
+     * The maximum number of attempts for cluster cache sync, the first broadcast included.
+     * Less than 1 turns the broadcast off, so only the node that made a change evicts its caches.
      */
     private Integer maxCacheSyncRetryAttempts = 3;
 

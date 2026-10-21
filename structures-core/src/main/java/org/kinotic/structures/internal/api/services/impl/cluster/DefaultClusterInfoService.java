@@ -24,15 +24,10 @@ import reactor.core.publisher.Mono;
 
 /**
  * Default implementation of {@link ClusterInfoService}.
- * 
- * This service tracks cache eviction timestamps both from:
- * - Local eviction events (via Spring event listener)
- * - Cluster-wide eviction events (via direct method calls from
- * ClusterCacheEvictionTask)
- * 
- * This allows tests to poll the timestamp to deterministically verify eviction
- * completion
- * regardless of whether clustering is enabled or disabled.
+ *
+ * Reports the Ignite cluster as this node sees it: whether clustering is enabled, the topology version and state,
+ * and the server nodes, so tests and operators can check every node has joined before relying on cluster-wide
+ * cache eviction.
  */
 @Slf4j
 @Component

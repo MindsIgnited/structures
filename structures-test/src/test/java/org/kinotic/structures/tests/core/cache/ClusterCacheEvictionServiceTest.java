@@ -26,12 +26,14 @@ import org.kinotic.continuum.api.config.ContinuumProperties;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.internal.cache.ClusterCacheEvictionService;
 import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,6 +53,8 @@ class ClusterCacheEvictionServiceTest {
     private static Vertx vertx;
 
     private final List<GridFutureAdapter<Void>> broadcasts = new ArrayList<>();
+    // The Ignite calls made, and whether each ran on an event loop, where none of them may run since they can block
+    private final List<String> igniteCallsOnAnEventLoop = new CopyOnWriteArrayList<>();
     private final StructuresProperties structuresProperties = new StructuresProperties();
 
     private ContinuumProperties continuumProperties;
@@ -84,7 +88,10 @@ class ClusterCacheEvictionServiceTest {
         servers = mock(ClusterGroup.class);
         when(servers.nodes()).thenReturn(List.of(mock(ClusterNode.class)));
         IgniteCluster cluster = mock(IgniteCluster.class);
-        when(cluster.forServers()).thenReturn(servers);
+        when(cluster.forServers()).thenAnswer(invocation -> {
+            recordIgniteCall("forServers");
+            return servers;
+        });
         compute = mock(IgniteCompute.class);
         Ignite ignite = mock(Ignite.class);
         when(ignite.cluster()).thenReturn(cluster);
@@ -93,9 +100,11 @@ class ClusterCacheEvictionServiceTest {
         // Each broadcast gets a future the test completes by hand, and that really cancels. Runnable::run matches
         // Continuum's Ignite asyncContinuationExecutor: listeners run on whichever thread completes the future.
         when(compute.broadcastAsync(any(IgniteRunnable.class))).thenAnswer(invocation -> {
+            recordIgniteCall("broadcastAsync");
             GridFutureAdapter<Void> broadcast = new GridFutureAdapter<>() {
                 @Override
                 public boolean cancel() {
+                    recordIgniteCall("cancel");
                     return onCancelled();
                 }
             };
@@ -129,7 +138,7 @@ class ClusterCacheEvictionServiceTest {
 
         verify(eventPublisher).publishEvent(event);
         assertFalse(eviction.isDone(), "the caller must not wait on the broadcast");
-        assertEquals(1, broadcastCount());
+        awaitBroadcasts(1);
 
         broadcast(0).onDone();
         eviction.get(5, TimeUnit.SECONDS);
@@ -142,6 +151,7 @@ class ClusterCacheEvictionServiceTest {
         CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"))
                                                   .thenRun(() -> continuedOn.set(Thread.currentThread().getName()));
 
+        awaitBroadcasts(1);
         Thread igniteThread = new Thread(() -> broadcast(0).onDone(), "ignite-pub-test");
         igniteThread.start();
         igniteThread.join();
@@ -167,6 +177,7 @@ class ClusterCacheEvictionServiceTest {
     void retriesAFailedBroadcast() throws Exception {
         CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localDeletedNamedQuery("app", "app.Person", "nq"));
 
+        awaitBroadcasts(1);
         broadcast(0).onDone(new RuntimeException("node left"));
         awaitBroadcasts(2);
         assertFalse(eviction.isDone());
@@ -189,8 +200,9 @@ class ClusterCacheEvictionServiceTest {
         eviction.get(5, TimeUnit.SECONDS);
         assertFalse(eviction.isCompletedExceptionally());
         assertEquals(2, broadcastCount());
-        assertTrue(broadcast(0).isCancelled(), "a timed out broadcast must not stay queued on the cluster");
-        assertTrue(broadcast(1).isCancelled());
+        // The cancel runs on a worker thread, so it can land after the eviction completes
+        awaitCancelled(0);
+        awaitCancelled(1);
         assertResult("failure", "2");
     }
 
@@ -199,6 +211,7 @@ class ClusterCacheEvictionServiceTest {
         when(servers.nodes()).thenReturn(List.of(mock(ClusterNode.class)), List.of());
 
         CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"));
+        awaitBroadcasts(1);
         broadcast(0).onDone(new RuntimeException("node left"));
 
         eviction.get(5, TimeUnit.SECONDS);
@@ -208,14 +221,56 @@ class ClusterCacheEvictionServiceTest {
 
     @Test
     void stillBroadcastsWhenALocalListenerFails() throws Exception {
-        doThrow(new IllegalStateException("listener bug")).when(eventPublisher).publishEvent(any(Object.class));
+        // CacheEvictionEvent is an ApplicationEvent, so the service calls this overload, not publishEvent(Object)
+        doThrow(new IllegalStateException("listener bug")).when(eventPublisher).publishEvent(any(ApplicationEvent.class));
 
         CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"));
 
-        assertEquals(1, broadcastCount());
+        awaitBroadcasts(1);
         broadcast(0).onDone();
         eviction.get(5, TimeUnit.SECONDS);
         assertFalse(eviction.isCompletedExceptionally());
+    }
+
+    @Test
+    void neverCallsIgniteOnAnEventLoop() throws Exception {
+        structuresProperties.getClusterEviction()
+                            .setMaxCacheSyncRetryAttempts(2)
+                            .setCacheSyncTimeoutMs(50L);
+
+        // Started from an event loop, and every retry and cancel is driven from one too, by the timers
+        CompletableFuture<Void> eviction = new CompletableFuture<>();
+        vertx.getOrCreateContext().runOnContext(v -> service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"))
+                                                            .whenComplete((r, e) -> eviction.complete(null)));
+
+        eviction.get(5, TimeUnit.SECONDS);
+        awaitIgniteCalls(6); // forServers, broadcastAsync and cancel, for each of the 2 attempts
+        assertEquals(List.of(), igniteCallsOnAnEventLoop.stream().filter(call -> call.endsWith("on an event loop")).toList());
+    }
+
+    @Test
+    void evictsOnlyLocallyWhenTheBroadcastIsTurnedOff() {
+        structuresProperties.getClusterEviction().setMaxCacheSyncRetryAttempts(0);
+        CacheEvictionEvent event = CacheEvictionEvent.localModifiedStructure("app", "app.Person");
+
+        CompletableFuture<Void> eviction = service.evictCaches(event);
+
+        verify(eventPublisher).publishEvent(event);
+        assertTrue(eviction.isDone());
+        verifyNoInteractions(compute);
+    }
+
+    @Test
+    void doesNotFailTheChangeWhenTheClusterEvictionCannotStart() throws Exception {
+        structuresProperties.getClusterEviction().setMaxCacheSyncRetryAttempts(null);
+        CacheEvictionEvent event = CacheEvictionEvent.localModifiedStructure("app", "app.Person");
+
+        CompletableFuture<Void> eviction = service.evictCaches(event);
+
+        verify(eventPublisher).publishEvent(event);
+        eviction.get(5, TimeUnit.SECONDS);
+        assertFalse(eviction.isCompletedExceptionally());
+        verifyNoInteractions(compute);
     }
 
     @Test
@@ -250,6 +305,29 @@ class ClusterCacheEvictionServiceTest {
         assertEquals(result, points.getFirst().getAttributes().get(RESULT));
         assertEquals(attempts, points.getFirst().getAttributes().get(ATTEMPTS));
         assertEquals(1, points.getFirst().getValue());
+    }
+
+    private void recordIgniteCall(String call) {
+        igniteCallsOnAnEventLoop.add(call + (Context.isOnEventLoopThread() ? " on an event loop" : " off the event loop"));
+    }
+
+    private void awaitIgniteCalls(int count) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (igniteCallsOnAnEventLoop.size() < count) {
+            assertTrue(System.nanoTime() < deadline, "expected " + count + " Ignite calls, saw " + igniteCallsOnAnEventLoop);
+            Thread.sleep(5);
+        }
+    }
+
+    /**
+     * Waits for a broadcast to be cancelled, since a timed out broadcast must not stay queued on the cluster.
+     */
+    private void awaitCancelled(int index) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!broadcast(index).isCancelled()) {
+            assertTrue(System.nanoTime() < deadline, "broadcast " + index + " was never cancelled");
+            Thread.sleep(5);
+        }
     }
 
     private GridFutureAdapter<Void> broadcast(int index) {
