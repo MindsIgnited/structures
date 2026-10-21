@@ -79,10 +79,12 @@ public interface EntitiesService {
      *
      * @param structureId the id of the structure to delete the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
      * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context     the context for this operation
      * @return {@link CompletableFuture} emitting when the deletion is searchable
      */
-    CompletableFuture<Void> deleteByIdSync(String structureId, String id, EntityContext context);
+    CompletableFuture<Void> deleteByIdSync(String structureId, String id, boolean waitFor, EntityContext context);
 
     /**
      * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
@@ -91,10 +93,12 @@ public interface EntitiesService {
      *
      * @param structureId the id of the structure to delete the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
      * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context     the context for this operation
      * @return {@link CompletableFuture} emitting when the deletion is searchable
      */
-    CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, EntityContext context);
+    CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, boolean waitFor, EntityContext context);
 
     /**
      * Deletes any entities that match the given query.
@@ -224,10 +228,12 @@ public interface EntitiesService {
      *
      * @param structureId the id of the structure to save the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
      * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context     the context for this operation
      * @return {@link CompletableFuture} emitting the saved entity once it is searchable
      */
-    <T> CompletableFuture<T> saveSync(String structureId, T entity, EntityContext context);
+    <T> CompletableFuture<T> saveSync(String structureId, T entity, boolean waitFor, EntityContext context);
 
     /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@code Pageable} object.
@@ -261,9 +267,11 @@ public interface EntitiesService {
      *
      * @param structureId the id of the structure to update the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
      * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context     the context for this operation
      * @return {@link CompletableFuture} emitting the updated entity once it is searchable
      */
-    <T> CompletableFuture<T> updateSync(String structureId, T entity, EntityContext context);
+    <T> CompletableFuture<T> updateSync(String structureId, T entity, boolean waitFor, EntityContext context);
 
 }

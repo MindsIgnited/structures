@@ -67,10 +67,12 @@ export interface IEntityService<T> {
      * whatever elasticRefreshAfterDelete is set to on the server. Use it when you need to read your own write.
      *
      * @param id      must not be {@literal null}
+     * @param waitFor true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return Promise signaling when the deletion is searchable
      * @throws Error in case the given {@literal id} is {@literal null}
      */
-    deleteByIdSync(id: string): Promise<void>;
+    deleteByIdSync(id: string, waitFor?: boolean): Promise<void>;
 
     /**
      * Deletes the entity with the given id.
@@ -139,10 +141,12 @@ export interface IEntityService<T> {
      * whatever elasticRefreshAfterMutation is set to on the server. Use it when you need to read your own write.
      *
      * @param entity  must not be {@literal null}
+     * @param waitFor true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return Promise emitting the saved entity once it is searchable
      * @throws Error in case the given {@literal entity} is {@literal null}
      */
-    saveSync(entity: T): Promise<T>;
+    saveSync(entity: T, waitFor?: boolean): Promise<T>;
 
     /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@link Pageable} object.
@@ -187,10 +191,12 @@ export interface IEntityService<T> {
      * whatever elasticRefreshAfterMutation is set to on the server. Use it when you need to read your own write.
      *
      * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                    up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return Promise emitting the updated entity once it is searchable
      * @throws Error in case the given {@literal entity} is {@literal null}
      */
-    updateSync(entity: T): Promise<T>;
+    updateSync(entity: T, waitFor?: boolean): Promise<T>;
 
 }
 
@@ -237,8 +243,8 @@ export class EntityService<T> implements IEntityService<T>{
         return this.entitiesService.deleteById(this.structureId, id)
     }
 
-    public deleteByIdSync(id: string): Promise<void>{
-        return this.entitiesService.deleteByIdSync(this.structureId, id)
+    public deleteByIdSync(id: string, waitFor?: boolean): Promise<void>{
+        return this.entitiesService.deleteByIdSync(this.structureId, id, waitFor)
     }
 
     public deleteByQuery(query: string): Promise<void>{
@@ -270,9 +276,9 @@ export class EntityService<T> implements IEntityService<T>{
         return this.entitiesService.save(this.structureId, entityToSave)
     }
 
-    public async saveSync(entity: T): Promise<T>{
+    public async saveSync(entity: T, waitFor?: boolean): Promise<T>{
         const entityToSave = await this.beforeSaveOrUpdate(entity)
-        return this.entitiesService.saveSync(this.structureId, entityToSave)
+        return this.entitiesService.saveSync(this.structureId, entityToSave, waitFor)
     }
 
     public search(searchText: string, pageable: Pageable): Promise<IterablePage<T>>{
@@ -288,9 +294,9 @@ export class EntityService<T> implements IEntityService<T>{
         return this.entitiesService.update(this.structureId, entityToSave)
     }
 
-    public async updateSync(entity: T): Promise<T>{
+    public async updateSync(entity: T, waitFor?: boolean): Promise<T>{
         const entityToSave = await this.beforeSaveOrUpdate(entity)
-        return this.entitiesService.updateSync(this.structureId, entityToSave)
+        return this.entitiesService.updateSync(this.structureId, entityToSave, waitFor)
     }
 
     protected async beforeBulkSaveOrUpdate(entities: T[]): Promise<T[]>{

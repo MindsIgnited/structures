@@ -120,18 +120,20 @@ public class DefaultEntitiesService implements EntitiesService {
     @Override
     public CompletableFuture<Void> deleteByIdSync(@SpanAttribute("structureId") String structureId,
                                                   String id,
+                                                  @SpanAttribute("waitFor") boolean waitFor,
                                                   EntityContext context) {
         return entityServiceCache.get(structureId)
-                .thenCompose(entityService -> entityService.deleteByIdSync(id, context));
+                .thenCompose(entityService -> entityService.deleteByIdSync(id, waitFor, context));
     }
 
     @WithSpan
     @Override
     public CompletableFuture<Void> deleteByIdSync(@SpanAttribute("structureId") String structureId,
                                                   TenantSpecificId id,
+                                                  @SpanAttribute("waitFor") boolean waitFor,
                                                   EntityContext context) {
         return entityServiceCache.get(structureId)
-                .thenCompose(entityService -> entityService.deleteByIdSync(id, context));
+                .thenCompose(entityService -> entityService.deleteByIdSync(id, waitFor, context));
     }
 
     @WithSpan
@@ -235,9 +237,10 @@ public class DefaultEntitiesService implements EntitiesService {
     @Override
     public <T> CompletableFuture<T> saveSync(@SpanAttribute("structureId") String structureId,
                                              T entity,
+                                             @SpanAttribute("waitFor") boolean waitFor,
                                              EntityContext context) {
         return entityServiceCache.get(structureId)
-                .thenCompose(entityService -> entityService.saveSync(entity, context));
+                .thenCompose(entityService -> entityService.saveSync(entity, waitFor, context));
     }
 
     @WithSpan
@@ -264,9 +267,10 @@ public class DefaultEntitiesService implements EntitiesService {
     @Override
     public <T> CompletableFuture<T> updateSync(@SpanAttribute("structureId") String structureId,
                                                T entity,
+                                               @SpanAttribute("waitFor") boolean waitFor,
                                                EntityContext context) {
         return entityServiceCache.get(structureId)
-                .thenCompose(entityService -> entityService.updateSync(entity, context));
+                .thenCompose(entityService -> entityService.updateSync(entity, waitFor, context));
     }
 
     /**

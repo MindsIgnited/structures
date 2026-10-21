@@ -56,10 +56,12 @@ export interface IAdminEntityService<T> {
      * whatever elasticRefreshAfterDelete is set to on the server. Use it when you need to read your own write.
      *
      * @param id      must not be {@literal null}
+     * @param waitFor true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return Promise signaling when the deletion is searchable
      * @throws Error in case the given {@literal id} is {@literal null}
      */
-    deleteByIdSync(id: TenantSpecificId): Promise<void>;
+    deleteByIdSync(id: TenantSpecificId, waitFor?: boolean): Promise<void>;
 
     /**
      * Deletes the entity with the given id.
@@ -163,8 +165,8 @@ export class AdminEntityService<T> implements IAdminEntityService<T>{
         return this.adminEntitiesService.deleteById(this.structureId, id)
     }
 
-    public deleteByIdSync(id: TenantSpecificId): Promise<void>{
-        return this.adminEntitiesService.deleteByIdSync(this.structureId, id)
+    public deleteByIdSync(id: TenantSpecificId, waitFor?: boolean): Promise<void>{
+        return this.adminEntitiesService.deleteByIdSync(this.structureId, id, waitFor)
     }
 
     public deleteByQuery(query: string, tenantSelection: TenantSelection): Promise<void>{

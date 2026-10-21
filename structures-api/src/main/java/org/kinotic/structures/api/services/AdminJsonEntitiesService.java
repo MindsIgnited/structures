@@ -57,10 +57,12 @@ public interface AdminJsonEntitiesService {
      *
      * @param structureId the id of the structure to delete the entity for
      * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param participant the participant of the logged-in user
      * @return {@link CompletableFuture} emitting when the deletion is searchable
      */
-    CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, Participant participant);
+    CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, boolean waitFor, Participant participant);
 
     /**
      * Deletes any entities that match the given query.

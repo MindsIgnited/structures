@@ -76,10 +76,12 @@ public interface EntityService {
      * away, whatever {@code elasticRefreshAfterDelete} is set to.
      *
      * @param id      must not be {@literal null}
+     * @param waitFor true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context the context for this operation
      * @return {@link CompletableFuture} signaling when the deletion is searchable
      */
-    CompletableFuture<Void> deleteByIdSync(String id, EntityContext context);
+    CompletableFuture<Void> deleteByIdSync(String id, boolean waitFor, EntityContext context);
 
     /**
      * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
@@ -87,10 +89,12 @@ public interface EntityService {
      * NOTE: this method is only allowed if the {@link Structure#isMultiTenantSelectionEnabled()} is true
      *
      * @param id      must not be {@literal null}
+     * @param waitFor true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context the context for this operation
      * @return {@link CompletableFuture} signaling when the deletion is searchable
      */
-    CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, EntityContext context);
+    CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, boolean waitFor, EntityContext context);
 
     /**
      * Deletes any entities that match the given query.
@@ -198,10 +202,12 @@ public interface EntityService {
      * shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
      *
      * @param entity  must not be {@literal null}
+     * @param waitFor true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context the context for this operation
      * @return {@link CompletableFuture} emitting the saved entity once it is searchable
      */
-    <T> CompletableFuture<T> saveSync(T entity, EntityContext context);
+    <T> CompletableFuture<T> saveSync(T entity, boolean waitFor, EntityContext context);
 
     /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@link Pageable} object.
@@ -240,9 +246,11 @@ public interface EntityService {
      * shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
      *
      * @param entity  must not be {@literal null}
+     * @param waitFor true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
      * @param context the context for this operation
      * @return {@link CompletableFuture} emitting the updated entity once it is searchable
      */
-    <T> CompletableFuture<T> updateSync(T entity, EntityContext context);
+    <T> CompletableFuture<T> updateSync(T entity, boolean waitFor, EntityContext context);
 
 }

@@ -52,8 +52,8 @@ public class DefaultJsonEntitiesService implements JsonEntitiesService {
     }
 
     @Override
-    public CompletableFuture<Void> deleteByIdSync(String structureId, String id, Participant participant) {
-        return entitiesService.deleteByIdSync(structureId, id, new DefaultEntityContext(participant));
+    public CompletableFuture<Void> deleteByIdSync(String structureId, String id, boolean waitFor, Participant participant) {
+        return entitiesService.deleteByIdSync(structureId, id, waitFor, new DefaultEntityContext(participant));
     }
 
     @Override
@@ -115,8 +115,8 @@ public class DefaultJsonEntitiesService implements JsonEntitiesService {
     }
 
     @Override
-    public CompletableFuture<TokenBuffer> saveSync(String structureId, TokenBuffer entity, Participant participant) {
-        return entitiesService.saveSync(structureId, entity, new DefaultEntityContext(participant));
+    public CompletableFuture<TokenBuffer> saveSync(String structureId, TokenBuffer entity, boolean waitFor, Participant participant) {
+        return entitiesService.saveSync(structureId, entity, waitFor, new DefaultEntityContext(participant));
     }
 
     @Override
@@ -133,8 +133,8 @@ public class DefaultJsonEntitiesService implements JsonEntitiesService {
     }
 
     @Override
-    public CompletableFuture<TokenBuffer> updateSync(String structureId, TokenBuffer entity, Participant participant) {
-        return entitiesService.updateSync(structureId, entity, new DefaultEntityContext(participant));
+    public CompletableFuture<TokenBuffer> updateSync(String structureId, TokenBuffer entity, boolean waitFor, Participant participant) {
+        return entitiesService.updateSync(structureId, entity, waitFor, new DefaultEntityContext(participant));
     }
 
 }
