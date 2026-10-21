@@ -169,13 +169,13 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public CompletableFuture<Void> deleteByIdSync(String id, boolean waitFor, EntityContext context) {
-        return doDeleteById(id, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
+        return doDeleteById(id, context, syncRefresh(waitFor));
     }
 
     @WithSpan
     @Override
     public CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, boolean waitFor, EntityContext context) {
-        return doDeleteById(id, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
+        return doDeleteById(id, context, syncRefresh(waitFor));
     }
 
     @WithSpan
@@ -319,7 +319,7 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public <T> CompletableFuture<T> saveSync(T entity, boolean waitFor, EntityContext context) {
-        return doSave(entity, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
+        return doSave(entity, context, syncRefresh(waitFor));
     }
 
     @WithSpan
@@ -402,7 +402,15 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public <T> CompletableFuture<T> updateSync(T entity, boolean waitFor, EntityContext context) {
-        return doUpdate(entity, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
+        return doUpdate(entity, context, syncRefresh(waitFor));
+    }
+
+    /**
+     * The refresh a Sync write asks for: a forced refresh of the shard it touched, or with {@code waitFor} the next
+     * scheduled refresh. See {@link ElasticRefreshPolicy} for what each costs.
+     */
+    private static Refresh syncRefresh(boolean waitFor) {
+        return (waitFor ? ElasticRefreshPolicy.WAIT_FOR : ElasticRefreshPolicy.TRUE).toRefresh();
     }
 
     private String composeId(final String id, final EntityContext context){

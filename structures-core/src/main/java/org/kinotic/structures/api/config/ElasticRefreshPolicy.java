@@ -41,14 +41,6 @@ public enum ElasticRefreshPolicy {
     }
 
     /**
-     * @param waitFor the waitFor flag the Sync write was called with
-     * @return the policy a Sync write uses: {@link #WAIT_FOR} with {@code waitFor}, otherwise {@link #TRUE}
-     */
-    public static ElasticRefreshPolicy forSyncWrite(boolean waitFor) {
-        return waitFor ? WAIT_FOR : TRUE;
-    }
-
-    /**
      * @return the Elasticsearch refresh value for this policy
      */
     public Refresh toRefresh() {

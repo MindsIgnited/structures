@@ -362,7 +362,8 @@ public class EntitySyncTests extends ElasticTestBase {
      * the index. Then refreshes the index and returns the result the write completes with.
      * <p>
      * The refresh waits for the write to be applied: with scheduled refreshes off, a write applied after the only
-     * refresh would wait for good. The refresh runs even when a check fails, so no write is left waiting on the server.
+     * refresh would wait for good. The refresh runs even when a check fails, so an applied write isn't left waiting on
+     * the server, and a failed refresh then is added to the check's failure rather than hiding it.
      */
     private <T> T assertWaitsForRefresh(Structure structure,
                                         Supplier<CompletableFuture<T>> startWrite,
@@ -381,9 +382,15 @@ public class EntitySyncTests extends ElasticTestBase {
             Assertions.assertThrows(TimeoutException.class,
                                     () -> write.get(1, TimeUnit.SECONDS),
                                     () -> what + " returned before anything refreshed the index");
-        } finally {
-            client.indices().refresh(b -> b.index(index));
+        } catch (Throwable failure) {
+            try {
+                client.indices().refresh(b -> b.index(index));
+            } catch (Exception refreshFailure) {
+                failure.addSuppressed(refreshFailure);
+            }
+            throw failure;
         }
+        client.indices().refresh(b -> b.index(index));
         return Assertions.assertDoesNotThrow(() -> write.get(30, TimeUnit.SECONDS), what);
     }
 

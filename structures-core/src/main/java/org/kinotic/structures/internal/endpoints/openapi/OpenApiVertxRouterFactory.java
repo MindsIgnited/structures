@@ -274,14 +274,13 @@ public class OpenApiVertxRouterFactory {
      * @param pathSuffix appended to the structure's path, such as "/update-sync"
      */
     private void addSyncEntityWriteRoute(Router router, BodyHandler bodyHandler, String pathSuffix, SyncEntityWrite write) {
-        registerEntityWriteRoute(router, bodyHandler, pathSuffix, ctx -> {
-            boolean waitFor = VertxWebUtil.getWaitFor(ctx);
-            return (structureId, entity, context) -> write.apply(structureId, entity, waitFor, context);
-        });
+        registerEntityWriteRoute(router, bodyHandler, pathSuffix,
+                                 ctx -> (structureId, entity, context)
+                                         -> waitFor(ctx).thenCompose(waitFor -> write.apply(structureId, entity, waitFor, context)));
     }
 
     /**
-     * @param writeForRequest returns the write to run for a request, and throws to fail the request before it runs
+     * @param writeForRequest returns the write to run for a request
      */
     private void registerEntityWriteRoute(Router router,
                                           BodyHandler bodyHandler,
@@ -321,14 +320,13 @@ public class OpenApiVertxRouterFactory {
      * @param pathSuffix appended to the entity's path, such as "/sync"
      */
     private void addSyncDeleteByIdRoute(Router router, String pathSuffix, SyncDeleteById delete) {
-        registerDeleteByIdRoute(router, pathSuffix, ctx -> {
-            boolean waitFor = VertxWebUtil.getWaitFor(ctx);
-            return (structureId, id, context) -> delete.apply(structureId, id, waitFor, context);
-        });
+        registerDeleteByIdRoute(router, pathSuffix,
+                                ctx -> (structureId, id, context)
+                                        -> waitFor(ctx).thenCompose(waitFor -> delete.apply(structureId, id, waitFor, context)));
     }
 
     /**
-     * @param deleteForRequest returns the delete to run for a request, and throws to fail the request before it runs
+     * @param deleteForRequest returns the delete to run for a request
      */
     private void registerDeleteByIdRoute(Router router, String pathSuffix, Function<RoutingContext, DeleteById> deleteForRequest) {
         router.delete(apiBasePath + ":structureApplication/:structureName/:id" + pathSuffix)
@@ -365,14 +363,13 @@ public class OpenApiVertxRouterFactory {
      * @param pathSuffix appended to the entity's path, such as "/sync"
      */
     private void addSyncAdminDeleteByIdRoute(Router router, String pathSuffix, SyncAdminDeleteById delete) {
-        registerAdminDeleteByIdRoute(router, pathSuffix, ctx -> {
-            boolean waitFor = VertxWebUtil.getWaitFor(ctx);
-            return (structureId, id, context) -> delete.apply(structureId, id, waitFor, context);
-        });
+        registerAdminDeleteByIdRoute(router, pathSuffix,
+                                     ctx -> (structureId, id, context)
+                                             -> waitFor(ctx).thenCompose(waitFor -> delete.apply(structureId, id, waitFor, context)));
     }
 
     /**
-     * @param deleteForRequest returns the delete to run for a request, and throws to fail the request before it runs
+     * @param deleteForRequest returns the delete to run for a request
      */
     private void registerAdminDeleteByIdRoute(Router router,
                                               String pathSuffix,
@@ -397,6 +394,18 @@ public class OpenApiVertxRouterFactory {
                                             return null;
                                         });
               });
+    }
+
+    /**
+     * The request's waitFor parameter, for a Sync route. A value that isn't a boolean fails the future, so the route
+     * answers it with a 400 as it does any failed write.
+     */
+    private static CompletableFuture<Boolean> waitFor(RoutingContext ctx) {
+        try {
+            return CompletableFuture.completedFuture(VertxWebUtil.getWaitFor(ctx));
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     /**
