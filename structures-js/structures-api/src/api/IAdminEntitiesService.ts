@@ -48,10 +48,12 @@ export interface IAdminEntitiesService {
      *
      * @param structureId the id of the structure to delete the entity for
      * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then takes
+     *                    up to the index's refresh interval (1 second by default) longer. Defaults to false.
      * @return {@link Promise} emitting when the deletion is searchable
      * @throws IllegalArgumentException in case the given {@literal id} is {@literal null}
      */
-    deleteByIdSync(structureId: string, id: TenantSpecificId): Promise<void>
+    deleteByIdSync(structureId: string, id: TenantSpecificId, waitFor?: boolean): Promise<void>
 
     /**
      * Deletes the entity with the given id.
@@ -154,8 +156,8 @@ export class AdminEntitiesService implements IAdminEntitiesService {
         return this.serviceProxy.invoke('deleteById', [structureId, id])
     }
 
-    public deleteByIdSync(structureId: string, id: TenantSpecificId): Promise<void> {
-        return this.serviceProxy.invoke('deleteByIdSync', [structureId, id])
+    public deleteByIdSync(structureId: string, id: TenantSpecificId, waitFor?: boolean): Promise<void> {
+        return this.serviceProxy.invoke('deleteByIdSync', [structureId, id, waitFor ?? false])
     }
 
     public deleteByQuery(structureId: string, query: string, tenantSelection: TenantSelection): Promise<void> {

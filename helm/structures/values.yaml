@@ -59,8 +59,9 @@ properties:
       #   true      force a refresh, so the change is searchable straight away (the default when left unset)
       #   wait_for  wait for the next scheduled refresh, so the change is searchable without forcing one
       #   false     neither; the change is searchable after the next scheduled refresh or a syncIndex call
-      # Whatever these say, saveSync, updateSync and deleteByIdSync always force a refresh, so with false
-      # only the callers that need to search their own writes straight away pay for one.
+      # Whatever these say, saveSync, updateSync and deleteByIdSync always force a refresh (or wait for the
+      # next one when called with waitFor), so with false only the callers that need to search their own
+      # writes straight away pay for one.
       # refreshAfterMutation: true
       # refreshAfterDelete: true
       username: "structures"

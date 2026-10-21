@@ -53,6 +53,7 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.Route;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
@@ -278,7 +279,26 @@ public class OpenApiSpecTests extends ElasticTestBase {
         Assertions.assertFalse(sync.isMissingNode(), () -> expectedOperationId + " is missing from the spec");
         Assertions.assertFalse(plain.isMissingNode(), () -> "The plain twin of " + expectedOperationId + " is missing from the spec");
         Assertions.assertEquals(expectedOperationId, sync.path("operationId").asString());
-        for (String part : List.of("parameters", "requestBody", "responses", "security", "tags")) {
+
+        // A Sync operation takes one parameter its plain twin does not: an optional boolean waitFor in the query
+        JsonNode waitFor = null;
+        ArrayNode syncParameters = objectMapper.createArrayNode();
+        for (JsonNode parameter : sync.path("parameters")) {
+            if (parameter.path("name").asString().equals("waitFor")) {
+                waitFor = parameter;
+            } else {
+                syncParameters.add(parameter);
+            }
+        }
+        Assertions.assertNotNull(waitFor, () -> expectedOperationId + " has no waitFor parameter");
+        Assertions.assertEquals("query", waitFor.path("in").asString(), expectedOperationId);
+        Assertions.assertFalse(waitFor.path("required").asBoolean(), expectedOperationId);
+        Assertions.assertEquals("boolean", waitFor.path("schema").path("type").asString(), expectedOperationId);
+        Assertions.assertEquals(plain.path("parameters").isMissingNode() ? objectMapper.createArrayNode() : plain.path("parameters"),
+                                syncParameters,
+                                () -> expectedOperationId + " parameters differ from its plain twin");
+
+        for (String part : List.of("requestBody", "responses", "security", "tags")) {
             JsonNode syncPart = withoutResponseDescriptions(part, sync.path(part));
             JsonNode plainPart = withoutResponseDescriptions(part, plain.path(part));
             Assertions.assertEquals(plainPart, syncPart, () -> expectedOperationId + " " + part + " differ from its plain twin");

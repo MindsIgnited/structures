@@ -52,9 +52,10 @@ public class DefaultAdminJsonEntitiesService implements AdminJsonEntitiesService
     }
 
     @Override
-    public CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, Participant participant) {
+    public CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, boolean waitFor, Participant participant) {
         return entitiesService.deleteByIdSync(structureId,
                                               id,
+                                              waitFor,
                                               new DefaultEntityContext(participant));
     }
 

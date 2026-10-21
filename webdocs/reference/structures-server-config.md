@@ -165,7 +165,8 @@ Below are the available options, their types, and default values. When you see a
   | `false` | straight away | no, after the next scheduled refresh, a Sync write or a `syncIndex` call | none |
 
   Finding an entity by id sees the change straight away whatever the value. Bulk saves and updates never refresh.
-  `saveSync` and `updateSync` always force a refresh, whatever the value; see [Choosing a refresh mode](#choosing-a-refresh-mode).
+  `saveSync` and `updateSync` always force a refresh, or wait for the next one when called with `waitFor`, whatever
+  the value; see [Choosing a refresh mode](#choosing-a-refresh-mode).
 
   With `wait_for`, a write holds its connection to Elasticsearch while it waits, and reads share the same connections
   (10 per Elasticsearch host). Many concurrent `wait_for` writes queue behind each other and can hold up reads, so it
@@ -181,7 +182,8 @@ Below are the available options, their types, and default values. When you see a
   this problem.
 - **elasticRefreshAfterDelete** (`true` | `false` | `wait_for`, default: `true`):
   The same, for deleting an entity by id. With `false`, the entity drops out of searches after the next scheduled
-  refresh, or once `syncIndex` is called. `deleteByIdSync` always forces a refresh. Delete by query never refreshes.
+  refresh, or once `syncIndex` is called. `deleteByIdSync` always forces a refresh, or waits for the next one when
+  called with `waitFor`. Delete by query never refreshes.
 
 #### Choosing a refresh mode
 
@@ -193,7 +195,8 @@ let only the callers that need it pay for a refresh:
 |------|---------|-------------|
 | `save`, `update` | `elasticRefreshAfterMutation` | the default for single writes |
 | `deleteById` | `elasticRefreshAfterDelete` | the default for deletes |
-| `saveSync`, `updateSync`, `deleteByIdSync` | always forced, on the shard the write touched | the caller searches for its own write straight afterwards |
+| `saveSync`, `updateSync`, `deleteByIdSync` | forced, on the shard the write touched | the caller searches for its own write straight afterwards |
+| `saveSync`, `updateSync`, `deleteByIdSync` with `waitFor` | waits for the next scheduled refresh | the same, when the caller can wait up to the refresh interval |
 | `bulkSave`, `bulkUpdate`, `deleteByQuery` | none | bulk writes |
 | `syncIndex` | forces a refresh of every shard of the structure's index | after a batch of bulk writes the caller needs to search |
 
@@ -202,13 +205,37 @@ Over REST the Sync writes are `POST .../{structure}/save-sync`, `POST .../{struc
 GraphQL mutations; GraphQL writes use the configured settings. They are allowed or denied by the same policies as
 `save`, `update` and `deleteById`.
 
-**Why the Sync writes force a refresh instead of using `wait_for`.** Both make the write searchable by the time it
+**`waitFor`.** Each Sync write takes an optional `waitFor` flag, `false` by default. With `true` the write waits for
+the next scheduled refresh (`wait_for`) instead of forcing one, so it is still searchable when it returns, without the
+extra segment a forced refresh writes. It takes up to the index's refresh interval longer, and it has the costs below,
+so use it for occasional writes whose callers can wait, not for high-volume ones:
+
+| Client | How to pass it |
+|--------|----------------|
+| TypeScript | the last argument: `saveSync(entity, true)`, `updateSync(entity, true)`, `deleteByIdSync(id, true)` |
+| Java (`JsonEntitiesService`, `AdminJsonEntitiesService`) | the `boolean waitFor` before the `Participant` |
+| REST | the `waitFor=true` query parameter, such as `POST .../{structure}/save-sync?waitFor=true`; a value other than `true` or `false` is a 400 |
+
+> **`waitFor` waits on the index's `refresh_interval`, which Structures doesn't set or know.** That is an
+> Elasticsearch index setting, so check what your indexes use before passing `waitFor`:
+>
+> - The call returns only after the next scheduled refresh: within 1 second on the Elasticsearch default, later on an
+>   index set to refresh less often.
+> - If the interval is longer than `elasticSocketTimeout` (1 minute by default), or than your client's own timeout,
+>   the call fails with a timeout **even though the write was applied**. Retrying a `saveSync` with a version then
+>   fails with a conflict, and retrying an `updateSync` applies the change again.
+> - On an index with `refresh_interval: -1` no scheduled refresh comes. Unless something else refreshes the index
+>   first, the call fails with that same timeout, with the write applied, so don't pass `waitFor` there.
+>
+> Without `waitFor` none of this applies: the Sync write forces a refresh and returns as soon as that is done.
+
+**Why the Sync writes force a refresh unless asked to wait.** Both make the write searchable by the time it
 returns, but `wait_for` has costs that grow under exactly the load that makes `false` worth setting:
 
 - The write holds its connection to Elasticsearch until the next scheduled refresh, and reads share those
   connections (10 per Elasticsearch host), so concurrent `wait_for` writes can hold up reads.
 - The wait is up to the index's refresh interval: 1 second by default, longer on an index tuned to refresh less
-  often, and indefinitely on one with refreshes disabled (`refresh_interval: -1`).
+  often, and until the call times out on one with refreshes disabled (`refresh_interval: -1`).
 - Past 1,000 waiting writes on one shard (`index.max_refresh_listeners`), Elasticsearch forces a refresh anyway.
 
 A forced refresh returns as soon as the shard the write touched is refreshed, so the caller's wait doesn't depend on

@@ -21,6 +21,7 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.kinotic.continuum.core.api.crud.CursorPage;
 import org.kinotic.continuum.core.api.crud.Page;
 import org.kinotic.continuum.core.api.crud.Pageable;
+import org.kinotic.structures.api.config.ElasticRefreshPolicy;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.*;
 import org.kinotic.structures.api.domain.idl.decorators.MultiTenancyType;
@@ -167,14 +168,14 @@ public class DefaultEntityService implements EntityService {
 
     @WithSpan
     @Override
-    public CompletableFuture<Void> deleteByIdSync(String id, EntityContext context) {
-        return doDeleteById(id, context, Refresh.True);
+    public CompletableFuture<Void> deleteByIdSync(String id, boolean waitFor, EntityContext context) {
+        return doDeleteById(id, context, syncRefresh(waitFor));
     }
 
     @WithSpan
     @Override
-    public CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, EntityContext context) {
-        return doDeleteById(id, context, Refresh.True);
+    public CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, boolean waitFor, EntityContext context) {
+        return doDeleteById(id, context, syncRefresh(waitFor));
     }
 
     @WithSpan
@@ -317,8 +318,8 @@ public class DefaultEntityService implements EntityService {
 
     @WithSpan
     @Override
-    public <T> CompletableFuture<T> saveSync(T entity, EntityContext context) {
-        return doSave(entity, context, Refresh.True);
+    public <T> CompletableFuture<T> saveSync(T entity, boolean waitFor, EntityContext context) {
+        return doSave(entity, context, syncRefresh(waitFor));
     }
 
     @WithSpan
@@ -400,8 +401,16 @@ public class DefaultEntityService implements EntityService {
 
     @WithSpan
     @Override
-    public <T> CompletableFuture<T> updateSync(T entity, EntityContext context) {
-        return doUpdate(entity, context, Refresh.True);
+    public <T> CompletableFuture<T> updateSync(T entity, boolean waitFor, EntityContext context) {
+        return doUpdate(entity, context, syncRefresh(waitFor));
+    }
+
+    /**
+     * The refresh a Sync write asks for: a forced refresh of the shard it touched, or with {@code waitFor} the next
+     * scheduled refresh. See {@link ElasticRefreshPolicy} for what each costs.
+     */
+    private static Refresh syncRefresh(boolean waitFor) {
+        return (waitFor ? ElasticRefreshPolicy.WAIT_FOR : ElasticRefreshPolicy.TRUE).toRefresh();
     }
 
     private String composeId(final String id, final EntityContext context){

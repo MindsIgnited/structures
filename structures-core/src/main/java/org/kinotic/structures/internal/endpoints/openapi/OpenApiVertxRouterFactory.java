@@ -12,6 +12,7 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.CorsHandler;
 import org.kinotic.structures.internal.utils.VertxFutures;
@@ -204,11 +205,11 @@ public class OpenApiVertxRouterFactory {
 
         // Update entity, and the same refreshing before returning
         addEntityWriteRoute(router, bodyHandler, "/update", entitiesService::update);
-        addEntityWriteRoute(router, bodyHandler, "/update-sync", entitiesService::updateSync);
+        addSyncEntityWriteRoute(router, bodyHandler, "/update-sync", entitiesService::updateSync);
 
         // Save entity, and the same refreshing before returning
         addEntityWriteRoute(router, bodyHandler, "", entitiesService::save);
-        addEntityWriteRoute(router, bodyHandler, "/save-sync", entitiesService::saveSync);
+        addSyncEntityWriteRoute(router, bodyHandler, "/save-sync", entitiesService::saveSync);
 
         // Sync Structure
         router.get(apiBasePath + ":structureApplication/:structureName/util/sync")
@@ -231,10 +232,10 @@ public class OpenApiVertxRouterFactory {
         // Delete Entity By ID, and the same refreshing before returning
         if(admin){
             addAdminDeleteByIdRoute(router, "", entitiesService::deleteById);
-            addAdminDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
+            addSyncAdminDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
         }else{
             addDeleteByIdRoute(router, "", entitiesService::deleteById);
-            addDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
+            addSyncDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
         }
 
         // Delete Entity By Query
@@ -264,10 +265,27 @@ public class OpenApiVertxRouterFactory {
      * Adds a POST route that takes an entity as JSON and answers with the entity the write returns
      * @param pathSuffix appended to the structure's path, such as "/update"
      */
-    private void addEntityWriteRoute(Router router,
-                                     BodyHandler bodyHandler,
-                                     String pathSuffix,
-                                     EntityWrite write) {
+    private void addEntityWriteRoute(Router router, BodyHandler bodyHandler, String pathSuffix, EntityWrite write) {
+        registerEntityWriteRoute(router, bodyHandler, pathSuffix, ctx -> write);
+    }
+
+    /**
+     * Adds a Sync write route, which works like {@link #addEntityWriteRoute} and passes on the request's waitFor parameter
+     * @param pathSuffix appended to the structure's path, such as "/update-sync"
+     */
+    private void addSyncEntityWriteRoute(Router router, BodyHandler bodyHandler, String pathSuffix, SyncEntityWrite write) {
+        registerEntityWriteRoute(router, bodyHandler, pathSuffix,
+                                 ctx -> (structureId, entity, context)
+                                         -> waitFor(ctx).thenCompose(waitFor -> write.apply(structureId, entity, waitFor, context)));
+    }
+
+    /**
+     * @param writeForRequest returns the write to run for a request
+     */
+    private void registerEntityWriteRoute(Router router,
+                                          BodyHandler bodyHandler,
+                                          String pathSuffix,
+                                          Function<RoutingContext, EntityWrite> writeForRequest) {
         router.post(apiBasePath + ":structureApplication/:structureName" + pathSuffix)
               .consumes("application/json")
               .produces("application/json")
@@ -275,6 +293,7 @@ public class OpenApiVertxRouterFactory {
               .handler(ctx -> {
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                  EntityWrite write = writeForRequest.apply(ctx);
 
                   VertxFutures.onContext(vertx, write.apply(structureId,
                                                             new RawJson(ctx.body().buffer().getBytes()),
@@ -290,9 +309,26 @@ public class OpenApiVertxRouterFactory {
 
     /**
      * Adds a DELETE route for an entity id
-     * @param pathSuffix appended to the entity's path, such as "/sync"
+     * @param pathSuffix appended to the entity's path
      */
     private void addDeleteByIdRoute(Router router, String pathSuffix, DeleteById delete) {
+        registerDeleteByIdRoute(router, pathSuffix, ctx -> delete);
+    }
+
+    /**
+     * Adds a Sync DELETE route, which works like {@link #addDeleteByIdRoute} and passes on the request's waitFor parameter
+     * @param pathSuffix appended to the entity's path, such as "/sync"
+     */
+    private void addSyncDeleteByIdRoute(Router router, String pathSuffix, SyncDeleteById delete) {
+        registerDeleteByIdRoute(router, pathSuffix,
+                                ctx -> (structureId, id, context)
+                                        -> waitFor(ctx).thenCompose(waitFor -> delete.apply(structureId, id, waitFor, context)));
+    }
+
+    /**
+     * @param deleteForRequest returns the delete to run for a request
+     */
+    private void registerDeleteByIdRoute(Router router, String pathSuffix, Function<RoutingContext, DeleteById> deleteForRequest) {
         router.delete(apiBasePath + ":structureApplication/:structureName/:id" + pathSuffix)
               .handler(ctx -> {
 
@@ -300,6 +336,7 @@ public class OpenApiVertxRouterFactory {
                   Validate.notNull(id, "id must not be null");
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                  DeleteById delete = deleteForRequest.apply(ctx);
 
                   VertxFutures.onContext(vertx, delete.apply(structureId,
                                                              id,
@@ -314,9 +351,29 @@ public class OpenApiVertxRouterFactory {
 
     /**
      * Adds an admin DELETE route for a tenant and entity id
-     * @param pathSuffix appended to the entity's path, such as "/sync"
+     * @param pathSuffix appended to the entity's path
      */
     private void addAdminDeleteByIdRoute(Router router, String pathSuffix, AdminDeleteById delete) {
+        registerAdminDeleteByIdRoute(router, pathSuffix, ctx -> delete);
+    }
+
+    /**
+     * Adds a Sync admin DELETE route, which works like {@link #addAdminDeleteByIdRoute} and passes on the request's
+     * waitFor parameter
+     * @param pathSuffix appended to the entity's path, such as "/sync"
+     */
+    private void addSyncAdminDeleteByIdRoute(Router router, String pathSuffix, SyncAdminDeleteById delete) {
+        registerAdminDeleteByIdRoute(router, pathSuffix,
+                                     ctx -> (structureId, id, context)
+                                             -> waitFor(ctx).thenCompose(waitFor -> delete.apply(structureId, id, waitFor, context)));
+    }
+
+    /**
+     * @param deleteForRequest returns the delete to run for a request
+     */
+    private void registerAdminDeleteByIdRoute(Router router,
+                                              String pathSuffix,
+                                              Function<RoutingContext, AdminDeleteById> deleteForRequest) {
         router.delete(adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id" + pathSuffix)
               .handler(ctx -> {
 
@@ -326,6 +383,7 @@ public class OpenApiVertxRouterFactory {
                   Validate.notBlank(tenantID, "tenantId must not be null or blank");
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
+                  AdminDeleteById delete = deleteForRequest.apply(ctx);
 
                   VertxFutures.onContext(vertx, delete.apply(structureId,
                                                              TenantSpecificId.create(id, tenantID),
@@ -339,11 +397,31 @@ public class OpenApiVertxRouterFactory {
     }
 
     /**
+     * The request's waitFor parameter, for a Sync route. A value that isn't a boolean fails the future, so the route
+     * answers it with a 400 as it does any failed write.
+     */
+    private static CompletableFuture<Boolean> waitFor(RoutingContext ctx) {
+        try {
+            return CompletableFuture.completedFuture(VertxWebUtil.getWaitFor(ctx));
+        } catch (IllegalArgumentException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+    }
+
+    /**
      * A single entity write on {@link EntitiesService}, such as save or update
      */
     @FunctionalInterface
     private interface EntityWrite {
         CompletableFuture<RawJson> apply(String structureId, RawJson entity, EntityContext context);
+    }
+
+    /**
+     * A Sync entity write on {@link EntitiesService}, such as saveSync or updateSync
+     */
+    @FunctionalInterface
+    private interface SyncEntityWrite {
+        CompletableFuture<RawJson> apply(String structureId, RawJson entity, boolean waitFor, EntityContext context);
     }
 
     /**
@@ -355,11 +433,27 @@ public class OpenApiVertxRouterFactory {
     }
 
     /**
+     * A Sync delete by entity id on {@link EntitiesService}
+     */
+    @FunctionalInterface
+    private interface SyncDeleteById {
+        CompletableFuture<Void> apply(String structureId, String id, boolean waitFor, EntityContext context);
+    }
+
+    /**
      * A delete by tenant and entity id on {@link EntitiesService}
      */
     @FunctionalInterface
     private interface AdminDeleteById {
         CompletableFuture<Void> apply(String structureId, TenantSpecificId id, EntityContext context);
+    }
+
+    /**
+     * A Sync delete by tenant and entity id on {@link EntitiesService}
+     */
+    @FunctionalInterface
+    private interface SyncAdminDeleteById {
+        CompletableFuture<Void> apply(String structureId, TenantSpecificId id, boolean waitFor, EntityContext context);
     }
 
     private void addNamedQueryRoutes(Router router, BodyHandler bodyHandler) {
