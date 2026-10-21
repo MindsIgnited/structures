@@ -248,8 +248,11 @@ Checking for these at publish, and before a CLI sync, is the next change.
 Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
 that each Sync write is searchable on return over RPC and REST, that `deleteByIdSync` on the admin
 service works, and that a policy denying `save`, `update` and `deleteById` denies the Sync writes
-too. With `waitFor`, it checks each write is still waiting until the test refreshes the index, which
-a forced refresh would not be, and that REST answers 400 to a `waitFor` that isn't a boolean. The e2e suite covers the TypeScript client and the REST routes.
+too. With `waitFor`, it waits until Elasticsearch has applied each write (from the index's indexing
+stats), checks the write is still waiting a second later, which a forced refresh would not be, and
+only then refreshes the index. It also checks REST answers 400 to a `waitFor` that isn't a boolean
+on the Sync routes, and that the plain routes ignore it. The e2e suite covers the TypeScript client
+and the REST routes.
 
 #### Other changes worth making
 

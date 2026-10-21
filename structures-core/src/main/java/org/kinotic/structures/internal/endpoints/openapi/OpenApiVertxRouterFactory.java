@@ -12,6 +12,7 @@ import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.CorsHandler;
 import org.kinotic.structures.internal.utils.VertxFutures;
@@ -203,14 +204,12 @@ public class OpenApiVertxRouterFactory {
               });
 
         // Update entity, and the same refreshing before returning
-        addEntityWriteRoute(router, bodyHandler, "/update",
-                            (structureId, entity, waitFor, context) -> entitiesService.update(structureId, entity, context));
-        addEntityWriteRoute(router, bodyHandler, "/update-sync", entitiesService::updateSync);
+        addEntityWriteRoute(router, bodyHandler, "/update", entitiesService::update);
+        addSyncEntityWriteRoute(router, bodyHandler, "/update-sync", entitiesService::updateSync);
 
         // Save entity, and the same refreshing before returning
-        addEntityWriteRoute(router, bodyHandler, "",
-                            (structureId, entity, waitFor, context) -> entitiesService.save(structureId, entity, context));
-        addEntityWriteRoute(router, bodyHandler, "/save-sync", entitiesService::saveSync);
+        addEntityWriteRoute(router, bodyHandler, "", entitiesService::save);
+        addSyncEntityWriteRoute(router, bodyHandler, "/save-sync", entitiesService::saveSync);
 
         // Sync Structure
         router.get(apiBasePath + ":structureApplication/:structureName/util/sync")
@@ -232,13 +231,11 @@ public class OpenApiVertxRouterFactory {
 
         // Delete Entity By ID, and the same refreshing before returning
         if(admin){
-            addAdminDeleteByIdRoute(router, "",
-                                    (structureId, id, waitFor, context) -> entitiesService.deleteById(structureId, id, context));
-            addAdminDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
+            addAdminDeleteByIdRoute(router, "", entitiesService::deleteById);
+            addSyncAdminDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
         }else{
-            addDeleteByIdRoute(router, "",
-                               (structureId, id, waitFor, context) -> entitiesService.deleteById(structureId, id, context));
-            addDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
+            addDeleteByIdRoute(router, "", entitiesService::deleteById);
+            addSyncDeleteByIdRoute(router, "/sync", entitiesService::deleteByIdSync);
         }
 
         // Delete Entity By Query
@@ -268,10 +265,28 @@ public class OpenApiVertxRouterFactory {
      * Adds a POST route that takes an entity as JSON and answers with the entity the write returns
      * @param pathSuffix appended to the structure's path, such as "/update"
      */
-    private void addEntityWriteRoute(Router router,
-                                     BodyHandler bodyHandler,
-                                     String pathSuffix,
-                                     EntityWrite write) {
+    private void addEntityWriteRoute(Router router, BodyHandler bodyHandler, String pathSuffix, EntityWrite write) {
+        registerEntityWriteRoute(router, bodyHandler, pathSuffix, ctx -> write);
+    }
+
+    /**
+     * Adds a Sync write route, which works like {@link #addEntityWriteRoute} and passes on the request's waitFor parameter
+     * @param pathSuffix appended to the structure's path, such as "/update-sync"
+     */
+    private void addSyncEntityWriteRoute(Router router, BodyHandler bodyHandler, String pathSuffix, SyncEntityWrite write) {
+        registerEntityWriteRoute(router, bodyHandler, pathSuffix, ctx -> {
+            boolean waitFor = VertxWebUtil.getWaitFor(ctx);
+            return (structureId, entity, context) -> write.apply(structureId, entity, waitFor, context);
+        });
+    }
+
+    /**
+     * @param writeForRequest returns the write to run for a request, and throws to fail the request before it runs
+     */
+    private void registerEntityWriteRoute(Router router,
+                                          BodyHandler bodyHandler,
+                                          String pathSuffix,
+                                          Function<RoutingContext, EntityWrite> writeForRequest) {
         router.post(apiBasePath + ":structureApplication/:structureName" + pathSuffix)
               .consumes("application/json")
               .produces("application/json")
@@ -279,17 +294,10 @@ public class OpenApiVertxRouterFactory {
               .handler(ctx -> {
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-                  boolean waitFor;
-                  try {
-                      waitFor = VertxWebUtil.getWaitFor(ctx);
-                  } catch (IllegalArgumentException e) {
-                      VertxWebUtil.writeException(ctx, e);
-                      return;
-                  }
+                  EntityWrite write = writeForRequest.apply(ctx);
 
                   VertxFutures.onContext(vertx, write.apply(structureId,
                                                             new RawJson(ctx.body().buffer().getBytes()),
-                                                            waitFor,
                                                             new RoutingContextToEntityContextAdapter(ctx)))
                                         .handle(new ValueToJsonHandler<>(ctx, objectMapper))
                                         .exceptionally(throwable -> {
@@ -302,9 +310,27 @@ public class OpenApiVertxRouterFactory {
 
     /**
      * Adds a DELETE route for an entity id
-     * @param pathSuffix appended to the entity's path, such as "/sync"
+     * @param pathSuffix appended to the entity's path
      */
     private void addDeleteByIdRoute(Router router, String pathSuffix, DeleteById delete) {
+        registerDeleteByIdRoute(router, pathSuffix, ctx -> delete);
+    }
+
+    /**
+     * Adds a Sync DELETE route, which works like {@link #addDeleteByIdRoute} and passes on the request's waitFor parameter
+     * @param pathSuffix appended to the entity's path, such as "/sync"
+     */
+    private void addSyncDeleteByIdRoute(Router router, String pathSuffix, SyncDeleteById delete) {
+        registerDeleteByIdRoute(router, pathSuffix, ctx -> {
+            boolean waitFor = VertxWebUtil.getWaitFor(ctx);
+            return (structureId, id, context) -> delete.apply(structureId, id, waitFor, context);
+        });
+    }
+
+    /**
+     * @param deleteForRequest returns the delete to run for a request, and throws to fail the request before it runs
+     */
+    private void registerDeleteByIdRoute(Router router, String pathSuffix, Function<RoutingContext, DeleteById> deleteForRequest) {
         router.delete(apiBasePath + ":structureApplication/:structureName/:id" + pathSuffix)
               .handler(ctx -> {
 
@@ -312,17 +338,10 @@ public class OpenApiVertxRouterFactory {
                   Validate.notNull(id, "id must not be null");
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-                  boolean waitFor;
-                  try {
-                      waitFor = VertxWebUtil.getWaitFor(ctx);
-                  } catch (IllegalArgumentException e) {
-                      VertxWebUtil.writeException(ctx, e);
-                      return;
-                  }
+                  DeleteById delete = deleteForRequest.apply(ctx);
 
                   VertxFutures.onContext(vertx, delete.apply(structureId,
                                                              id,
-                                                             waitFor,
                                                              new RoutingContextToEntityContextAdapter(ctx)))
                                         .handle(new NoValueHandler(ctx))
                                         .exceptionally(throwable -> {
@@ -334,9 +353,30 @@ public class OpenApiVertxRouterFactory {
 
     /**
      * Adds an admin DELETE route for a tenant and entity id
-     * @param pathSuffix appended to the entity's path, such as "/sync"
+     * @param pathSuffix appended to the entity's path
      */
     private void addAdminDeleteByIdRoute(Router router, String pathSuffix, AdminDeleteById delete) {
+        registerAdminDeleteByIdRoute(router, pathSuffix, ctx -> delete);
+    }
+
+    /**
+     * Adds a Sync admin DELETE route, which works like {@link #addAdminDeleteByIdRoute} and passes on the request's
+     * waitFor parameter
+     * @param pathSuffix appended to the entity's path, such as "/sync"
+     */
+    private void addSyncAdminDeleteByIdRoute(Router router, String pathSuffix, SyncAdminDeleteById delete) {
+        registerAdminDeleteByIdRoute(router, pathSuffix, ctx -> {
+            boolean waitFor = VertxWebUtil.getWaitFor(ctx);
+            return (structureId, id, context) -> delete.apply(structureId, id, waitFor, context);
+        });
+    }
+
+    /**
+     * @param deleteForRequest returns the delete to run for a request, and throws to fail the request before it runs
+     */
+    private void registerAdminDeleteByIdRoute(Router router,
+                                              String pathSuffix,
+                                              Function<RoutingContext, AdminDeleteById> deleteForRequest) {
         router.delete(adminApiBasePath + ":structureApplication/:structureName/:tenantId/:id" + pathSuffix)
               .handler(ctx -> {
 
@@ -346,17 +386,10 @@ public class OpenApiVertxRouterFactory {
                   Validate.notBlank(tenantID, "tenantId must not be null or blank");
 
                   String structureId = VertxWebUtil.validateAndReturnStructureId(ctx);
-                  boolean waitFor;
-                  try {
-                      waitFor = VertxWebUtil.getWaitFor(ctx);
-                  } catch (IllegalArgumentException e) {
-                      VertxWebUtil.writeException(ctx, e);
-                      return;
-                  }
+                  AdminDeleteById delete = deleteForRequest.apply(ctx);
 
                   VertxFutures.onContext(vertx, delete.apply(structureId,
                                                              TenantSpecificId.create(id, tenantID),
-                                                             waitFor,
                                                              new RoutingContextToEntityContextAdapter(ctx)))
                                         .handle(new NoValueHandler(ctx))
                                         .exceptionally(throwable -> {
@@ -367,29 +400,50 @@ public class OpenApiVertxRouterFactory {
     }
 
     /**
-     * A single entity write on {@link EntitiesService}, such as save or update.
-     * {@code waitFor} is the request's waitFor parameter, which only the Sync writes use.
+     * A single entity write on {@link EntitiesService}, such as save or update
      */
     @FunctionalInterface
     private interface EntityWrite {
+        CompletableFuture<RawJson> apply(String structureId, RawJson entity, EntityContext context);
+    }
+
+    /**
+     * A Sync entity write on {@link EntitiesService}, such as saveSync or updateSync
+     */
+    @FunctionalInterface
+    private interface SyncEntityWrite {
         CompletableFuture<RawJson> apply(String structureId, RawJson entity, boolean waitFor, EntityContext context);
     }
 
     /**
-     * A delete by entity id on {@link EntitiesService}.
-     * {@code waitFor} is the request's waitFor parameter, which only the Sync delete uses.
+     * A delete by entity id on {@link EntitiesService}
      */
     @FunctionalInterface
     private interface DeleteById {
+        CompletableFuture<Void> apply(String structureId, String id, EntityContext context);
+    }
+
+    /**
+     * A Sync delete by entity id on {@link EntitiesService}
+     */
+    @FunctionalInterface
+    private interface SyncDeleteById {
         CompletableFuture<Void> apply(String structureId, String id, boolean waitFor, EntityContext context);
     }
 
     /**
-     * A delete by tenant and entity id on {@link EntitiesService}.
-     * {@code waitFor} is the request's waitFor parameter, which only the Sync delete uses.
+     * A delete by tenant and entity id on {@link EntitiesService}
      */
     @FunctionalInterface
     private interface AdminDeleteById {
+        CompletableFuture<Void> apply(String structureId, TenantSpecificId id, EntityContext context);
+    }
+
+    /**
+     * A Sync delete by tenant and entity id on {@link EntitiesService}
+     */
+    @FunctionalInterface
+    private interface SyncAdminDeleteById {
         CompletableFuture<Void> apply(String structureId, TenantSpecificId id, boolean waitFor, EntityContext context);
     }
 

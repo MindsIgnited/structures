@@ -59,6 +59,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.IndexingStats;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -206,42 +207,42 @@ public class EntitySyncTests extends ElasticTestBase {
      * indexes, so each write must still be waiting until the test refreshes the index, and must return once it does.
      */
     @Test
-    public void rpcWaitForWritesReturnOnTheNextRefresh() throws IOException {
+    public void rpcWaitForWritesReturnOnTheNextRefresh() throws Exception {
         Structure structure = createStructure("RpcWaitFor", null, false);
 
         SyncPerson saved = read(assertWaitsForRefresh(structure,
-                                                      jsonEntitiesService.saveSync(structure.getId(),
-                                                                                   toTokenBuffer(person("Ada", "Lovelace")),
-                                                                                   true,
-                                                                                   participant),
+                                                      () -> jsonEntitiesService.saveSync(structure.getId(),
+                                                                                         toTokenBuffer(person("Ada", "Lovelace")),
+                                                                                         true,
+                                                                                         participant),
                                                       "saveSync with waitFor"));
         Assertions.assertEquals(1L, count(structure));
 
         read(assertWaitsForRefresh(structure,
-                                   jsonEntitiesService.updateSync(structure.getId(),
-                                                                  toTokenBuffer(saved.setLastName("Waited")),
-                                                                  true,
-                                                                  participant),
+                                   () -> jsonEntitiesService.updateSync(structure.getId(),
+                                                                        toTokenBuffer(saved.setLastName("Waited")),
+                                                                        true,
+                                                                        participant),
                                    "updateSync with waitFor"));
         Assertions.assertEquals(1L, countByQuery(structure, "lastName: Waited"));
 
         assertWaitsForRefresh(structure,
-                              jsonEntitiesService.deleteByIdSync(structure.getId(), saved.getId(), true, participant),
+                              () -> jsonEntitiesService.deleteByIdSync(structure.getId(), saved.getId(), true, participant),
                               "deleteByIdSync with waitFor");
         Assertions.assertEquals(0L, count(structure));
     }
 
     @Test
-    public void adminDeleteByIdSyncWithWaitForReturnsOnTheNextRefresh() throws IOException {
+    public void adminDeleteByIdSyncWithWaitForReturnsOnTheNextRefresh() throws Exception {
         Structure structure = createStructure("AdminWaitFor", null, true);
         SyncPerson saved = rpcSave(structure, person("Ada", "Lovelace").setTenantId(TENANT), true);
         EntityContext tenantContext = new DefaultEntityContext(participant).setTenantSelection(List.of(TENANT));
 
         assertWaitsForRefresh(structure,
-                              adminJsonEntitiesService.deleteByIdSync(structure.getId(),
-                                                                      TenantSpecificId.create(saved.getId(), TENANT),
-                                                                      true,
-                                                                      participant),
+                              () -> adminJsonEntitiesService.deleteByIdSync(structure.getId(),
+                                                                            TenantSpecificId.create(saved.getId(), TENANT),
+                                                                            true,
+                                                                            participant),
                               "admin deleteByIdSync with waitFor");
         Assertions.assertEquals(0L, entitiesService.count(structure.getId(), tenantContext).join());
     }
@@ -251,20 +252,20 @@ public class EntitySyncTests extends ElasticTestBase {
         Structure structure = createStructure("RestWaitFor", null, false);
 
         HttpResponse<String> saved = assertWaitsForRefresh(structure,
-                                                           restAsync(structure, "POST", "/save-sync?waitFor=true", person("Ada", "Lovelace")),
+                                                           () -> restAsync(structure, "POST", "/save-sync?waitFor=true", person("Ada", "Lovelace")),
                                                            "save-sync with waitFor");
         Assertions.assertEquals(200, saved.statusCode(), saved::body);
         SyncPerson person = objectMapper.readValue(saved.body(), SyncPerson.class);
         Assertions.assertEquals(1L, count(structure));
 
         HttpResponse<String> updated = assertWaitsForRefresh(structure,
-                                                             restAsync(structure, "POST", "/update-sync?waitFor=true", person.setLastName("Waited")),
+                                                             () -> restAsync(structure, "POST", "/update-sync?waitFor=true", person.setLastName("Waited")),
                                                              "update-sync with waitFor");
         Assertions.assertEquals(200, updated.statusCode(), updated::body);
         Assertions.assertEquals(1L, countByQuery(structure, "lastName: Waited"));
 
         HttpResponse<String> deleted = assertWaitsForRefresh(structure,
-                                                             restAsync(structure, "DELETE", "/" + person.getId() + "/sync?waitFor=true", null),
+                                                             () -> restAsync(structure, "DELETE", "/" + person.getId() + "/sync?waitFor=true", null),
                                                              "DELETE {id}/sync with waitFor");
         Assertions.assertEquals(200, deleted.statusCode(), deleted::body);
         Assertions.assertEquals(0L, count(structure));
@@ -283,6 +284,15 @@ public class EntitySyncTests extends ElasticTestBase {
         Assertions.assertEquals(400, response.statusCode(), response::body);
         Assertions.assertTrue(response.body().contains("waitFor"), response::body);
         Assertions.assertEquals(0L, count(structure), "the rejected write must not be saved");
+
+        // Only the Sync routes take waitFor, so the plain writes leave it alone like any other unknown parameter
+        SyncPerson person = person("Charles", "Babbage");
+        HttpResponse<String> saved = rest(structure, "POST", "?waitFor=yes", person);
+        Assertions.assertEquals(200, saved.statusCode(), saved::body);
+        HttpResponse<String> updated = rest(structure, "POST", "/update?waitFor=yes", person.setLastName("Plain"));
+        Assertions.assertEquals(200, updated.statusCode(), updated::body);
+        HttpResponse<String> deleted = rest(structure, "DELETE", "/" + person.getId() + "?waitFor=yes", null);
+        Assertions.assertEquals(200, deleted.statusCode(), deleted::body);
     }
 
     /**
@@ -348,15 +358,45 @@ public class EntitySyncTests extends ElasticTestBase {
     }
 
     /**
-     * Checks a waitFor write is still waiting while nothing refreshes the index, refreshes it, and returns the result
-     * the write then completes with.
+     * Starts a waitFor write and checks it is still waiting once Elasticsearch has applied it, while nothing refreshes
+     * the index. Then refreshes the index and returns the result the write completes with.
+     * <p>
+     * The refresh waits for the write to be applied: with scheduled refreshes off, a write applied after the only
+     * refresh would wait for good. The refresh runs even when a check fails, so no write is left waiting on the server.
      */
-    private <T> T assertWaitsForRefresh(Structure structure, CompletableFuture<T> write, String what) throws IOException {
-        Assertions.assertThrows(TimeoutException.class,
-                                () -> write.get(1, TimeUnit.SECONDS),
-                                () -> what + " returned before anything refreshed the index");
-        client.indices().refresh(b -> b.index(structure.getItemIndex()));
+    private <T> T assertWaitsForRefresh(Structure structure,
+                                        Supplier<CompletableFuture<T>> startWrite,
+                                        String what) throws Exception {
+        String index = structure.getItemIndex();
+        long appliedBefore = appliedWrites(index);
+        CompletableFuture<T> write = startWrite.get();
+        try {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            while (appliedWrites(index) == appliedBefore) {
+                Assertions.assertFalse(write.isDone(), () -> what + " returned before it was applied: " + write);
+                Assertions.assertTrue(System.nanoTime() < deadline, () -> what + " was never applied");
+                Thread.sleep(50);
+            }
+            // A forced refresh would return within moments of the write being applied
+            Assertions.assertThrows(TimeoutException.class,
+                                    () -> write.get(1, TimeUnit.SECONDS),
+                                    () -> what + " returned before anything refreshed the index");
+        } finally {
+            client.indices().refresh(b -> b.index(index));
+        }
         return Assertions.assertDoesNotThrow(() -> write.get(30, TimeUnit.SECONDS), what);
+    }
+
+    /**
+     * @return the index and delete operations the index's primaries have applied, searchable or not
+     */
+    private long appliedWrites(String index) throws IOException {
+        IndexingStats indexing = client.indices()
+                                       .stats(b -> b.index(index).metric("indexing"))
+                                       .all()
+                                       .primaries()
+                                       .indexing();
+        return indexing.indexTotal() + indexing.deleteTotal();
     }
 
     private static void assertDenied(Supplier<CompletableFuture<?>> call, String what) {
@@ -439,10 +479,10 @@ public class EntitySyncTests extends ElasticTestBase {
                                                               String method,
                                                               String pathSuffix,
                                                               Object body) {
-        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
-        return client.sendAsync(request(structuresProperties.getOpenApiPath(), structure, method, pathSuffix, body),
-                                HttpResponse.BodyHandlers.ofString())
-                     .whenComplete((response, error) -> client.shutdown());
+        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        return httpClient.sendAsync(request(structuresProperties.getOpenApiPath(), structure, method, pathSuffix, body),
+                                    HttpResponse.BodyHandlers.ofString())
+                         .whenComplete((response, error) -> httpClient.shutdown());
     }
 
     private HttpResponse<String> adminRest(Structure structure, String method, String pathSuffix) throws Exception {
@@ -472,8 +512,8 @@ public class EntitySyncTests extends ElasticTestBase {
     }
 
     private static HttpResponse<String> send(HttpRequest request) throws Exception {
-        try (HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
-            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        try (HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
+            return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         }
     }
 

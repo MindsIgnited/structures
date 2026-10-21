@@ -216,6 +216,19 @@ so use it for occasional writes whose callers can wait, not for high-volume ones
 | Java (`JsonEntitiesService`, `AdminJsonEntitiesService`) | the `boolean waitFor` before the `Participant` |
 | REST | the `waitFor=true` query parameter, such as `POST .../{structure}/save-sync?waitFor=true`; a value other than `true` or `false` is a 400 |
 
+> **`waitFor` waits on the index's `refresh_interval`, which Structures doesn't set or know.** That is an
+> Elasticsearch index setting, so check what your indexes use before passing `waitFor`:
+>
+> - The call returns only after the next scheduled refresh: within 1 second on the Elasticsearch default, later on an
+>   index set to refresh less often.
+> - If the interval is longer than `elasticSocketTimeout` (1 minute by default), or than your client's own timeout,
+>   the call fails with a timeout **even though the write was applied**. Retrying a `saveSync` with a version then
+>   fails with a conflict, and retrying an `updateSync` applies the change again.
+> - On an index with `refresh_interval: -1` the call doesn't return until something else refreshes the index, so
+>   don't pass `waitFor` there.
+>
+> Without `waitFor` none of this applies: the Sync write forces a refresh and returns as soon as that is done.
+
 **Why the Sync writes force a refresh unless asked to wait.** Both make the write searchable by the time it
 returns, but `wait_for` has costs that grow under exactly the load that makes `false` worth setting:
 

@@ -59,7 +59,9 @@ public class OpenApiUtils {
                                                    .required(false)
                                                    .schema(new BooleanSchema()._default(false))
                                                    .description("True to wait for the next scheduled refresh instead of forcing one. "
-                                                                        + "The call then takes up to the index's refresh interval (1 second by default) longer."));
+                                                                        + "The call then takes up to the index's refresh interval (1 second by default) longer. "
+                                                                        + "If that interval is longer than the server's Elasticsearch timeout, or the client's, "
+                                                                        + "the call fails with a timeout even though the write was applied."));
     }
 
     public static void addSortingParameters(Operation operation){

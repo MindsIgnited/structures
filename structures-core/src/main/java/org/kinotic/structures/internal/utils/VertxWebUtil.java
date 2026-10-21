@@ -4,6 +4,7 @@ import io.vertx.core.Handler;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.HttpException;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.continuum.api.exceptions.AuthenticationException;
 import org.kinotic.continuum.api.exceptions.AuthorizationException;
@@ -145,14 +146,23 @@ public class VertxWebUtil {
 
     public static Handler<RoutingContext> createExceptionConvertingFailureHandler(){
         return ctx -> {
-            writeException(ctx, ctx.failure());
+            Throwable failure = ctx.failure();
+            // Vert.x answers 500 to an exception a handler throws, so status it the way a failed future would be
+            boolean thrown = failure != null && !(failure instanceof HttpException) && ctx.statusCode() == 500;
+            writeException(ctx, failure, thrown ? -1 : ctx.statusCode());
         };
     }
 
     public static void writeException(RoutingContext context, Throwable throwable){
+        writeException(context, throwable, context.statusCode());
+    }
+
+    /**
+     * @param statusCode the status to answer with, or -1 to pick one from the exception
+     */
+    private static void writeException(RoutingContext context, Throwable throwable, int statusCode){
         HttpServerResponse response = context.response();
         String errorMessage;
-        int statusCode = context.statusCode();
 
         if(throwable != null){
 

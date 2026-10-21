@@ -23,8 +23,10 @@ Writes that refresh before returning, so they can be searched straight away what
 
 They take the same values as `save`, `update` and `deleteById`, plus a `waitFor` flag, and return the same values.
 They are allowed or denied by the same policies. By default they force a refresh; with `waitFor` they wait for the next
-scheduled refresh instead. In TypeScript `waitFor` is an optional last argument; in Java it is a `boolean` before the
-`Participant`. Code that implements these interfaces itself, rather than using the classes Structures provides, has to add
+scheduled refresh instead, so they take up to the index's `refresh_interval` longer, and fail with a timeout, with the
+write applied, if that interval is longer than the Elasticsearch socket timeout (see
+[waitFor](./structures-server-config.md)). In TypeScript `waitFor` is an optional last argument; in Java it is a
+`boolean` before the `Participant`. Code that implements these interfaces itself, rather than using the classes Structures provides, has to add
 the new methods.
 
 **REST operations**, for every structure, all in the OpenAPI spec:

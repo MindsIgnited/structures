@@ -21,6 +21,7 @@ import org.apache.commons.lang3.ObjectUtils;
 import org.kinotic.continuum.core.api.crud.CursorPage;
 import org.kinotic.continuum.core.api.crud.Page;
 import org.kinotic.continuum.core.api.crud.Pageable;
+import org.kinotic.structures.api.config.ElasticRefreshPolicy;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.*;
 import org.kinotic.structures.api.domain.idl.decorators.MultiTenancyType;
@@ -168,13 +169,13 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public CompletableFuture<Void> deleteByIdSync(String id, boolean waitFor, EntityContext context) {
-        return doDeleteById(id, context, syncRefresh(waitFor));
+        return doDeleteById(id, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
     }
 
     @WithSpan
     @Override
     public CompletableFuture<Void> deleteByIdSync(TenantSpecificId id, boolean waitFor, EntityContext context) {
-        return doDeleteById(id, context, syncRefresh(waitFor));
+        return doDeleteById(id, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
     }
 
     @WithSpan
@@ -318,7 +319,7 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public <T> CompletableFuture<T> saveSync(T entity, boolean waitFor, EntityContext context) {
-        return doSave(entity, context, syncRefresh(waitFor));
+        return doSave(entity, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
     }
 
     @WithSpan
@@ -401,15 +402,7 @@ public class DefaultEntityService implements EntityService {
     @WithSpan
     @Override
     public <T> CompletableFuture<T> updateSync(T entity, boolean waitFor, EntityContext context) {
-        return doUpdate(entity, context, syncRefresh(waitFor));
-    }
-
-    /**
-     * The refresh a Sync write asks for: a forced refresh of the shard it touched, or with {@code waitFor} the next
-     * scheduled refresh. See {@link org.kinotic.structures.api.config.ElasticRefreshPolicy} for what each costs.
-     */
-    private static Refresh syncRefresh(boolean waitFor) {
-        return waitFor ? Refresh.WaitFor : Refresh.True;
+        return doUpdate(entity, context, ElasticRefreshPolicy.forSyncWrite(waitFor).toRefresh());
     }
 
     private String composeId(final String id, final EntityContext context){
