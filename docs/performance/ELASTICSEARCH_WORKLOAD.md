@@ -43,7 +43,7 @@ is busy, writes should wait, not fail.
 ### Why writes slow reads today
 
 - **Every Elasticsearch node indexes every document.** Indexes and index templates are created
-  with 3 shards and 2 replicas (`CrudServiceTemplate.createIndex` and `createIndexTemplate`). On a
+  with 3 shards and 2 replicas by default (`elasticNumberOfShards` and `elasticNumberOfReplicas`). On a
   3-node cluster each node holds a full copy of the data, so adding Structures pods raises the
   write rate without adding any write capacity.
 - **Reads and writes share one connection pool.** `StructuresElasticsearchConfig` builds one
@@ -260,8 +260,10 @@ and the REST routes.
   writes. That means fewer segments and less merging, at the cost of new writes taking a few
   seconds longer to show up in searches.
 - **Review whether 2 replicas is needed.** With 1 replica, each node does about a third less
-  indexing, at some cost to durability. The count is hard-coded in `CrudServiceTemplate`, so making
-  it a setting is part of this change.
+  indexing, at some cost to durability. Done in October 2026: the count is now the
+  `elasticNumberOfReplicas` setting (Helm `properties.structures.elastic.numberOfReplicas`). It applies
+  only to indexes created afterwards; an existing index's replicas can be changed with the
+  `_settings` API (`index.number_of_replicas`), which takes effect straight away.
 - **Use `bulkSave` when the whole document is sent.** Decided October 2026: clients that always
   send complete documents move from `bulkUpdate` to `bulkSave`, which avoids the fetch-and-merge
   `bulkUpdate` costs Elasticsearch on every document. Before moving a client, check:

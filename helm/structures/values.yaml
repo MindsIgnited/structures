@@ -64,6 +64,13 @@ properties:
       # writes straight away pay for one.
       # refreshAfterMutation: true
       # refreshAfterDelete: true
+      # Primary shards and replicas for every index Structures creates (3 and 2 when left unset): the
+      # system indexes the migration job creates, each published structure's index, and tables created by
+      # project migrations. Both the server and the migration job read these. They apply only to indexes
+      # created afterwards. Fewer than numberOfReplicas + 1 data nodes leaves replicas unassigned and the
+      # cluster yellow, so use 0 replicas on a single node.
+      # numberOfShards: 3
+      # numberOfReplicas: 2
       username: "structures"
       password: "asdfsda898u7fsad8sfa@sdfa"
     ai:

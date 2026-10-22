@@ -34,11 +34,14 @@ public class MigrationExecutor {
 
     private final ElasticsearchAsyncClient client;
     private final List<StatementExecutor<?, ?>> executors;
+    private final IndexShardSettings indexShardSettings;
 
     public MigrationExecutor(ElasticsearchAsyncClient client, 
-                             List<StatementExecutor<?, ?>> executors) {
+                             List<StatementExecutor<?, ?>> executors,
+                             IndexShardSettings indexShardSettings) {
         this.client = client;
         this.executors = executors;
+        this.indexShardSettings = indexShardSettings;
     }
 
     /**
@@ -52,6 +55,10 @@ public class MigrationExecutor {
                     log.info("Creating migration history index...");
                     return client.indices().create(c -> c
                             .index(MIGRATION_INDEX)
+                            .settings(s -> s
+                                    .numberOfShards(String.valueOf(indexShardSettings.getElasticNumberOfShards()))
+                                    .numberOfReplicas(String.valueOf(indexShardSettings.getElasticNumberOfReplicas()))
+                            )
                             .mappings(m -> m
                                     .properties("version", p -> p.integer(i -> i))
                                     .properties("projectId", p -> p.keyword(k -> k))

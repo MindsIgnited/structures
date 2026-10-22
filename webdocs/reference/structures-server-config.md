@@ -184,6 +184,24 @@ Below are the available options, their types, and default values. When you see a
   The same, for deleting an entity by id. With `false`, the entity drops out of searches after the next scheduled
   refresh, or once `syncIndex` is called. `deleteByIdSync` always forces a refresh, or waits for the next one when
   called with `waitFor`. Delete by query never refreshes.
+- **elasticNumberOfShards** (`int`, default: `3`):
+  The number of primary shards each index Structures creates is given: the index a structure gets when it is
+  published, the index template behind a stream structure's data stream (so each of its backing indexes), and tables
+  created by `CREATE TABLE` in project migrations. Must be between 1 and 1024, the most Elasticsearch allows an index
+  by default; any other value stops the server from starting. Elasticsearch fixes it when an index is created, so
+  changing it affects only indexes created afterwards.
+- **elasticNumberOfReplicas** (`int`, default: `2`):
+  The number of replicas of each primary shard, given to the same indexes. Must not be negative. It affects only
+  indexes created afterwards. Elasticsearch never puts a replica on the same node as its primary, so a cluster with
+  fewer than `elasticNumberOfReplicas` + 1 data nodes leaves replicas unassigned and reports yellow health; use `0` on
+  a single-node cluster.
+
+  The system indexes (`struct_application`, `struct_project`, `struct_structure`,
+  `struct_named_query_service_definition` and the migration history) are created by the migration job, not the server,
+  and it reads `STRUCTURES_MIGRATION_ELASTIC_NUMBER_OF_SHARDS` and `STRUCTURES_MIGRATION_ELASTIC_NUMBER_OF_REPLICAS`
+  instead, with the same defaults and limits. The Helm chart sets both the server's and the migration job's from
+  `properties.structures.elastic.numberOfShards` and `numberOfReplicas`; anywhere else, set them to the same values,
+  or the system indexes keep 3 and 2. Like structure indexes, existing system indexes are not changed.
 
 #### Choosing a refresh mode
 

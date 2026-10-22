@@ -94,6 +94,8 @@ properties:
           scheme: "http"  # No SSL for local development
       connectionTimeout: "5s"
       socketTimeout: "60s"
+      # KinD runs 2 Elasticsearch data nodes, which can hold a primary and 1 replica of each shard, not 2
+      numberOfReplicas: 1
       username: ""  # No auth for local development
       password: ""
     ai:

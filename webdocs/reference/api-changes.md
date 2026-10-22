@@ -87,8 +87,12 @@ undocumented body.
   method not found, or 404 for the REST operations. Older clients work with a 3.9.0 server unchanged.
 - **Rolling upgrades:** while servers of both versions run, a call to a new method or operation can reach an older
   server, so start using them once every server runs 3.9.0.
-- **Configuration and data:** no new settings, no changed defaults, no index or data changes. Going back to 3.8.0
-  is safe; only callers of the new methods and operations stop working.
+- **Configuration and data:** two new settings, `elasticNumberOfShards` and `elasticNumberOfReplicas`, set the shards
+  and replicas of every index Structures creates (see
+  [the server configuration](./structures-server-config.md)). Their defaults, 3 and 2, are the counts used before,
+  except for the `migration_history` index, which a new cluster now creates with them instead of Elasticsearch's
+  default of 1 and 1. Existing indexes are not changed. Going back to 3.8.0 is safe; only callers of the new methods
+  and operations stop working, and indexes created in the meantime keep the counts they were created with.
 - **Generated clients:** regenerating from the 3.9.0 spec changes the methods listed under Changed, as described
   there. Clients generated from an older spec work against a 3.9.0 server as they did before.
 
