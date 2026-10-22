@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.commons.lang3.Validate;
+import org.kinotic.structures.sql.executor.IndexShardSettings;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +21,7 @@ import lombok.experimental.Accessors;
 @NoArgsConstructor
 @Component
 @ConfigurationProperties(prefix = "structures")
-public class StructuresProperties {
+public class StructuresProperties implements IndexShardSettings {
 
     private String structuresBaseUrl = "http://localhost";
 
@@ -70,19 +71,19 @@ public class StructuresProperties {
     private ElasticRefreshPolicy elasticRefreshAfterDelete = ElasticRefreshPolicy.TRUE;
 
     /**
-     * The number of primary shards given to the index created when a structure is published, or to the index template
-     * behind a stream structure's data stream. Elasticsearch fixes it when an index is created, so changing it affects
-     * only structures published afterwards.
+     * The number of primary shards given to each index Structures creates: the index a structure gets when it is
+     * published, the index template behind a stream structure's data stream, and tables created by project migrations.
+     * The system indexes are created by the migration job, which has its own setting. Elasticsearch fixes it when an
+     * index is created, so changing it affects only indexes created afterwards.
      */
-    private int elasticNumberOfShards = 3;
+    private int elasticNumberOfShards = DEFAULT_NUMBER_OF_SHARDS;
 
     /**
-     * The number of replicas of each primary shard given to the index created when a structure is published, or to the
-     * index template behind a stream structure's data stream. It affects only structures published afterwards. A
-     * replica is never placed on the same node as its primary, so a cluster with fewer than replicas + 1 data nodes
-     * reports yellow health.
+     * The number of replicas of each primary shard, given to the same indexes as {@link #elasticNumberOfShards}. It
+     * affects only indexes created afterwards. A replica is never placed on the same node as its primary, so a cluster
+     * with fewer than replicas + 1 data nodes reports yellow health.
      */
-    private int elasticNumberOfReplicas = 2;
+    private int elasticNumberOfReplicas = DEFAULT_NUMBER_OF_REPLICAS;
 
     @NotNull
     private List<ElasticConnectionInfo> elasticConnections = List.of(new ElasticConnectionInfo());
@@ -180,14 +181,12 @@ public class StructuresProperties {
     }
 
     public StructuresProperties setElasticNumberOfShards(int elasticNumberOfShards) {
-        Validate.isTrue(elasticNumberOfShards >= 1, "elasticNumberOfShards must be at least 1");
-        this.elasticNumberOfShards = elasticNumberOfShards;
+        this.elasticNumberOfShards = IndexShardSettings.validateNumberOfShards(elasticNumberOfShards);
         return this;
     }
 
     public StructuresProperties setElasticNumberOfReplicas(int elasticNumberOfReplicas) {
-        Validate.isTrue(elasticNumberOfReplicas >= 0, "elasticNumberOfReplicas must not be negative");
-        this.elasticNumberOfReplicas = elasticNumberOfReplicas;
+        this.elasticNumberOfReplicas = IndexShardSettings.validateNumberOfReplicas(elasticNumberOfReplicas);
         return this;
     }
 
