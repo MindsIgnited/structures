@@ -184,6 +184,15 @@ Below are the available options, their types, and default values. When you see a
   The same, for deleting an entity by id. With `false`, the entity drops out of searches after the next scheduled
   refresh, or once `syncIndex` is called. `deleteByIdSync` always forces a refresh, or waits for the next one when
   called with `waitFor`. Delete by query never refreshes.
+- **elasticNumberOfShards** (`int`, default: `3`):
+  The number of primary shards each structure's index is created with when the structure is published; for a stream
+  structure, the number set on the index template behind its data stream. Must be at least 1. Elasticsearch fixes it
+  when an index is created, so changing it affects only structures published afterwards.
+- **elasticNumberOfReplicas** (`int`, default: `2`):
+  The number of replicas of each primary shard, set the same way. Must not be negative. It affects only structures
+  published afterwards. Elasticsearch never puts a replica on the same node as its primary, so a cluster with fewer
+  than `elasticNumberOfReplicas` + 1 data nodes leaves replicas unassigned and reports yellow health; use `0` on a
+  single-node cluster.
 
 #### Choosing a refresh mode
 

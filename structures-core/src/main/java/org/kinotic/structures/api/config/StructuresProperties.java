@@ -69,6 +69,21 @@ public class StructuresProperties {
     @NotNull
     private ElasticRefreshPolicy elasticRefreshAfterDelete = ElasticRefreshPolicy.TRUE;
 
+    /**
+     * The number of primary shards given to the index created when a structure is published, or to the index template
+     * behind a stream structure's data stream. Elasticsearch fixes it when an index is created, so changing it affects
+     * only structures published afterwards.
+     */
+    private int elasticNumberOfShards = 3;
+
+    /**
+     * The number of replicas of each primary shard given to the index created when a structure is published, or to the
+     * index template behind a stream structure's data stream. It affects only structures published afterwards. A
+     * replica is never placed on the same node as its primary, so a cluster with fewer than replicas + 1 data nodes
+     * reports yellow health.
+     */
+    private int elasticNumberOfReplicas = 2;
+
     @NotNull
     private List<ElasticConnectionInfo> elasticConnections = List.of(new ElasticConnectionInfo());
 
@@ -162,6 +177,18 @@ public class StructuresProperties {
 
     public boolean hasElasticUsernameAndPassword(){
         return elasticUsername != null && !elasticUsername.isBlank() && elasticPassword != null && !elasticPassword.isBlank();
+    }
+
+    public StructuresProperties setElasticNumberOfShards(int elasticNumberOfShards) {
+        Validate.isTrue(elasticNumberOfShards >= 1, "elasticNumberOfShards must be at least 1");
+        this.elasticNumberOfShards = elasticNumberOfShards;
+        return this;
+    }
+
+    public StructuresProperties setElasticNumberOfReplicas(int elasticNumberOfReplicas) {
+        Validate.isTrue(elasticNumberOfReplicas >= 0, "elasticNumberOfReplicas must not be negative");
+        this.elasticNumberOfReplicas = elasticNumberOfReplicas;
+        return this;
     }
 
     public StructuresProperties setOpenApiAdminPath(String path){
