@@ -7,7 +7,7 @@ import io.vertx.ext.web.handler.graphql.GraphQLHandler;
 import lombok.extern.slf4j.Slf4j;
 
 import org.kinotic.structures.auth.internal.services.DefaultCaffeineCacheFactory;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.CacheEvictionEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 

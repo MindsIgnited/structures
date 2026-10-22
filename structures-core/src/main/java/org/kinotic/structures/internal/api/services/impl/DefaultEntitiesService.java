@@ -12,7 +12,7 @@ import org.kinotic.structures.api.domain.TenantSpecificId;
 import org.kinotic.structures.api.services.EntitiesService;
 import org.kinotic.structures.auth.internal.services.DefaultCaffeineCacheFactory;
 import org.kinotic.structures.internal.api.services.EntityService;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.EvictionSourceType;
 import org.kinotic.structures.api.domain.ParameterHolder;
 import org.springframework.context.event.EventListener;
