@@ -85,7 +85,9 @@ bootBuildImage {
     ]
     buildpacks = [
             "urn:cnb:builder:paketo-buildpacks/java",
-            "docker.io/paketobuildpacks/health-checker" // https://github.com/paketo-buildpacks/health-checker
+            // Pinned, so a new release cannot change the /workspace/health-check the compose healthchecks run
+            // without a change here (https://github.com/paketo-buildpacks/health-checker)
+            "docker.io/paketobuildpacks/health-checker:2.14.0"
     ]
     docker {
         publishRegistry {

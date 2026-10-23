@@ -25,7 +25,9 @@ import org.junit.jupiter.api.Test;
 import org.kinotic.continuum.api.config.ContinuumProperties;
 import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.internal.cache.ClusterCacheEvictionService;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.events.CacheEvictionSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationEventPublisher;
 
@@ -41,7 +43,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * Structure and named query changes compose on {@link ClusterCacheEvictionService#evictCaches} from Elasticsearch
+ * Structure and named query changes compose on the {@link ClusterCacheEvictionService} evict methods from Elasticsearch
  * client and Vert.x threads, so the cluster broadcast, its timeout and the retry delay must never block the caller,
  * and the caller's chain must continue on a Vert.x context, never on the Ignite thread that completed the broadcast.
  */
@@ -132,11 +134,9 @@ class ClusterCacheEvictionServiceTest {
 
     @Test
     void returnsBeforeTheBroadcastCompletes() throws Exception {
-        CacheEvictionEvent event = CacheEvictionEvent.localModifiedStructure("app", "app.Person");
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person");
 
-        CompletableFuture<Void> eviction = service.evictCaches(event);
-
-        verify(eventPublisher).publishEvent(event);
+        verify(eventPublisher).publishEvent(any(CacheEvictionEvent.class));
         assertFalse(eviction.isDone(), "the caller must not wait on the broadcast");
         awaitBroadcasts(1);
 
@@ -148,7 +148,7 @@ class ClusterCacheEvictionServiceTest {
     @Test
     void continuesOnAnEventLoopNotTheIgniteThread() throws Exception {
         AtomicReference<String> continuedOn = new AtomicReference<>();
-        CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"))
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person")
                                                   .thenRun(() -> continuedOn.set(Thread.currentThread().getName()));
 
         awaitBroadcasts(1);
@@ -164,7 +164,7 @@ class ClusterCacheEvictionServiceTest {
     void continuesOnTheCallersOwnContext() throws Exception {
         Context callerContext = vertx.getOrCreateContext();
         CompletableFuture<Context> continuedOn = new CompletableFuture<>();
-        callerContext.runOnContext(v -> service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"))
+        callerContext.runOnContext(v -> service.evictModifiedStructure("app", "app.Person")
                                                .thenRun(() -> continuedOn.complete(Vertx.currentContext())));
 
         awaitBroadcasts(1);
@@ -175,7 +175,7 @@ class ClusterCacheEvictionServiceTest {
 
     @Test
     void retriesAFailedBroadcast() throws Exception {
-        CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localDeletedNamedQuery("app", "app.Person", "nq"));
+        CompletableFuture<Void> eviction = service.evictDeletedNamedQuery("app", "app.Person", "nq");
 
         awaitBroadcasts(1);
         broadcast(0).onDone(new RuntimeException("node left"));
@@ -194,7 +194,7 @@ class ClusterCacheEvictionServiceTest {
                             .setMaxCacheSyncRetryAttempts(2)
                             .setCacheSyncTimeoutMs(50L);
 
-        CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"));
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person");
 
         // Neither broadcast is ever answered: both time out and are cancelled, and the change still goes through
         eviction.get(5, TimeUnit.SECONDS);
@@ -210,7 +210,7 @@ class ClusterCacheEvictionServiceTest {
     void countsAFailureWhenTheServersDisappearBeforeTheRetry() throws Exception {
         when(servers.nodes()).thenReturn(List.of(mock(ClusterNode.class)), List.of());
 
-        CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"));
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person");
         awaitBroadcasts(1);
         broadcast(0).onDone(new RuntimeException("node left"));
 
@@ -224,7 +224,7 @@ class ClusterCacheEvictionServiceTest {
         // CacheEvictionEvent is an ApplicationEvent, so the service calls this overload, not publishEvent(Object)
         doThrow(new IllegalStateException("listener bug")).when(eventPublisher).publishEvent(any(ApplicationEvent.class));
 
-        CompletableFuture<Void> eviction = service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"));
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person");
 
         awaitBroadcasts(1);
         broadcast(0).onDone();
@@ -240,7 +240,7 @@ class ClusterCacheEvictionServiceTest {
 
         // Started from an event loop, and every retry and cancel is driven from one too, by the timers
         CompletableFuture<Void> eviction = new CompletableFuture<>();
-        vertx.getOrCreateContext().runOnContext(v -> service.evictCaches(CacheEvictionEvent.localModifiedStructure("app", "app.Person"))
+        vertx.getOrCreateContext().runOnContext(v -> service.evictModifiedStructure("app", "app.Person")
                                                             .whenComplete((r, e) -> eviction.complete(null)));
 
         eviction.get(5, TimeUnit.SECONDS);
@@ -251,11 +251,9 @@ class ClusterCacheEvictionServiceTest {
     @Test
     void evictsOnlyLocallyWhenTheBroadcastIsTurnedOff() {
         structuresProperties.getClusterEviction().setMaxCacheSyncRetryAttempts(0);
-        CacheEvictionEvent event = CacheEvictionEvent.localModifiedStructure("app", "app.Person");
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person");
 
-        CompletableFuture<Void> eviction = service.evictCaches(event);
-
-        verify(eventPublisher).publishEvent(event);
+        verify(eventPublisher).publishEvent(any(CacheEvictionEvent.class));
         assertTrue(eviction.isDone());
         verifyNoInteractions(compute);
     }
@@ -263,11 +261,9 @@ class ClusterCacheEvictionServiceTest {
     @Test
     void doesNotFailTheChangeWhenTheClusterEvictionCannotStart() throws Exception {
         structuresProperties.getClusterEviction().setMaxCacheSyncRetryAttempts(null);
-        CacheEvictionEvent event = CacheEvictionEvent.localModifiedStructure("app", "app.Person");
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person");
 
-        CompletableFuture<Void> eviction = service.evictCaches(event);
-
-        verify(eventPublisher).publishEvent(event);
+        verify(eventPublisher).publishEvent(any(CacheEvictionEvent.class));
         eviction.get(5, TimeUnit.SECONDS);
         assertFalse(eviction.isCompletedExceptionally());
         verifyNoInteractions(compute);
@@ -276,20 +272,33 @@ class ClusterCacheEvictionServiceTest {
     @Test
     void evictsOnlyLocallyWhenClusteringIsDisabled() {
         when(continuumProperties.isDisableClustering()).thenReturn(true);
-        CacheEvictionEvent event = CacheEvictionEvent.localModifiedStructure("app", "app.Person");
+        CompletableFuture<Void> eviction = service.evictModifiedStructure("app", "app.Person");
 
-        CompletableFuture<Void> eviction = service.evictCaches(event);
-
-        verify(eventPublisher).publishEvent(event);
+        verify(eventPublisher).publishEvent(any(CacheEvictionEvent.class));
         assertTrue(eviction.isDone());
         verifyNoInteractions(compute);
     }
 
     @Test
-    void rejectsClusterEvents() {
-        assertThrows(IllegalArgumentException.class,
-                     () -> service.evictCaches(CacheEvictionEvent.clusterModifiedStructure("app", "app.Person")));
-        verifyNoInteractions(eventPublisher, compute);
+    void publishesTheLocalEventForEachChange() {
+        structuresProperties.getClusterEviction().setMaxCacheSyncRetryAttempts(0);
+
+        service.evictModifiedStructure("app", "app.Person");
+        service.evictDeletedStructure("app", "app.Person");
+        service.evictModifiedNamedQuery("app", "app.Person", "nq");
+        service.evictDeletedNamedQuery("app", "app.Person", "nq");
+
+        ArgumentCaptor<CacheEvictionEvent> events = ArgumentCaptor.forClass(CacheEvictionEvent.class);
+        verify(eventPublisher, times(4)).publishEvent(events.capture());
+        assertEquals(List.of("STRUCTURE MODIFY app:app.Person:null",
+                             "STRUCTURE DELETE app:app.Person:null",
+                             "NAMED_QUERY MODIFY app:app.Person:nq",
+                             "NAMED_QUERY DELETE app:app.Person:nq"),
+                     events.getAllValues().stream()
+                           .peek(event -> assertEquals(CacheEvictionSource.LOCAL_MESSAGE, event.getEvictionSource()))
+                           .map(event -> event.getEvictionSourceType() + " " + event.getEvictionOperation() + " "
+                                         + event.getApplicationId() + ":" + event.getStructureId() + ":" + event.getNamedQueryId())
+                           .toList());
     }
 
     /**

@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.ignite.lang.IgniteRunnable;
 import org.apache.ignite.resources.SpringResource;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.EvictionSourceOperation;
 import org.kinotic.structures.internal.cache.events.EvictionSourceType;
 import org.springframework.context.ApplicationEventPublisher;

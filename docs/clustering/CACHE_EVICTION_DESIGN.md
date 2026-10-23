@@ -33,7 +33,8 @@ version, or it keeps serving stale entities, queries and GraphQL schemas.
 Structure / named query change (DefaultStructureService, DefaultNamedQueriesService)
      │  write to Elasticsearch, then compose on:
      ▼
-ClusterCacheEvictionService.evictCaches(CacheEvictionEvent.local...(...))
+ClusterCacheEvictionService.evictModifiedStructure / evictDeletedStructure /
+                            evictModifiedNamedQuery / evictDeletedNamedQuery
      │
      ├─ 1. publishEvent(event) ─────────────► @EventListener handleCacheEviction on this node
      │                                        (EntitiesService, GqlOperationDefinitionService,
@@ -50,9 +51,13 @@ returned CompletableFuture completes once every server node has evicted, or the 
 ```
 
 Each cache owner listens for `CacheEvictionEvent` with `@EventListener` and drops its own entries, whether the event
-came from this node or from the cluster. No listener broadcasts anything: only `ClusterCacheEvictionService` does, and
-only for the `LOCAL_MESSAGE` events passed to `evictCaches`. **A new change that affects these caches must call
-`evictCaches` and compose on the result. Publishing a `CacheEvictionEvent` yourself only evicts on this node.**
+came from this node or from the cluster. No listener broadcasts anything: only `ClusterCacheEvictionService` does.
+
+The code enforces this. `CacheEvictionEvent` lives in `org.kinotic.structures.internal.cache` with a package-private
+constructor and factories, so only `ClusterCacheEvictionService` can create a local event and only
+`ClusterCacheEvictionTask` a cluster one. No other code can make an event to publish, so a change cannot evict this
+node alone by mistake. **A new change that affects these caches calls the matching `evict...` method and composes on
+the result.** A new kind of change gets a new method on the service.
 
 ### Event Keys
 
@@ -65,11 +70,16 @@ only for the `LOCAL_MESSAGE` events passed to `evictCaches`. **A new change that
 ### ClusterCacheEvictionService
 
 ```java
-public CompletableFuture<Void> evictCaches(CacheEvictionEvent event)
+public CompletableFuture<Void> evictModifiedStructure(String applicationId, String structureId)
+public CompletableFuture<Void> evictDeletedStructure(String applicationId, String structureId)
+public CompletableFuture<Void> evictModifiedNamedQuery(String applicationId, String structureId, String namedQueryId)
+public CompletableFuture<Void> evictDeletedNamedQuery(String applicationId, String structureId, String namedQueryId)
 ```
 
-1. Publishes the event locally, so this node's listeners have evicted before `evictCaches` returns. A listener that
-   throws is logged, and the broadcast still goes out.
+Each one:
+
+1. Publishes the matching local event, so this node's listeners have evicted before the method returns. A listener
+   that throws is logged, and the broadcast still goes out.
 2. Unless clustering is disabled, or `max-cache-sync-retry-attempts` is less than 1, broadcasts a
    `ClusterCacheEvictionTask` to `ignite.cluster().forServers()` and returns a future for the outcome.
 3. The future never fails because of the eviction: a failure is logged and counted, but the change it is for has
@@ -119,7 +129,7 @@ would cache the old definition again.
 // After the change is written
 return structureDAO.save(structure)
                    .thenCompose(saved -> clusterCacheEvictionService
-                           .evictCaches(CacheEvictionEvent.localModifiedStructure(saved.getApplicationId(), saved.getId()))
+                           .evictModifiedStructure(saved.getApplicationId(), saved.getId())
                            .thenApply(v -> saved));
 ```
 
@@ -220,8 +230,8 @@ The cache eviction system includes comprehensive cluster testing capabilities to
 
 **1. Unit and integration tests** (`structures-test`)
 
-- `ClusterCacheEvictionServiceTest` - the broadcast, timeout, cancel and retry logic against a mocked Ignite, and
-  that no Ignite call runs on an event loop
+- `ClusterCacheEvictionServiceTest` - the broadcast, timeout, cancel and retry logic against a mocked Ignite, that
+  no Ignite call runs on an event loop, and that each `evict...` method publishes the matching local event
 - `NamedQueryCacheEvictionTests` - saving and deleting named queries evicts the GraphQL operations built from them
 
 ```bash

@@ -16,7 +16,6 @@ import org.kinotic.structures.internal.api.services.ElasticConversionResult;
 import org.kinotic.structures.internal.api.services.StructureConversionService;
 import org.kinotic.structures.internal.api.services.StructureDAO;
 import org.kinotic.structures.internal.cache.ClusterCacheEvictionService;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.utils.StructuresUtil;
 import org.springframework.stereotype.Component;
 
@@ -124,8 +123,8 @@ public class DefaultStructureService implements StructureService {
 
                     // Evict once the structure is gone, so a node cannot reload it in between and keep it cached
                     return structureDAO.deleteById(structureId)
-                                       .thenCompose(v -> clusterCacheEvictionService.evictCaches(
-                                               CacheEvictionEvent.localDeletedStructure(structure.getApplicationId(), structure.getId())));
+                                       .thenCompose(v -> clusterCacheEvictionService.evictDeletedStructure(
+                                               structure.getApplicationId(), structure.getId()));
                 });
     }
 
@@ -193,8 +192,8 @@ public class DefaultStructureService implements StructureService {
                         structure.setPublishedTimestamp(new Date());
                         structure.setUpdated(structure.getPublishedTimestamp());
                         return structureDAO.save(structure)
-                                           .thenCompose(structure1 -> clusterCacheEvictionService.evictCaches(
-                                                   CacheEvictionEvent.localModifiedStructure(structure1.getApplicationId(), structure1.getId())));
+                                           .thenCompose(structure1 -> clusterCacheEvictionService.evictModifiedStructure(
+                                                   structure1.getApplicationId(), structure1.getId()));
                     });
                 });
     }
@@ -271,7 +270,7 @@ public class DefaultStructureService implements StructureService {
                         return updateFuture.thenCompose(v -> structureDAO
                                 .save(structure)
                                 .thenCompose(structure1 -> clusterCacheEvictionService
-                                        .evictCaches(CacheEvictionEvent.localModifiedStructure(structure1.getApplicationId(), structure1.getId()))
+                                        .evictModifiedStructure(structure1.getApplicationId(), structure1.getId())
                                         .thenApply(ignored -> structure1)));
                     } else {
                         return structureDAO.save(structure);
@@ -319,8 +318,8 @@ public class DefaultStructureService implements StructureService {
                         structure.setPublishedTimestamp(null);
                         structure.setUpdated(new Date());
                         return structureDAO.save(structure)
-                                           .thenCompose(structure1 -> clusterCacheEvictionService.evictCaches(
-                                                   CacheEvictionEvent.localModifiedStructure(structure1.getApplicationId(), structure1.getId())));
+                                           .thenCompose(structure1 -> clusterCacheEvictionService.evictModifiedStructure(
+                                                   structure1.getApplicationId(), structure1.getId()));
                     });
                 });
     }
