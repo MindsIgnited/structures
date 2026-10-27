@@ -49,6 +49,9 @@
         const configuration = {
             isEditable: false,
             layout: "modern",
+            // Send try-it requests, with their Authorization header, straight to this server. Unset, Scalar routes
+            // every host but localhost through its hosted proxy (proxy.scalar.com)
+            proxyUrl: '',
             spec: {
                 url: `${getBaseUrl()}/api-docs/${finalNamespace}/openapi.json`
             },
@@ -81,6 +84,7 @@
     const fallbackConfiguration = {
         isEditable: false,
         layout: "modern",
+        proxyUrl: '',
         spec: {
             url: `${getBaseUrl()}/api-docs/${namespace}/openapi.json`
         }

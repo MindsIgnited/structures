@@ -280,10 +280,13 @@ public class EntitySyncTests extends ElasticTestBase {
     public void restRejectsAWaitForThatIsNotABoolean() throws Exception {
         Structure structure = createStructure("RestBadWaitFor", null, false);
 
-        HttpResponse<String> response = rest(structure, "POST", "/save-sync?waitFor=yes", person("Ada", "Lovelace"));
-        Assertions.assertEquals(400, response.statusCode(), response::body);
-        Assertions.assertTrue(response.body().contains("waitFor"), response::body);
-        Assertions.assertEquals(0L, count(structure), "the rejected write must not be saved");
+        // Exactly true or false, as the spec documents a boolean: not another spelling, and not an empty value
+        for (String waitFor : List.of("yes", "TRUE", "1", "")) {
+            HttpResponse<String> response = rest(structure, "POST", "/save-sync?waitFor=" + waitFor, person("Ada", "Lovelace"));
+            Assertions.assertEquals(400, response.statusCode(), () -> waitFor + ": " + response.body());
+            Assertions.assertTrue(response.body().contains("waitFor"), response::body);
+        }
+        Assertions.assertEquals(0L, count(structure), "the rejected writes must not be saved");
 
         // Only the Sync routes take waitFor, so the plain writes leave it alone like any other unknown parameter
         SyncPerson person = person("Charles", "Babbage");

@@ -138,7 +138,9 @@ jobs:
           gradle pnpmInstall
           gradle pnpmTest
 
+      # Runs when a publish step failed too, so the report still shows the tests of a failed release
       - name: Merge Test Results
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p allure-results
           cp -r */build/allure-results/* allure-results/ || true

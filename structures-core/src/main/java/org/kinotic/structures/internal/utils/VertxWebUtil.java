@@ -130,16 +130,17 @@ public class VertxWebUtil {
      * Returns the {@code waitFor} query parameter the Sync writes take, or false if the request has none
      * @param ctx the routing context to get the parameter from
      * @return true to wait for the next scheduled refresh instead of forcing one
-     * @throws IllegalArgumentException if the parameter is neither true nor false
+     * @throws IllegalArgumentException if the parameter is anything but {@code true} or {@code false}, as the spec
+     *                                  documents it, an empty value included
      */
     public static boolean getWaitFor(RoutingContext ctx){
         String waitFor = ctx.request().getParam("waitFor");
-        if(waitFor == null || waitFor.isEmpty() || waitFor.equalsIgnoreCase("false")){
+        if(waitFor == null || waitFor.equals("false")){
             return false;
-        }else if(waitFor.equalsIgnoreCase("true")){
+        }else if(waitFor.equals("true")){
             return true;
         }else{
-            throw new IllegalArgumentException("waitFor must be true or false, but was " + waitFor);
+            throw new IllegalArgumentException("waitFor must be true or false, but was \"" + waitFor + "\"");
         }
     }
 

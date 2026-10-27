@@ -91,6 +91,30 @@ public class DefaultOpenApiService implements OpenApiService {
                                                                     new MediaType().schema(new Schema<>().$ref(Components.COMPONENTS_SCHEMAS_REF + ERROR_RESPONSE))));
     }
 
+    /**
+     * Points the error responses of every operation, which {@link #errorResponse} documented as {@value #ERROR_RESPONSE},
+     * at the schema of the given name instead. The 2xx responses are left alone: a structure named
+     * {@value #ERROR_RESPONSE} is answered by them.
+     */
+    private static void referenceErrorResponsesAs(Paths paths, String schemaName){
+        String from = Components.COMPONENTS_SCHEMAS_REF + ERROR_RESPONSE;
+        String to = Components.COMPONENTS_SCHEMAS_REF + schemaName;
+        for(PathItem pathItem : paths.values()){
+            for(Operation operation : pathItem.readOperations()){
+                for(Map.Entry<String, ApiResponse> response : operation.getResponses().entrySet()){
+                    if(response.getKey().startsWith("2") || response.getValue().getContent() == null){
+                        continue;
+                    }
+                    for(MediaType mediaType : response.getValue().getContent().values()){
+                        if(mediaType.getSchema() != null && from.equals(mediaType.getSchema().get$ref())){
+                            mediaType.getSchema().set$ref(to);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @WithSpan
     @Override
     public CompletableFuture<OpenAPI> getOpenApiSpec(@SpanAttribute("applicationId") String applicationId) {
@@ -164,11 +188,21 @@ public class DefaultOpenApiService implements OpenApiService {
                                .description("Contains the total count of items");
                     components.addSchemas("CountResponse", countSchema);
 
-                    // The body of every error response
+                    // The body of every error response. The structures and their types are added first and keep
+                    // their names, so if one of them is called ErrorResponse the errors reference the next free name
                     ObjectSchema errorSchema = new ObjectSchema();
                     errorSchema.addProperty("error", new StringSchema().description("What went wrong"))
                                .description("Describes an error");
-                    components.addSchemas(ERROR_RESPONSE, errorSchema);
+                    String errorResponseName = ERROR_RESPONSE;
+                    for(int i = 2; components.getSchemas().containsKey(errorResponseName); i++){
+                        errorResponseName = ERROR_RESPONSE + i;
+                    }
+                    if(!errorResponseName.equals(ERROR_RESPONSE)){
+                        log.warn("Application {} has a schema named {}, so its error responses are documented as {}",
+                                 applicationId, ERROR_RESPONSE, errorResponseName);
+                        referenceErrorResponsesAs(paths, errorResponseName);
+                    }
+                    components.addSchemas(errorResponseName, errorSchema);
 
                     // Add TenantSpecificId schema
                     ObjectSchema tenantSpecificIdSchema = new ObjectSchema();
