@@ -1,6 +1,7 @@
 package org.kinotic.structures.internal.api.services.impl;
 
 import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
+import co.elastic.clients.elasticsearch._types.Refresh;
 import co.elastic.clients.elasticsearch._types.query_dsl.TermQuery;
 import lombok.extern.slf4j.Slf4j;
 
@@ -17,9 +18,10 @@ import org.kinotic.structures.api.domain.ParameterHolder;
 import org.kinotic.structures.internal.api.services.sql.QueryContext;
 import org.kinotic.structures.internal.api.services.sql.QueryExecutorFactory;
 import org.kinotic.structures.internal.api.services.sql.executors.QueryExecutor;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.ClusterCacheEvictionService;
+import org.kinotic.structures.internal.cache.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.EvictionSourceType;
-import org.springframework.context.ApplicationEventPublisher;
+import org.kinotic.structures.internal.utils.StructuresUtil;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -38,19 +40,19 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
 
     private final AsyncLoadingCache<CacheKey, QueryExecutor> cache;
     private final ConcurrentHashMap<String, List<CacheKey>> cacheKeyTracker = new ConcurrentHashMap<>();
-    private final ApplicationEventPublisher eventPublisher;
+    private final ClusterCacheEvictionService clusterCacheEvictionService;
 
     public DefaultNamedQueriesService(CrudServiceTemplate crudServiceTemplate,
                                       ElasticsearchAsyncClient esAsyncClient,
                                       QueryExecutorFactory queryExecutorFactory,
-                                      ApplicationEventPublisher eventPublisher,
+                                      ClusterCacheEvictionService clusterCacheEvictionService,
                                       DefaultCaffeineCacheFactory cacheFactory) {
         super("struct_named_query_service_definition",
               NamedQueriesDefinition.class,
               esAsyncClient,
               crudServiceTemplate);
 
-        this.eventPublisher = eventPublisher;
+        this.clusterCacheEvictionService = clusterCacheEvictionService;
 
         cache = cacheFactory.<CacheKey, QueryExecutor>newBuilder()
                         .name("namedQueriesCache")
@@ -151,9 +153,17 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
         // TODO: preprocess queries to correct index name and add Metadata about query type to be used by other parts of the system
         //       The Query type information will speed up other areas the need this as well
         return super.save(entity)
-                    .thenApply(namedQueriesDefinition -> {
-                        this.eventPublisher.publishEvent(CacheEvictionEvent.localModifiedNamedQuery(entity.getApplicationId(), entity.getStructure(), entity.getId()));
-                        return namedQueriesDefinition;
+                    // The saved definition, since Elasticsearch generates the id when the entity has none
+                    .thenCompose(namedQueriesDefinition -> {
+                        // Null when a delete got in after the write, and that delete evicts the caches itself
+                        if (namedQueriesDefinition == null) {
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        return clusterCacheEvictionService
+                                .evictModifiedNamedQuery(namedQueriesDefinition.getApplicationId(),
+                                                         structureId(namedQueriesDefinition),
+                                                         namedQueriesDefinition.getId())
+                                .thenApply(v -> namedQueriesDefinition);
                     });
     }
 
@@ -166,15 +176,13 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
                                 new IllegalArgumentException("NamedQuery cannot be found for id: " + id));
                     }
                     
-                    return super.deleteById(id)
-                            .thenApply(v -> {
-                                this.eventPublisher.publishEvent(
-                                        CacheEvictionEvent.localDeletedNamedQuery(
-                                                namedQuery.getApplicationId(), 
-                                                namedQuery.getStructure(), 
-                                                namedQuery.getId()));
-                                return null;
-                            });
+                    // Refreshed like a save, since the caches reload the definitions with a search, which would
+                    // otherwise still find this one and cache it again
+                    return crudServiceTemplate.deleteById(indexName, id, builder -> builder.refresh(Refresh.True))
+                            .thenCompose(v -> clusterCacheEvictionService.evictDeletedNamedQuery(
+                                    namedQuery.getApplicationId(),
+                                    structureId(namedQuery),
+                                    namedQuery.getId()));
                 });
     }
 
@@ -191,6 +199,15 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
         return esAsyncClient.indices()
                             .refresh(b -> b.index(indexName))
                             .thenApply(unused -> null);
+    }
+
+    /**
+     * The id of the structure a definition's queries belong to, which keys the caches built from them.
+     * The definition holds the structure's name, not its id.
+     */
+    private static String structureId(NamedQueriesDefinition namedQueriesDefinition) {
+        return StructuresUtil.structureNameToId(namedQueriesDefinition.getApplicationId(),
+                                                namedQueriesDefinition.getStructure());
     }
 
     private record CacheKey(String queryName, Structure structure) {}

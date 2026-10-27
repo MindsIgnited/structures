@@ -74,6 +74,33 @@ public interface EntitiesService {
     CompletableFuture<Void> deleteById(String structureId, TenantSpecificId id, EntityContext context);
 
     /**
+     * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
+     * away, whatever {@code elasticRefreshAfterDelete} is set to.
+     *
+     * @param structureId the id of the structure to delete the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
+     * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
+     * @param context     the context for this operation
+     * @return {@link CompletableFuture} emitting when the deletion is searchable
+     */
+    CompletableFuture<Void> deleteByIdSync(String structureId, String id, boolean waitFor, EntityContext context);
+
+    /**
+     * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
+     * away, whatever {@code elasticRefreshAfterDelete} is set to.
+     * NOTE: this method is only allowed if the {@link Structure#isMultiTenantSelectionEnabled()} is true
+     *
+     * @param structureId the id of the structure to delete the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
+     * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
+     * @param context     the context for this operation
+     * @return {@link CompletableFuture} emitting when the deletion is searchable
+     */
+    CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, boolean waitFor, EntityContext context);
+
+    /**
      * Deletes any entities that match the given query.
      *
      * @param structureId the id of the structure to delete the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
@@ -175,7 +202,9 @@ public interface EntitiesService {
                                                   EntityContext context);
 
     /**
-     * This operation makes all the recent writes immediately available for search.
+     * This operation makes all the recent writes immediately available for search, by refreshing every shard of the
+     * structure's index. Use it once after a batch of bulk writes the caller needs to search; for a single write, the
+     * Sync variants refresh only the shard the write touched.
      * @param structureId the id of the structure to sync the index for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
      * @param context     the context for this operation
      * @return a {@link CompletableFuture} that will complete when the operation is complete
@@ -192,6 +221,19 @@ public interface EntitiesService {
      * @return {@link CompletableFuture} emitting the saved entity
      */
     <T> CompletableFuture<T> save(String structureId, T entity, EntityContext context);
+
+    /**
+     * Saves a given entity like {@link #save(String, Object, EntityContext)}, and refreshes before returning so the
+     * change shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
+     *
+     * @param structureId the id of the structure to save the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
+     * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
+     * @param context     the context for this operation
+     * @return {@link CompletableFuture} emitting the saved entity once it is searchable
+     */
+    <T> CompletableFuture<T> saveSync(String structureId, T entity, boolean waitFor, EntityContext context);
 
     /**
      * Returns a {@link Page} of entities matching the search text and paging restriction provided in the {@code Pageable} object.
@@ -218,5 +260,18 @@ public interface EntitiesService {
      * @return {@link CompletableFuture} emitting the saved entity
      */
     <T> CompletableFuture<T> update(String structureId, T entity, EntityContext context);
+
+    /**
+     * Updates a given entity like {@link #update(String, Object, EntityContext)}, and refreshes before returning so the
+     * change shows in searches straight away, whatever {@code elasticRefreshAfterMutation} is set to.
+     *
+     * @param structureId the id of the structure to update the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})
+     * @param entity      must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
+     * @param context     the context for this operation
+     * @return {@link CompletableFuture} emitting the updated entity once it is searchable
+     */
+    <T> CompletableFuture<T> updateSync(String structureId, T entity, boolean waitFor, EntityContext context);
 
 }

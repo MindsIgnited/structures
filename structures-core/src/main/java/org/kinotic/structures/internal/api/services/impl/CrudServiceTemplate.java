@@ -23,6 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.type.TypeFactory;
 import org.apache.commons.lang3.Validate;
 import org.kinotic.continuum.core.api.crud.*;
+import org.kinotic.structures.api.config.StructuresProperties;
 import org.kinotic.structures.api.domain.RawJson;
 import org.kinotic.structures.internal.serializer.RawJsonJsonpDeserializer;
 import org.slf4j.Logger;
@@ -50,11 +51,14 @@ public class CrudServiceTemplate {
     private final ElasticsearchAsyncClient esAsyncClient;
     private final ObjectMapper objectMapper;
     private final RawJsonJsonpDeserializer rawJsonJsonpDeserializer;
+    private final StructuresProperties structuresProperties;
 
     public CrudServiceTemplate(ElasticsearchAsyncClient esAsyncClient,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               StructuresProperties structuresProperties) {
         this.esAsyncClient = esAsyncClient;
         this.objectMapper = objectMapper;
+        this.structuresProperties = structuresProperties;
         rawJsonJsonpDeserializer = new RawJsonJsonpDeserializer(objectMapper);
     }
 
@@ -106,8 +110,8 @@ public class CrudServiceTemplate {
                                                         .create(builder -> {
                                                             builder.index(indexName)
                                                                    .settings(s -> s
-                                                                           .numberOfShards("3")
-                                                                           .numberOfReplicas("2")
+                                                                           .numberOfShards(numberOfShards())
+                                                                           .numberOfReplicas(numberOfReplicas())
                                                                            .store(st -> st.type(StorageType.Fs))
                                                                    );
                                                             if (mappings != null && !mappings.isEmpty()) {
@@ -150,8 +154,8 @@ public class CrudServiceTemplate {
                    .create(true)
                    .template(t -> {
                                  t.settings(s -> s
-                                         .numberOfShards("3")
-                                         .numberOfReplicas("2")
+                                         .numberOfShards(numberOfShards())
+                                         .numberOfReplicas(numberOfReplicas())
                                  );
                                  if(mappings != null && !mappings.isEmpty()) {
                                      t.mappings(m -> m
@@ -166,6 +170,14 @@ public class CrudServiceTemplate {
             }
             return builder;
         }).thenApply(response -> null);
+    }
+
+    private String numberOfShards() {
+        return String.valueOf(structuresProperties.getElasticNumberOfShards());
+    }
+
+    private String numberOfReplicas() {
+        return String.valueOf(structuresProperties.getElasticNumberOfReplicas());
     }
 
     /**

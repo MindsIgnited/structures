@@ -13,7 +13,7 @@ import org.kinotic.structures.api.domain.idl.decorators.EntityServiceDecorator;
 import org.kinotic.structures.api.domain.idl.decorators.PolicyDecorator;
 import org.kinotic.structures.api.services.EntitiesService;
 import org.kinotic.structures.auth.internal.services.DefaultCaffeineCacheFactory;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.CacheEvictionEvent;
 import org.kinotic.structures.internal.endpoints.graphql.datafetchers.*;
 import org.kinotic.structures.internal.utils.GqlUtils;
 import org.springframework.context.event.EventListener;

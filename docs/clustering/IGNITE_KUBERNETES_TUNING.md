@@ -35,7 +35,7 @@ These options are currently exposed and configurable through `continuum.cluster.
 ### Cache Eviction Retry (via StructuresProperties)
 | Property | Default | Type | Description |
 |----------|---------|------|-------------|
-| `structures.clusterEviction.maxCacheSyncRetryAttempts` | `3` | Integer | Max retry attempts for cluster eviction |
+| `structures.clusterEviction.maxCacheSyncRetryAttempts` | `3` | Integer | Attempts per eviction, the first broadcast included; less than 1 turns the broadcast off |
 | `structures.clusterEviction.cacheSyncRetryDelayMs` | `1000` | Long | Delay between retries (ms) |
 | `structures.clusterEviction.cacheSyncTimeoutMs` | `30000` | Long | Timeout per sync attempt (ms) |
 

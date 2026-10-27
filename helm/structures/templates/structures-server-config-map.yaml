@@ -35,6 +35,12 @@ data:
   {{- if hasKey .Values.properties.structures.elastic "refreshAfterDelete" }}
   STRUCTURES_ELASTIC_REFRESH_AFTER_DELETE: "{{ .Values.properties.structures.elastic.refreshAfterDelete }}"
   {{- end }}
+  {{- if hasKey .Values.properties.structures.elastic "numberOfShards" }}
+  STRUCTURES_ELASTIC_NUMBER_OF_SHARDS: "{{ .Values.properties.structures.elastic.numberOfShards }}"
+  {{- end }}
+  {{- if hasKey .Values.properties.structures.elastic "numberOfReplicas" }}
+  STRUCTURES_ELASTIC_NUMBER_OF_REPLICAS: "{{ .Values.properties.structures.elastic.numberOfReplicas }}"
+  {{- end }}
   STRUCTURES_ELASTIC_USERNAME: "{{ .Values.properties.structures.elastic.username }}"
   STRUCTURES_ELASTIC_PASSWORD: "{{ .Values.properties.structures.elastic.password }}"
   STRUCTURES_OPEN_API_SECURITY_TYPE: "{{ .Values.properties.structures.openApiSecurityType }}"

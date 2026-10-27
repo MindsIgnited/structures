@@ -37,3 +37,11 @@ spec:
             - name: STRUCTURES_MIGRATION_ELASTIC_PASSWORD
               value: "{{ .Values.properties.structures.elastic.password }}"
             {{- end }}
+            {{- if hasKey .Values.properties.structures.elastic "numberOfShards" }}
+            - name: STRUCTURES_MIGRATION_ELASTIC_NUMBER_OF_SHARDS
+              value: "{{ .Values.properties.structures.elastic.numberOfShards }}"
+            {{- end }}
+            {{- if hasKey .Values.properties.structures.elastic "numberOfReplicas" }}
+            - name: STRUCTURES_MIGRATION_ELASTIC_NUMBER_OF_REPLICAS
+              value: "{{ .Values.properties.structures.elastic.numberOfReplicas }}"
+            {{- end }}

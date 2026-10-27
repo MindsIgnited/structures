@@ -49,6 +49,9 @@
         const configuration = {
             isEditable: false,
             layout: "modern",
+            // Send try-it requests, with their Authorization header, straight to this server. Unset, Scalar routes
+            // every host but localhost through its hosted proxy (proxy.scalar.com)
+            proxyUrl: '',
             spec: {
                 url: `${getBaseUrl()}/api-docs/${finalNamespace}/openapi.json`
             },
@@ -81,6 +84,7 @@
     const fallbackConfiguration = {
         isEditable: false,
         layout: "modern",
+        proxyUrl: '',
         spec: {
             url: `${getBaseUrl()}/api-docs/${namespace}/openapi.json`
         }
@@ -88,6 +92,11 @@
     apiReference.dataset.configuration = JSON.stringify(fallbackConfiguration)
 
 </script>
-<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+<!-- An exact version, so a new Scalar release can't change the viewer without being tried first. To upgrade, change
+     the version and replace the integrity hash with the new file's:
+     curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A -->
+<script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.75.0/dist/browser/standalone.js"
+        integrity="sha384-xgelKlDcc+BYp0O+ZYzFesLnWCgGpEbXVVZWNQT6WyZYygN01tbEMygnjPXb5OPI"
+        crossorigin="anonymous"></script>
 </body>
 </html>

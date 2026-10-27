@@ -12,7 +12,7 @@ import org.kinotic.structures.api.domain.TenantSpecificId;
 import org.kinotic.structures.api.services.EntitiesService;
 import org.kinotic.structures.auth.internal.services.DefaultCaffeineCacheFactory;
 import org.kinotic.structures.internal.api.services.EntityService;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.EvictionSourceType;
 import org.kinotic.structures.api.domain.ParameterHolder;
 import org.springframework.context.event.EventListener;
@@ -107,10 +107,33 @@ public class DefaultEntitiesService implements EntitiesService {
                 .thenCompose(entityService -> entityService.deleteById(id, context));
     }
 
+    @WithSpan
     @Override
-    public CompletableFuture<Void> deleteById(String structureId, TenantSpecificId id, EntityContext context) {
+    public CompletableFuture<Void> deleteById(@SpanAttribute("structureId") String structureId,
+                                              TenantSpecificId id,
+                                              EntityContext context) {
         return entityServiceCache.get(structureId)
                 .thenCompose(entityService -> entityService.deleteById(id, context));
+    }
+
+    @WithSpan
+    @Override
+    public CompletableFuture<Void> deleteByIdSync(@SpanAttribute("structureId") String structureId,
+                                                  String id,
+                                                  @SpanAttribute("waitFor") boolean waitFor,
+                                                  EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.deleteByIdSync(id, waitFor, context));
+    }
+
+    @WithSpan
+    @Override
+    public CompletableFuture<Void> deleteByIdSync(@SpanAttribute("structureId") String structureId,
+                                                  TenantSpecificId id,
+                                                  @SpanAttribute("waitFor") boolean waitFor,
+                                                  EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.deleteByIdSync(id, waitFor, context));
     }
 
     @WithSpan
@@ -212,6 +235,16 @@ public class DefaultEntitiesService implements EntitiesService {
 
     @WithSpan
     @Override
+    public <T> CompletableFuture<T> saveSync(@SpanAttribute("structureId") String structureId,
+                                             T entity,
+                                             @SpanAttribute("waitFor") boolean waitFor,
+                                             EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.saveSync(entity, waitFor, context));
+    }
+
+    @WithSpan
+    @Override
     public <T> CompletableFuture<Page<T>> search(@SpanAttribute("structureId") String structureId,
                                                  String searchText,
                                                  Pageable pageable,
@@ -228,6 +261,16 @@ public class DefaultEntitiesService implements EntitiesService {
                                            EntityContext context) {
         return entityServiceCache.get(structureId)
                 .thenCompose(entityService -> entityService.update(entity, context));
+    }
+
+    @WithSpan
+    @Override
+    public <T> CompletableFuture<T> updateSync(@SpanAttribute("structureId") String structureId,
+                                               T entity,
+                                               @SpanAttribute("waitFor") boolean waitFor,
+                                               EntityContext context) {
+        return entityServiceCache.get(structureId)
+                .thenCompose(entityService -> entityService.updateSync(entity, waitFor, context));
     }
 
     /**

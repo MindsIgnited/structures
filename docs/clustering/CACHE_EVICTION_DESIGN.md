@@ -2,258 +2,135 @@
 
 ## Overview
 
-This document outlines the design and implementation of cache eviction in the Structures platform, covering both local cache management and future cluster-wide coordination.
+This document describes how Structures evicts its local caches when a structure or named query changes, on the
+node that made the change and on every other server node in the cluster.
 
 ## Problem Statement
 
 The Structures platform uses multiple local caches (Caffeine) for performance optimization:
 - **Entity Service Cache**: Caches entity services by structure ID
-- **GraphQL Handler Cache**: Caches GraphQL handlers by application ID  
-- **GQL Operation Definition Cache**: Caches GraphQL operation definitions
+- **GraphQL Handler Cache**: Caches GraphQL handlers by application ID
+- **GQL Operation Definition Cache**: Caches the GraphQL operations built from named queries, by structure ID
+- **Named Query Executor Cache**: Caches the executors for named queries
 
-When data changes occur (structure updates, named query modifications), these caches need to be evicted with proper ordering to maintain consistency.
+When a structure or named query is saved, published or deleted, every node must drop the entries built from the old
+version, or it keeps serving stale entities, queries and GraphQL schemas.
 
 ## Key Challenges
 
-1. **Circular Dependencies**: Cache eviction service needs to call multiple services that might depend on each other
-2. **Ordering Requirements**: Cache eviction must happen in a specific sequence
-3. **Future Cluster Support**: Need to support cluster-wide eviction later
-4. **Local vs Cluster Operations**: Different execution paths for local changes vs cluster messages
+1. **Nothing may block**: changes complete on Elasticsearch client and Vert.x threads, so the eviction cannot wait
+   on the cluster by blocking a thread
+2. **The caller must know when the cluster has evicted**: a change is only reported once every server node has
+   dropped its stale caches, so a client that reads straight after a write sees the new version on any node
+3. **Nodes come and go**: a node can leave or hang in the middle of a broadcast
+4. **An eviction failure must not fail the change**: the change has already been written by then
 
-## Current Implementation: Hybrid Event-Driven Architecture
+## Current Implementation
 
-### Current Architecture
+### Architecture
 
 ```
-Local API Call                          Cluster Message
-     │                                        │
-     ▼                                        ▼
-┌─────────────────────────────────────────────────────────┐
-│ DefaultCacheEvictionService                             │
-│                                                         │
-│ evictCachesFor(structure) ──┐    ┌── @EventListener     │
-│ evictCachesFor(namedQuery) ─┼────┼── handleStructure... │
-│                             │    │                     │
-│                             ▼    ▼                     │
-│ ┌─────────────────────────────────────────────────────┐ │
-│ │ Private Methods (Shared Core Logic)                 │ │
-│ │ - evictStructure(structure)                         │ │
-│ │ - evictNamedQuery(namedQuery)                       │ │
-│ └─────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────┐
-│ Ordered Cache Service Calls                             │
-│ 1. EntitiesService.evictCachesFor(structure)           │
-│ 2. GqlOperationDefinitionService.evictCachesFor(...)   │
-│ 3. DelegatingGqlHandler.evictCachesFor(structure)      │
-└─────────────────────────────────────────────────────────┘
+Structure / named query change (DefaultStructureService, DefaultNamedQueriesService)
+     │  write to Elasticsearch, then compose on:
+     ▼
+ClusterCacheEvictionService.evictModifiedStructure / evictDeletedStructure /
+                            evictModifiedNamedQuery / evictDeletedNamedQuery
+     │
+     ├─ 1. publishEvent(event) ─────────────► @EventListener handleCacheEviction on this node
+     │                                        (EntitiesService, GqlOperationDefinitionService,
+     │                                         DelegatingGqlHandler, NamedQueriesService)
+     │
+     └─ 2. broadcast ClusterCacheEvictionTask to every server node (Ignite compute grid)
+              │  timeout, retry with a refreshed topology, metrics
+              ▼
+         ClusterCacheEvictionTask.run() on each node
+              └─ publishEvent(CacheEvictionEvent.cluster...(...)) ─► the same @EventListeners there
+     │
+     ▼
+returned CompletableFuture completes once every server node has evicted, or the retries are used up
 ```
 
-## Implementation Details
+Each cache owner listens for `CacheEvictionEvent` with `@EventListener` and drops its own entries, whether the event
+came from this node or from the cluster. No listener broadcasts anything: only `ClusterCacheEvictionService` does.
 
-### Cache Eviction Service
+The code enforces this. `CacheEvictionEvent` lives in `org.kinotic.structures.internal.cache` with a package-private
+constructor and factories, so only `ClusterCacheEvictionService` can create a local event and only
+`ClusterCacheEvictionTask` a cluster one. No other code can make an event to publish, so a change cannot evict this
+node alone by mistake. **A new change that affects these caches calls the matching `evict...` method and composes on
+the result.** A new kind of change gets a new method on the service.
 
-The `DefaultCacheEvictionService` handles cache eviction with proper ordering and cluster propagation:
+### Event Keys
+
+| Field | Value |
+|-------|-------|
+| `applicationId` | the structure's application id |
+| `structureId` | the structure's id, `StructuresUtil.structureNameToId(applicationId, name)`, which is lower case. A `NamedQueriesDefinition` holds the structure's **name** in `structure`, so it must be converted, since the GraphQL operation cache is keyed by structure id |
+| `namedQueryId` | the `NamedQueriesDefinition` id, for named query events |
+
+### ClusterCacheEvictionService
 
 ```java
-@Component
-public class DefaultCacheEvictionService implements CacheEvictionService {
-
-    // Clean dependencies - no circular issues
-    private final EntitiesService entitiesService;
-    private final GqlOperationDefinitionService gqlOperationDefinitionService;
-    private final DelegatingGqlHandler delegatingGqlHandler;
-    private final StructureDAO structureDAO;
-
-    // Public API - performs local eviction + broadcasts to cluster
-    public void evictCachesFor(Structure structure) {
-        evictStructure(structure);           // Local eviction
-        broadcastToCluster(structure);       // Cluster-wide eviction via Ignite Compute Grid
-    }
-
-    public void evictCachesFor(NamedQueriesDefinition namedQuery) {
-        evictNamedQuery(namedQuery);         // Local eviction
-        broadcastToCluster(namedQuery);      // Cluster-wide eviction via Ignite Compute Grid
-    }
-
-    // Event listeners for cluster messages (received from other nodes)
-    @EventListener
-    public void handleStructureCacheEviction(StructureCacheEvictionEvent event) {
-        evictStructure(event.getStructure());
-    }
-
-    @EventListener  
-    public void handleNamedQueryCacheEviction(NamedQueryCacheEvictionEvent event) {
-        evictNamedQuery(event.getNamedQuery());
-    }
-
-    // Private methods with proper ordering
-    private void evictStructure(Structure structure) {
-        entitiesService.evictCachesFor(structure);              // Step 1
-        gqlOperationDefinitionService.evictCachesFor(structure); // Step 2
-        delegatingGqlHandler.evictCachesFor(structure);          // Step 3
-    }
-
-    private void evictNamedQuery(NamedQueriesDefinition namedQuery) {
-        String structureId = StructuresUtil.structureNameToId(namedQuery.getApplicationId(), namedQuery.getStructure());
-        structureDAO.findById(structureId)
-                    .thenAccept(structure -> {
-                        gqlOperationDefinitionService.evictCachesFor(structure);
-                        delegatingGqlHandler.evictCachesFor(structure);
-                    }).join();
-    }
-}
+public CompletableFuture<Void> evictModifiedStructure(String applicationId, String structureId)
+public CompletableFuture<Void> evictDeletedStructure(String applicationId, String structureId)
+public CompletableFuture<Void> evictModifiedNamedQuery(String applicationId, String structureId, String namedQueryId)
+public CompletableFuture<Void> evictDeletedNamedQuery(String applicationId, String structureId, String namedQueryId)
 ```
 
-### Critical Cache Eviction Ordering
+Each one:
 
-**Structure Cache Eviction Order (Required)**:
-1. **EntitiesService** - Must be first (core entity data and metadata)
-2. **GqlOperationDefinitionService** - Second (depends on entity metadata)  
-3. **DelegatingGqlHandler** - Last (compiled handlers depend on operation definitions)
+1. Publishes the matching local event, so this node's listeners have evicted before the method returns. A listener
+   that throws is logged, and the broadcast still goes out.
+2. Unless clustering is disabled, or `max-cache-sync-retry-attempts` is less than 1, broadcasts a
+   `ClusterCacheEvictionTask` to `ignite.cluster().forServers()` and returns a future for the outcome.
+3. The future never fails because of the eviction: a failure is logged and counted, but the change it is for has
+   already been made.
 
-**Named Query Cache Eviction Process**:
-1. **Structure Lookup** - Resolve NamedQuery → Structure
-2. **GqlOperationDefinitionService** - Clear operation definitions
-3. **DelegatingGqlHandler** - Clear compiled handlers
+Threading, since nothing here may block:
 
-## Cluster Integration: Ignite Compute Grid ✅ IMPLEMENTED
+- Looking up the servers and starting the broadcast (`broadcastAsync`), and cancelling a broadcast that timed out,
+  can block inside Ignite, so they run on Vert.x worker threads (`Context.executeBlocking`, unordered).
+- The timeout and the delay between retries are Vert.x timers.
+- Every outcome hops to one Vert.x context: the caller's own when it runs on Vert.x, otherwise an event loop context
+  of its own. Callers therefore continue on an event loop, never on the Ignite thread that completed the broadcast.
+  Do not block on the returned future from an event loop.
 
-### Current Implementation
-Cluster-wide cache eviction is now implemented using Apache Ignite Compute Grid:
+### ClusterCacheEvictionTask
 
-```java
-@Override
-public void evictCachesFor(Structure structure) {
-    evictStructure(structure);                    // ← Local eviction
-    
-    // Cluster eviction using Ignite Compute Grid with validation
-    try {
-        Ignite ignite = Ignition.ignite();
-        ClusterGroup servers = ignite.cluster().forServers();
-        
-        // Broadcast to all server nodes and collect results
-        IgniteFuture<Void> future = ignite.compute(servers).broadcastAsync(new ClusterCacheEvictionTask("STRUCTURE", structure.getId()));
-        future.get(); // Wait for completion and throw exception if any node failed
-        
-        log.info("Structure cache eviction successfully completed on all {} cluster nodes for: {}", 
-                servers.nodes().size(), structure.getId());
-    } catch (Exception e) {
-        log.error("Failed to complete structure cache eviction on cluster for: {}", structure.getId(), e);
-    }
-}
-
-// Simple compute task that publishes events on remote nodes
-public class ClusterCacheEvictionTask implements IgniteRunnable {
-    @SpringResource(resourceClass = ApplicationEventPublisher.class)
-    private ApplicationEventPublisher eventPublisher;
-    
-    private final EvictionSourceType evictionSourceType; // STRUCTURE or NAMED_QUERY
-    private final EvictionSourceOperation evictionOperation; // MODIFY or DELETE
-    private final String applicationId;
-    private final String structureId;
-    private final String namedQueryId;
-    private final long timestamp; // Timestamp for versioning and logging
-    
-    @Override
-    public void run() {
-        // Check for duplicate processing using auto-expiring cache
-        String evictionKey = buildEvictionKey();
-        if (processedEvictions.getIfPresent(evictionKey) != null) {
-            return; // Skip duplicate processing
-        }
-        
-        // Publish appropriate event based on type and operation
-        if (evictionSourceType == STRUCTURE) {
-            if (evictionOperation == MODIFY) {
-                eventPublisher.publishEvent(
-                    CacheEvictionEvent.clusterModifiedStructure(applicationId, structureId));
-            } else {
-                eventPublisher.publishEvent(
-                    CacheEvictionEvent.clusterDeletedStructure(applicationId, structureId));
-            }
-        } else {
-            if (evictionOperation == MODIFY) {
-                eventPublisher.publishEvent(
-                    CacheEvictionEvent.clusterModifiedNamedQuery(applicationId, structureId, namedQueryId));
-            } else {
-                eventPublisher.publishEvent(
-                    CacheEvictionEvent.clusterDeletedNamedQuery(applicationId, structureId, namedQueryId));
-            }
-        }
-        
-        // Mark as processed (auto-expires after 1 hour)
-        processedEvictions.put(evictionKey, timestamp);
-    }
-}
-```
-
-### Why Ignite Compute Grid?
-- **Built-in Acknowledgments**: Know which nodes succeeded/failed
-- **Automatic Timeout Handling**: No manual timeout logic needed
-- **Failure Detection**: Automatic detection of non-responding nodes
-- **Simple Implementation**: Clean, straightforward code
-- **Already Available**: Uses existing Ignite dependency
-- **Concise**: Single task handles both Structure and NamedQuery eviction
-- **Serialization-Safe**: Uses IDs instead of full objects to avoid serialization issues
-- **Retry-Enabled**: Automatic retry with configurable attempts and timeouts
-- **Duplicate Prevention**: Caffeine-based deduplication with automatic expiry
+An `IgniteRunnable` that carries only ids, so it serialises safely. On each node it publishes the matching
+`CacheEvictionEvent.cluster...` event to that node's listeners. Its `ApplicationEventPublisher` and
+`ProcessedEvictionsCache` are injected by Ignite with `@SpringResource`. The timestamp is the same for every attempt
+of one eviction, so a node that already processed it, for example when a retry reaches it again, skips it.
 
 ### Retry Configuration
-```java
-// Retry configuration for cluster cache eviction
-private static final int MAX_RETRY_ATTEMPTS = 3;
-private static final long RETRY_DELAY_MS = 1000; // 1 second
-private static final long CLUSTER_TIMEOUT_MS = 30000; // 30 seconds
-```
+
+`structures.cluster-eviction.*` (`ClusterEvictionProperties`):
+
+| Property | Default | Meaning |
+|----------|---------|---------|
+| `max-cache-sync-retry-attempts` | 3 | Attempts, the first broadcast included. Less than 1 turns the broadcast off |
+| `cache-sync-retry-delay-ms` | 1000 | Delay between attempts |
+| `cache-sync-timeout-ms` | 30000 | How long one broadcast may take before it is cancelled and retried |
 
 **Retry Logic**:
-- **3 Attempts**: Up to 3 retry attempts for failed cluster operations
-- **1 Second Delay**: 1 second delay between retry attempts
-- **30 Second Timeout**: 30 second timeout per cluster operation
-- **Consistent Timestamp**: Same timestamp used across all retry attempts for proper versioning
-- **Exponential Backoff**: Future enhancement for more sophisticated retry timing
+- Each attempt refreshes the server topology, so a node that left is not broadcast to again
+- A broadcast that times out is cancelled, so a node that never answers does not collect a queued job per attempt
+- If no server nodes remain, retrying stops; an earlier failed attempt is still counted as a failure
+- The same timestamp is used for every attempt, so the retries are idempotent
 
-**Versioning Benefits**:
-- **Deduplication**: Downstream nodes can identify and skip duplicate requests
-- **Consistency**: All retry attempts represent the same logical eviction request
-- **Audit Trail**: Clear correlation between retry attempts and the original request
-- **Idempotency**: Safe to retry without side effects
+### Named Query Writes
 
-## Benefits of Current Design
-
-✅ **No Circular Dependencies**: Clean dependency injection  
-✅ **Guaranteed Ordering**: Critical cache eviction sequence enforced
-✅ **Code Reuse**: Shared logic between local and cluster operations
-✅ **Simple**: Minimal complexity, easy to understand
-✅ **Testable**: Easy to test ordering and error scenarios
-✅ **Cluster-Complete**: Full cluster-wide cache eviction using Ignite Compute Grid
-✅ **Cluster-Validated**: Ensures all server nodes successfully process eviction requests
-✅ **Retry-Logic**: Automatic retry with configurable attempts for failed cluster operations
-✅ **Duplicate-Prevention**: Caffeine-based deduplication with automatic 1-hour expiry
-✅ **Concise**: Single compute task handles both Structure and NamedQuery eviction
-✅ **Resilient**: Graceful handling of cluster communication failures
-✅ **Delete Support**: Handles both modification and deletion operations
+Saving and deleting named queries both refresh the Elasticsearch index. The GQL operation cache reloads a definition
+with a search, which only sees a write after a refresh, so without one a node that reloads straight after the eviction
+would cache the old definition again.
 
 ## Usage Examples
 
-### Structure Updates
 ```java
-// When a structure is modified
-cacheEvictionService.evictCachesFor(structure);
-// → Executes ordered local eviction
-// → Broadcasts eviction to all cluster nodes via Ignite Compute Grid
-```
-
-### Named Query Updates  
-```java
-// When a named query is modified
-cacheEvictionService.evictCachesFor(namedQuery);
-// → Looks up structure
-// → Executes ordered eviction
-// → Broadcasts eviction to all cluster nodes via Ignite Compute Grid
+// After the change is written
+return structureDAO.save(structure)
+                   .thenCompose(saved -> clusterCacheEvictionService
+                           .evictModifiedStructure(saved.getApplicationId(), saved.getId())
+                           .thenApply(v -> saved));
 ```
 
 ## OpenTelemetry Metrics
@@ -351,30 +228,24 @@ The cache eviction system includes comprehensive cluster testing capabilities to
 
 ### Testing Approaches
 
-**1. Automated Testcontainers Tests** (CI/CD)
+**1. Unit and integration tests** (`structures-test`)
 
-Located in `structures-core/src/test/java/org/kinotic/structures/cluster/`:
-
-- `ClusterCacheEvictionTest` - Main integration test suite
-- `ClusterTestBase` - Base class for cluster test setup
-- `ClusterHealthVerifier` - Utilities for health checks and verification
-
-To run automated cluster tests:
-```bash
-./gradlew :structures-server:bootBuildImage  # Build image first
-./gradlew :structures-core:test --tests ClusterCacheEvictionTest
-```
-
-**2. Manual Docker Compose Testing** (Pre-release validation)
-
-Use the 3-node cluster configuration for manual testing:
+- `ClusterCacheEvictionServiceTest` - the broadcast, timeout, cancel and retry logic against a mocked Ignite, that
+  no Ignite call runs on an event loop, and that each `evict...` method publishes the matching local event
+- `NamedQueryCacheEvictionTests` - saving and deleting named queries evicts the GraphQL operations built from them
 
 ```bash
-cd docker-compose
-docker compose -f compose.cluster-test.yml up
+./gradlew :structures-test:test --tests '*CacheEviction*'
 ```
 
-See `docker-compose/CLUSTER_TESTING.md` for detailed testing procedures.
+**2. Kubernetes e2e** (`structures-js/structures-e2e/test/k8s/k8s-cache-eviction.test.ts`)
+
+Changes a structure through one pod and checks every other pod serves the new version. This is the real check of
+cluster propagation.
+
+**3. Manual Docker Compose Testing** (Pre-release validation)
+
+See `docs/clustering/CLUSTER_TESTING.md` for detailed testing procedures.
 
 ### Test Scenarios
 

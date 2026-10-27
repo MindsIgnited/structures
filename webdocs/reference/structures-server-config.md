@@ -162,9 +162,11 @@ Below are the available options, their types, and default values. When you see a
   |-------|------------------|----------------------------|------|
   | `true` | after forcing a refresh | yes | each forced refresh writes a new small segment, which costs merges and cache churn when writes are heavy, and slows searches down |
   | `wait_for` | after the next scheduled refresh | yes | usually no extra work for Elasticsearch, but the call takes up to the index's refresh interval longer |
-  | `false` | straight away | no, after the next scheduled refresh or a `syncIndex` call | none |
+  | `false` | straight away | no, after the next scheduled refresh, a Sync write or a `syncIndex` call | none |
 
   Finding an entity by id sees the change straight away whatever the value. Bulk saves and updates never refresh.
+  `saveSync` and `updateSync` always force a refresh, or wait for the next one when called with `waitFor`, whatever
+  the value; see [Choosing a refresh mode](#choosing-a-refresh-mode).
 
   With `wait_for`, a write holds its connection to Elasticsearch while it waits, and reads share the same connections
   (10 per Elasticsearch host). Many concurrent `wait_for` writes queue behind each other and can hold up reads, so it
@@ -180,7 +182,89 @@ Below are the available options, their types, and default values. When you see a
   this problem.
 - **elasticRefreshAfterDelete** (`true` | `false` | `wait_for`, default: `true`):
   The same, for deleting an entity by id. With `false`, the entity drops out of searches after the next scheduled
-  refresh, or once `syncIndex` is called. Delete by query never refreshes.
+  refresh, or once `syncIndex` is called. `deleteByIdSync` always forces a refresh, or waits for the next one when
+  called with `waitFor`. Delete by query never refreshes.
+- **elasticNumberOfShards** (`int`, default: `3`):
+  The number of primary shards each index Structures creates is given: the index a structure gets when it is
+  published, the index template behind a stream structure's data stream (so each of its backing indexes), and tables
+  created by `CREATE TABLE` in project migrations. Must be between 1 and 1024, the most Elasticsearch allows an index
+  by default; any other value stops the server from starting. Elasticsearch fixes it when an index is created, so
+  changing it affects only indexes created afterwards. A stream structure's template is written when the structure is
+  published and keeps its counts from then on, so a changed setting reaches only the data streams of structures
+  published afterwards, not the next backing index of an existing one.
+- **elasticNumberOfReplicas** (`int`, default: `2`):
+  The number of replicas of each primary shard, given to the same indexes. Must not be negative. It affects only
+  indexes created afterwards. Elasticsearch never puts a replica on the same node as its primary, so a cluster with
+  fewer than `elasticNumberOfReplicas` + 1 data nodes leaves replicas unassigned and reports yellow health; use `0` on
+  a single-node cluster.
+
+  The system indexes (`struct_application`, `struct_project`, `struct_structure`,
+  `struct_named_query_service_definition` and the migration history) are created by the migration job, not the server,
+  and it reads `STRUCTURES_MIGRATION_ELASTIC_NUMBER_OF_SHARDS` and `STRUCTURES_MIGRATION_ELASTIC_NUMBER_OF_REPLICAS`
+  instead, with the same defaults and limits. The Helm chart sets both the server's and the migration job's from
+  `properties.structures.elastic.numberOfShards` and `numberOfReplicas`; anywhere else, set them to the same values,
+  or the system indexes keep 3 and 2. Like structure indexes, existing system indexes are not changed.
+
+#### Choosing a refresh mode
+
+The two settings above decide what every single write does by default. Callers can still ask for a refresh on one
+write when they need to search for it straight away, so a server can run with `false`, the cheapest setting, and
+let only the callers that need it pay for a refresh:
+
+| Call | Refresh | Use it when |
+|------|---------|-------------|
+| `save`, `update` | `elasticRefreshAfterMutation` | the default for single writes |
+| `deleteById` | `elasticRefreshAfterDelete` | the default for deletes |
+| `saveSync`, `updateSync`, `deleteByIdSync` | forced, on the shard the write touched | the caller searches for its own write straight afterwards |
+| `saveSync`, `updateSync`, `deleteByIdSync` with `waitFor` | waits for the next scheduled refresh | the same, when the caller can wait up to the refresh interval |
+| `bulkSave`, `bulkUpdate`, `deleteByQuery` | none | bulk writes |
+| `syncIndex` | forces a refresh of every shard of the structure's index | after a batch of bulk writes the caller needs to search |
+
+Over REST the Sync writes are `POST .../{structure}/save-sync`, `POST .../{structure}/update-sync` and
+`DELETE .../{structure}/{id}/sync` (`DELETE .../{structure}/{tenantId}/{id}/sync` on the admin API). They aren't
+GraphQL mutations; GraphQL writes use the configured settings. They are allowed or denied by the same policies as
+`save`, `update` and `deleteById`.
+
+**`waitFor`.** Each Sync write takes an optional `waitFor` flag, `false` by default. With `true` the write waits for
+the next scheduled refresh (`wait_for`) instead of forcing one, so it is still searchable when it returns, without the
+extra segment a forced refresh writes. It takes up to the index's refresh interval longer, and it has the costs below,
+so use it for occasional writes whose callers can wait, not for high-volume ones:
+
+| Client | How to pass it |
+|--------|----------------|
+| TypeScript | the last argument: `saveSync(entity, true)`, `updateSync(entity, true)`, `deleteByIdSync(id, true)` |
+| Java (`JsonEntitiesService`, `AdminJsonEntitiesService`) | the `boolean waitFor` before the `Participant` |
+| REST | the `waitFor=true` query parameter, such as `POST .../{structure}/save-sync?waitFor=true`; a value other than `true` or `false` is a 400 |
+
+> **`waitFor` waits on the index's `refresh_interval`, which Structures doesn't set or know.** That is an
+> Elasticsearch index setting, so check what your indexes use before passing `waitFor`:
+>
+> - The call returns only after the next scheduled refresh: within 1 second on the Elasticsearch default, later on an
+>   index set to refresh less often.
+> - If the interval is longer than `elasticSocketTimeout` (1 minute by default), or than your client's own timeout,
+>   the call fails with a timeout **even though the write was applied**. Retrying a `saveSync` with a version then
+>   fails with a conflict, and retrying an `updateSync` applies the change again.
+> - On an index with `refresh_interval: -1` no scheduled refresh comes. Unless something else refreshes the index
+>   first, the call fails with that same timeout, with the write applied, so don't pass `waitFor` there.
+>
+> Without `waitFor` none of this applies: the Sync write forces a refresh and returns as soon as that is done.
+
+**Why the Sync writes force a refresh unless asked to wait.** Both make the write searchable by the time it
+returns, but `wait_for` has costs that grow under exactly the load that makes `false` worth setting:
+
+- The write holds its connection to Elasticsearch until the next scheduled refresh, and reads share those
+  connections (10 per Elasticsearch host), so concurrent `wait_for` writes can hold up reads.
+- The wait is up to the index's refresh interval: 1 second by default, longer on an index tuned to refresh less
+  often, and until the call times out on one with refreshes disabled (`refresh_interval: -1`).
+- Past 1,000 waiting writes on one shard (`index.max_refresh_listeners`), Elasticsearch forces a refresh anyway.
+
+A forced refresh returns as soon as the shard the write touched is refreshed, so the caller's wait doesn't depend on
+the index settings or on other traffic. The cost, a small new segment per call, is kept down because only the
+callers that ask for it pay it.
+
+**When to call `syncIndex`.** It refreshes every shard of the structure's index, so call it once after a batch of
+bulk writes, not after every bulk call. Callers that don't search for what they just wrote don't need it at all:
+their writes show up after the next scheduled refresh.
 
 #### Example (`application.yml`):
 ```yaml
@@ -197,6 +281,30 @@ structures:
   elasticHealthCheckInterval: 1m
   elasticRefreshAfterMutation: true
   elasticRefreshAfterDelete: true
+```
+
+### Cluster Cache Eviction
+When a structure or named query changes, the node that made the change drops its caches of it and broadcasts the
+eviction to every other server node over Ignite, retrying as set here. The change is reported to its caller once every
+node has evicted, or once the attempts are used up; a failed eviction is logged and counted in the
+`cache.eviction.cluster.results` metric, but never fails the change. Nothing is broadcast when clustering is disabled
+(`continuum.cluster.disableClustering`).
+
+- **clusterEviction.maxCacheSyncRetryAttempts** (`Integer`, default: `3`):
+  Attempts per eviction, the first broadcast included. Less than 1 turns the broadcast off, so only the node that made
+  the change evicts its caches and the other nodes keep theirs until they restart.
+- **clusterEviction.cacheSyncRetryDelayMs** (`Long`, default: `1000`):
+  The delay between attempts, in milliseconds.
+- **clusterEviction.cacheSyncTimeoutMs** (`Long`, default: `30000`):
+  How long one broadcast may take, in milliseconds, before it is cancelled and tried again.
+
+#### Example (`application.yml`):
+```yaml
+structures:
+  clusterEviction:
+    maxCacheSyncRetryAttempts: 3
+    cacheSyncRetryDelayMs: 1000
+    cacheSyncTimeoutMs: 30000
 ```
 
 ### CORS (Cross-Origin Resource Sharing)

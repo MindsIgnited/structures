@@ -77,8 +77,18 @@ bootBuildImage {
             ]
             : [])
     environment = [
+            // Adds /workspace/health-check (https://github.com/dmikusa/tiny-health-checker), used by the compose healthchecks.
+            // THC_PORT and THC_PATH are read when it runs, so they are set in the compose file, not here: a build-time
+            // variable does not reach the image's runtime environment
+            "BP_HEALTH_CHECKER_ENABLED"   : "true",
             "BPE_DELIM_JAVA_TOOL_OPTIONS" : " ",
             "BPE_APPEND_JAVA_TOOL_OPTIONS": "-XX:+UseG1GC -XX:+ScavengeBeforeFullGC -XX:+DisableExplicitGC ${igniteAddOpens}".toString()
+    ]
+    buildpacks = [
+            "urn:cnb:builder:paketo-buildpacks/java",
+            // Pinned, so a new release cannot change the /workspace/health-check the compose healthchecks run
+            // without a change here (https://github.com/paketo-buildpacks/health-checker)
+            "docker.io/paketobuildpacks/health-checker:2.14.0"
     ]
     docker {
         publishRegistry {

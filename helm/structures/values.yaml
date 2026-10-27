@@ -11,7 +11,7 @@ nameOverride: ""
 image:
   repository: mindsignited/structures-server
   pullPolicy: Always
-  tag: "3.8.0"
+  tag: "3.9.0"
   sha: ""
 
 # Migration configuration
@@ -22,7 +22,7 @@ migration:
   activeDeadlineSeconds: 300
   image:
     repository: mindsignited/structures-migration
-    tag: "3.8.0"
+    tag: "3.9.0"
     pullPolicy: Always
     sha: ""
 
@@ -59,8 +59,18 @@ properties:
       #   true      force a refresh, so the change is searchable straight away (the default when left unset)
       #   wait_for  wait for the next scheduled refresh, so the change is searchable without forcing one
       #   false     neither; the change is searchable after the next scheduled refresh or a syncIndex call
+      # Whatever these say, saveSync, updateSync and deleteByIdSync always force a refresh (or wait for the
+      # next one when called with waitFor), so with false only the callers that need to search their own
+      # writes straight away pay for one.
       # refreshAfterMutation: true
       # refreshAfterDelete: true
+      # Primary shards and replicas for every index Structures creates (3 and 2 when left unset): the
+      # system indexes the migration job creates, each published structure's index, and tables created by
+      # project migrations. Both the server and the migration job read these. They apply only to indexes
+      # created afterwards. Fewer than numberOfReplicas + 1 data nodes leaves replicas unassigned and the
+      # cluster yellow, so use 0 replicas on a single node.
+      # numberOfShards: 3
+      # numberOfReplicas: 2
       username: "structures"
       password: "asdfsda898u7fsad8sfa@sdfa"
     ai:

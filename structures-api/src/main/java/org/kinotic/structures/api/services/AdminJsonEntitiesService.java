@@ -52,6 +52,19 @@ public interface AdminJsonEntitiesService {
     CompletableFuture<Void> deleteById(String structureId, TenantSpecificId id, Participant participant);
 
     /**
+     * Deletes the entity with the given id, and refreshes before returning so the deletion shows in searches straight
+     * away, whatever {@code elasticRefreshAfterDelete} is set to. Use it when you need to read your own write.
+     *
+     * @param structureId the id of the structure to delete the entity for
+     * @param id          must not be {@literal null}
+     * @param waitFor     true to wait for the next scheduled refresh instead of forcing one. The call then
+     *                    takes up to the index's refresh interval longer, and holds an Elasticsearch connection while it waits
+     * @param participant the participant of the logged-in user
+     * @return {@link CompletableFuture} emitting when the deletion is searchable
+     */
+    CompletableFuture<Void> deleteByIdSync(String structureId, TenantSpecificId id, boolean waitFor, Participant participant);
+
+    /**
      * Deletes any entities that match the given query.
      *
      * @param structureId the id of the structure to delete the entity for. (this is the {@link Structure#getApplicationId()} + "." + {@link Structure#getName()})

@@ -1,6 +1,6 @@
 # Working well with Elasticsearch
 
-**Status:** refresh settings for single writes done; write throttling planned. This is the place to
+**Status:** refresh settings and Sync writes for single writes done; write throttling planned. This is the place to
 record changes that make Structures easier on Elasticsearch. The first entry is throttling writes
 so they stop slowing reads.
 
@@ -18,6 +18,9 @@ so they stop slowing reads.
   `bulkUpdate`), as opposed to a single `save` or `update`.
 - **`syncIndex`:** a Structures call that forces a refresh of a structure's whole index, so
   everything written so far becomes searchable.
+- **Sync write:** `saveSync`, `updateSync` or `deleteByIdSync`, a single write that forces a
+  refresh of the shard it touched before returning, whatever the refresh settings say. Called with
+  `waitFor`, it waits for the next scheduled refresh instead.
 
 ## Write throttling (October 2026)
 
@@ -40,7 +43,7 @@ is busy, writes should wait, not fail.
 ### Why writes slow reads today
 
 - **Every Elasticsearch node indexes every document.** Indexes and index templates are created
-  with 3 shards and 2 replicas (`CrudServiceTemplate.createIndex` and `createIndexTemplate`). On a
+  with 3 shards and 2 replicas by default (`elasticNumberOfShards` and `elasticNumberOfReplicas`). On a
   3-node cluster each node holds a full copy of the data, so adding Structures pods raises the
   write rate without adding any write capacity.
 - **Reads and writes share one connection pool.** `StructuresElasticsearchConfig` builds one
@@ -128,7 +131,7 @@ Each takes one of three values, the same ones Elasticsearch's own `refresh` para
 |-------|------------------|----------------------------|-----------------------|
 | `true` (default) | after forcing a refresh | yes | a new small segment for every write |
 | `wait_for` | after the next scheduled refresh (within 1 s by default) | yes | usually none extra; the caller waits instead (see the limit below) |
-| `false` | straight away | no: after the next scheduled refresh, or a `syncIndex` call | none |
+| `false` | straight away | no: after the next scheduled refresh, a Sync write, or a `syncIndex` call | none |
 
 Find by id sees a change straight away whatever the value, because Elasticsearch reads a single
 document by id without waiting for a refresh. Bulk calls and delete by query never refresh.
@@ -140,8 +143,8 @@ variables.
 **Which value to use.** `wait_for` keeps the old guarantee (search sees a change as soon as the
 call returns) without the forced refresh, so it's the natural replacement for `true` where callers
 search their own writes. `false` is cheapest. It suits callers that don't search their own writes,
-or that call `syncIndex` only when they actually need to. The plan is to try both in test
-environments first.
+or that use a Sync write or `syncIndex` only when they actually need to (see "Done: Sync writes"
+below). The plan is to try both in test environments first.
 
 **`wait_for` holds a connection while it waits.** Reads and writes still share one pool of 10
 connections per Elasticsearch host (step 1 above would separate them). A `wait_for` write keeps
@@ -185,10 +188,71 @@ Follow-ups, not done yet:
   behaviour), would let bulk writers that search their own data use `wait_for` instead of
   `syncIndex`, which refreshes the whole index. Best left until the metrics are in, and until
   reads and writes have separate pools.
-- **Per-structure or per-call control.** The settings apply to every structure at once. A
-  structure-level option, or a per-request one, could override them, so only the busiest indexes
-  stop forcing refreshes while structures used by interactive apps keep the default. The enum
-  already fits this.
+- **Per-structure control.** The settings apply to every structure at once. A structure-level
+  option could override them, so only the busiest indexes stop forcing refreshes while structures
+  used by interactive apps keep the default. The enum already fits this. Per-call control is done:
+  see "Done: Sync writes" below.
+
+#### Done: Sync writes
+
+`saveSync`, `updateSync` and `deleteByIdSync` (and `deleteByIdSync` on the admin entities service)
+do what `save`, `update` and `deleteById` do, then force a refresh before returning, whatever
+`elasticRefreshAfterMutation` and `elasticRefreshAfterDelete` say. They follow the names Kinotic's
+`CrudService` uses. Over REST they are `save-sync`, `update-sync` and `{id}/sync`. A server can
+then run with both settings `false`, and only the callers that search their own writes straight
+away pay for a refresh.
+
+**Not in GraphQL.** Production uses GraphQL only to read, and integrations write over RPC (STOMP
+over WebSocket) or REST, so the Sync writes aren't added as GraphQL mutations. That also avoids
+new GraphQL name clashes: GraphQL operations are named the operation followed by the structure
+name in one namespace per application, so `saveSync` for `Job` would be the same mutation as
+`save` for `SyncJob`.
+
+**They force a refresh (`refresh=true`) instead of using `wait_for`.** Kinotic's `saveSync` uses
+`wait_for`; we decided against it here, because its costs grow under the load that makes `false`
+worth setting:
+
+- A `wait_for` write holds a pooled connection until the next scheduled refresh, and reads share
+  that pool (see above), so concurrent Sync writes would hold up reads.
+- The wait is up to the refresh interval, so it grows if busy indexes move to a 5-10 s interval,
+  and never ends on an index with refreshes disabled.
+- Past 1,000 waiting writes on a shard, Elasticsearch forces a refresh anyway.
+
+A forced refresh touches only the shard the write went to, and returns as soon as that is done, so
+the caller's latency doesn't depend on index settings or other traffic. Its cost, one small
+segment per call, is paid only by the callers that ask for it.
+
+**`waitFor` opts one call into `wait_for`.** Each Sync write takes an optional `waitFor` flag
+(`false` by default): the last argument in TypeScript, a `boolean` before the `Participant` in
+Java, and the `waitFor=true` query parameter over REST. With it, the write uses `refresh=wait_for`
+for that call, so callers that can wait up to the refresh interval spare Elasticsearch the extra
+segment. The costs above still apply to those calls, so it suits occasional writes, not
+high-volume ones.
+
+**They are authorized as the write they refresh after.** `saveSync` checks the same policies as
+`save`, `updateSync` as `update`, `deleteByIdSync` as `deleteById`. There are no new
+`EntityOperation` values, and the TypeScript
+`EntityServiceDecoratorsConfig` doesn't accept the Sync names, so a policy on `save` can't be
+bypassed by calling `saveSync`.
+
+**`syncIndex` stays.** It is the tool for bulk writers that need to search what they wrote: one
+refresh after a batch, instead of one per write. It refreshes every shard of the index, so callers
+should call it once per batch, not after every bulk call. No bulk Sync methods were added.
+
+**OpenAPI operationIds can repeat.** They are the operation followed by the structure name, so
+`saveSync` for `Job` and `save` for `SyncJob` are both `saveSyncJob`. The paths never clash, since
+each includes the structure name, so every route works; only clients generated from the spec are
+affected, as they already were by repeats such as `Job`'s countByQuery and `JobByQuery`'s count.
+Checking for these at publish, and before a CLI sync, is the next change.
+
+Tests: `EntitySyncTests` runs with both settings `false` and scheduled refreshes off, and checks
+that each Sync write is searchable on return over RPC and REST, that `deleteByIdSync` on the admin
+service works, and that a policy denying `save`, `update` and `deleteById` denies the Sync writes
+too. With `waitFor`, it waits until Elasticsearch has applied each write (from the index's indexing
+stats), checks the write is still waiting a second later, which a forced refresh would not be, and
+only then refreshes the index. It also checks REST answers 400 to a `waitFor` that isn't a boolean
+on the Sync routes, and that the plain routes ignore it. The e2e suite covers the TypeScript client
+and the REST routes.
 
 #### Other changes worth making
 
@@ -196,8 +260,10 @@ Follow-ups, not done yet:
   writes. That means fewer segments and less merging, at the cost of new writes taking a few
   seconds longer to show up in searches.
 - **Review whether 2 replicas is needed.** With 1 replica, each node does about a third less
-  indexing, at some cost to durability. The count is hard-coded in `CrudServiceTemplate`, so making
-  it a setting is part of this change.
+  indexing, at some cost to durability. Done in October 2026: the count is now the
+  `elasticNumberOfReplicas` setting (Helm `properties.structures.elastic.numberOfReplicas`). It applies
+  only to indexes created afterwards; an existing index's replicas can be changed with the
+  `_settings` API (`index.number_of_replicas`), which takes effect straight away.
 - **Use `bulkSave` when the whole document is sent.** Decided October 2026: clients that always
   send complete documents move from `bulkUpdate` to `bulkSave`, which avoids the fetch-and-merge
   `bulkUpdate` costs Elasticsearch on every document. Before moving a client, check:
