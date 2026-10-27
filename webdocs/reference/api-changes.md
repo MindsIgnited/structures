@@ -72,7 +72,8 @@ that used their result no longer compiles. Generators that parsed the old docume
 **Error responses.** Errors (400, 401, 403 and 500 on every operation, and 409 where documented) answer
 `{"error": "<message>"}` as `application/json`, but the spec described them without content. They now reference a new
 `ErrorResponse` schema with a string `error` property. A 404 for an entity that isn't found has an empty body and is
-still documented without content. The server's responses are unchanged.
+still documented without content. The server's responses are unchanged. An application with a structure or entity type
+named `ErrorResponse` keeps that schema for it; its errors then reference `ErrorResponse2`, or the next free name.
 
 *For regenerated clients:* they gain an `ErrorResponse` model, and can read the error message instead of an
 undocumented body.

@@ -138,7 +138,9 @@ jobs:
           gradle pnpmInstall
           gradle pnpmTest
 
+      # Runs when a publish step failed too, so the report still shows the tests of a failed release
       - name: Merge Test Results
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p allure-results
           cp -r */build/allure-results/* allure-results/ || true
@@ -176,13 +178,18 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      # There are none when the build failed before any tests ran, and then there is no report to make, so the
+      # steps below are skipped rather than failing this job on top of the build
       - name: Download test results
+        id: download_results
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: allure-results
           path: allure-results
 
       - name: Get Allure history
+        if: ${{ steps.download_results.outcome == 'success' }}
         uses: actions/checkout@v4
         continue-on-error: true
         with:
@@ -190,6 +197,7 @@ jobs:
           path: gh-pages
 
       - name: Set up JDK
+        if: ${{ steps.download_results.outcome == 'success' }}
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -198,6 +206,7 @@ jobs:
       # The Allure CLI from Maven Central, retried, as a rate-limited or failed download is the
       # one thing here that can fail on its own
       - name: Install Allure
+        if: ${{ steps.download_results.outcome == 'success' }}
         env:
           ALLURE_VERSION: 2.44.0
           ALLURE_SHA256: 7021a90828c00cd6ec992027cce48e8a94bd87fad43d0c2dcac4795cadc178d7
@@ -212,6 +221,7 @@ jobs:
       # from gh-pages, generate the report, and lay it out under allure/<run number> for publishing. The
       # earlier reports stay, as the deploy keeps the files already on gh-pages.
       - name: Generate Allure report
+        if: ${{ steps.download_results.outcome == 'success' }}
         env:
           PAGES_URL: https://mindsignited.github.io/structures/allure
           RUN_NUMBER: ${{ github.run_number }}
@@ -234,6 +244,7 @@ jobs:
           echo "<!DOCTYPE html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0; URL=${PAGES_URL}/${RUN_NUMBER}/index.html\"><meta http-equiv=\"Pragma\" content=\"no-cache\"><meta http-equiv=\"Expires\" content=\"0\">" > allure-history/allure/index.html
 
       - name: Deploy report to Github Pages
+        if: ${{ steps.download_results.outcome == 'success' }}
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -242,11 +253,13 @@ jobs:
           keep_files: true
 
       - name: Add status to Commit
+        if: ${{ steps.download_results.outcome == 'success' }}
         uses: guibranco/github-status-action-v2@v1.1.13
         with:
           authToken: ${{ secrets.GITHUB_TOKEN }}
           context: 'Test Report'
-          description: 'Passed'
-          state: 'success'
+          # The build job's result, as the report is published for failing runs too
+          description: ${{ needs.gradle_build_and_publish.result == 'success' && 'Passed' || 'Failed' }}
+          state: ${{ needs.gradle_build_and_publish.result == 'success' && 'success' || 'failure' }}
           sha: ${{ github.event.pull_request.head.sha || github.sha }}
           target_url: https://mindsignited.github.io/structures/allure/${{ github.run_number }}

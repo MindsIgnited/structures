@@ -19,7 +19,7 @@ import org.kinotic.structures.internal.api.services.sql.QueryContext;
 import org.kinotic.structures.internal.api.services.sql.QueryExecutorFactory;
 import org.kinotic.structures.internal.api.services.sql.executors.QueryExecutor;
 import org.kinotic.structures.internal.cache.ClusterCacheEvictionService;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
+import org.kinotic.structures.internal.cache.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.EvictionSourceType;
 import org.kinotic.structures.internal.utils.StructuresUtil;
 import org.springframework.context.event.EventListener;
@@ -160,9 +160,9 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
                             return CompletableFuture.completedFuture(null);
                         }
                         return clusterCacheEvictionService
-                                .evictCaches(CacheEvictionEvent.localModifiedNamedQuery(namedQueriesDefinition.getApplicationId(),
-                                                                                        structureId(namedQueriesDefinition),
-                                                                                        namedQueriesDefinition.getId()))
+                                .evictModifiedNamedQuery(namedQueriesDefinition.getApplicationId(),
+                                                         structureId(namedQueriesDefinition),
+                                                         namedQueriesDefinition.getId())
                                 .thenApply(v -> namedQueriesDefinition);
                     });
     }
@@ -179,11 +179,10 @@ public class DefaultNamedQueriesService extends AbstractCrudService<NamedQueries
                     // Refreshed like a save, since the caches reload the definitions with a search, which would
                     // otherwise still find this one and cache it again
                     return crudServiceTemplate.deleteById(indexName, id, builder -> builder.refresh(Refresh.True))
-                            .thenCompose(v -> clusterCacheEvictionService.evictCaches(
-                                    CacheEvictionEvent.localDeletedNamedQuery(
-                                            namedQuery.getApplicationId(),
-                                            structureId(namedQuery),
-                                            namedQuery.getId())));
+                            .thenCompose(v -> clusterCacheEvictionService.evictDeletedNamedQuery(
+                                    namedQuery.getApplicationId(),
+                                    structureId(namedQuery),
+                                    namedQuery.getId()));
                 });
     }
 

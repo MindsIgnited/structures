@@ -71,7 +71,7 @@ Structures uses `ContinuumProperties` for Ignite cluster configuration. All clus
 
 | Property | Type | Default | Environment Variable | Description |
 |----------|------|---------|---------------------|-------------|
-| `structures.clusterEviction.maxCacheSyncRetryAttempts` | Integer | `3` | `STRUCTURES_CLUSTEREVICTION_MAXCACHESYNCRETRYATTEMPTS` | Max retry attempts |
+| `structures.clusterEviction.maxCacheSyncRetryAttempts` | Integer | `3` | `STRUCTURES_CLUSTEREVICTION_MAXCACHESYNCRETRYATTEMPTS` | Attempts per eviction, the first broadcast included; less than 1 turns the broadcast off |
 | `structures.clusterEviction.cacheSyncRetryDelayMs` | Long | `1000` | `STRUCTURES_CLUSTEREVICTION_CACHESYNCRETRYDELAYMS` | Delay between retries (ms) |
 | `structures.clusterEviction.cacheSyncTimeoutMs` | Long | `30000` | `STRUCTURES_CLUSTEREVICTION_CACHESYNCTIMEOUTMS` | Timeout per sync attempt (ms) |
 

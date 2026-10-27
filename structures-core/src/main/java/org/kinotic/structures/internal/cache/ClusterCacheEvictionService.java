@@ -14,7 +14,6 @@ import org.apache.ignite.lang.IgniteFuture;
 import org.kinotic.continuum.api.config.ContinuumProperties;
 import org.kinotic.structures.api.config.ClusterEvictionProperties;
 import org.kinotic.structures.api.config.StructuresProperties;
-import org.kinotic.structures.internal.cache.events.CacheEvictionEvent;
 import org.kinotic.structures.internal.cache.events.CacheEvictionSource;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
@@ -26,8 +25,9 @@ import java.util.concurrent.TimeoutException;
  * Evicts the caches for a structure or named query that changed on this node, here and on every other server
  * node in the cluster.
  *
- * The services that change structures and named queries call {@link #evictCaches(CacheEvictionEvent)} and compose
- * on the result, so a change is only reported once the whole cluster has dropped its stale caches. Nothing here
+ * The services that change structures and named queries call the evict methods here and compose on the result, so a
+ * change is only reported once the whole cluster has dropped its stale caches. This is the only way to evict for a
+ * change: only this service can create the local {@link CacheEvictionEvent}s that do it. Nothing here
  * blocks: those calls run on Elasticsearch client and Vert.x threads, so the broadcast, its timeout and the delay
  * between retries are all asynchronous, and run on a Vert.x context rather than on the threads that complete them.
  * The Ignite calls that can block, starting a broadcast and cancelling one that timed out, run on worker threads.
@@ -88,6 +88,42 @@ public class ClusterCacheEvictionService {
     }
 
     /**
+     * Evicts the caches for a structure that was saved, published or unpublished on this node.
+     *
+     * @return as {@link #evictCaches(CacheEvictionEvent)} describes
+     */
+    public CompletableFuture<Void> evictModifiedStructure(String applicationId, String structureId) {
+        return evictCaches(CacheEvictionEvent.localModifiedStructure(applicationId, structureId));
+    }
+
+    /**
+     * Evicts the caches for a structure that was deleted on this node.
+     *
+     * @return as {@link #evictCaches(CacheEvictionEvent)} describes
+     */
+    public CompletableFuture<Void> evictDeletedStructure(String applicationId, String structureId) {
+        return evictCaches(CacheEvictionEvent.localDeletedStructure(applicationId, structureId));
+    }
+
+    /**
+     * Evicts the caches for a named query that was saved on this node.
+     *
+     * @return as {@link #evictCaches(CacheEvictionEvent)} describes
+     */
+    public CompletableFuture<Void> evictModifiedNamedQuery(String applicationId, String structureId, String namedQueryId) {
+        return evictCaches(CacheEvictionEvent.localModifiedNamedQuery(applicationId, structureId, namedQueryId));
+    }
+
+    /**
+     * Evicts the caches for a named query that was deleted on this node.
+     *
+     * @return as {@link #evictCaches(CacheEvictionEvent)} describes
+     */
+    public CompletableFuture<Void> evictDeletedNamedQuery(String applicationId, String structureId, String namedQueryId) {
+        return evictCaches(CacheEvictionEvent.localDeletedNamedQuery(applicationId, structureId, namedQueryId));
+    }
+
+    /**
      * Evicts the caches for a change made on this node. This node's listeners receive the event before this
      * returns, then the eviction is broadcast to every server node, retrying as configured.
      *
@@ -95,13 +131,8 @@ public class ClusterCacheEvictionService {
      * @return completes once every server node has evicted, or once the retries are used up, on a Vert.x context.
      *         An eviction failure never fails the result: it is logged and counted, but must not fail the change that
      *         caused it.
-     * @throws IllegalArgumentException if the event is not a local event, which only a programming error produces
      */
-    public CompletableFuture<Void> evictCaches(CacheEvictionEvent event) {
-        if (event.getEvictionSource() != CacheEvictionSource.LOCAL_MESSAGE) {
-            throw new IllegalArgumentException("Only local cache eviction events can be broadcast to the cluster");
-        }
-
+    private CompletableFuture<Void> evictCaches(CacheEvictionEvent event) {
         try {
             eventPublisher.publishEvent(event);
         } catch (Exception e) {

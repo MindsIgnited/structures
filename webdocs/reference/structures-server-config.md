@@ -189,7 +189,9 @@ Below are the available options, their types, and default values. When you see a
   published, the index template behind a stream structure's data stream (so each of its backing indexes), and tables
   created by `CREATE TABLE` in project migrations. Must be between 1 and 1024, the most Elasticsearch allows an index
   by default; any other value stops the server from starting. Elasticsearch fixes it when an index is created, so
-  changing it affects only indexes created afterwards.
+  changing it affects only indexes created afterwards. A stream structure's template is written when the structure is
+  published and keeps its counts from then on, so a changed setting reaches only the data streams of structures
+  published afterwards, not the next backing index of an existing one.
 - **elasticNumberOfReplicas** (`int`, default: `2`):
   The number of replicas of each primary shard, given to the same indexes. Must not be negative. It affects only
   indexes created afterwards. Elasticsearch never puts a replica on the same node as its primary, so a cluster with
@@ -279,6 +281,30 @@ structures:
   elasticHealthCheckInterval: 1m
   elasticRefreshAfterMutation: true
   elasticRefreshAfterDelete: true
+```
+
+### Cluster Cache Eviction
+When a structure or named query changes, the node that made the change drops its caches of it and broadcasts the
+eviction to every other server node over Ignite, retrying as set here. The change is reported to its caller once every
+node has evicted, or once the attempts are used up; a failed eviction is logged and counted in the
+`cache.eviction.cluster.results` metric, but never fails the change. Nothing is broadcast when clustering is disabled
+(`continuum.cluster.disableClustering`).
+
+- **clusterEviction.maxCacheSyncRetryAttempts** (`Integer`, default: `3`):
+  Attempts per eviction, the first broadcast included. Less than 1 turns the broadcast off, so only the node that made
+  the change evicts its caches and the other nodes keep theirs until they restart.
+- **clusterEviction.cacheSyncRetryDelayMs** (`Long`, default: `1000`):
+  The delay between attempts, in milliseconds.
+- **clusterEviction.cacheSyncTimeoutMs** (`Long`, default: `30000`):
+  How long one broadcast may take, in milliseconds, before it is cancelled and tried again.
+
+#### Example (`application.yml`):
+```yaml
+structures:
+  clusterEviction:
+    maxCacheSyncRetryAttempts: 3
+    cacheSyncRetryDelayMs: 1000
+    cacheSyncTimeoutMs: 30000
 ```
 
 ### CORS (Cross-Origin Resource Sharing)

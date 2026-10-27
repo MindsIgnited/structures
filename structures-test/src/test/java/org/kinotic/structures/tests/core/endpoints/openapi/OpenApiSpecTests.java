@@ -101,7 +101,15 @@ public class OpenApiSpecTests extends ElasticTestBase {
     @BeforeEach
     public void publishStructureAndFetchSpec() throws Exception {
         String applicationId = "org.kinotic.openapispec" + System.nanoTime();
-        String name = "Person" + System.nanoTime();
+        structure = publishStructure(applicationId, "Person" + System.nanoTime());
+        saveNamedQueries();
+        spec = fetchSpec(applicationId);
+    }
+
+    /**
+     * Publishes a Person structure with multi-tenant selection under the given name, in the given application
+     */
+    private Structure publishStructure(String applicationId, String name) {
         ObjectC3Type schema = testDataService.createPersonSchema(MultiTenancyType.SHARED)
                                              .setName(name)
                                              .addProperty("tenantId", new StringC3Type(), List.of(new TenantIdDecorator()));
@@ -112,13 +120,14 @@ public class OpenApiSpecTests extends ElasticTestBase {
         toCreate.setDescription("Defines a Person for the OpenAPI spec tests");
         toCreate.setEntityDefinition(schema);
 
-        structure = applicationService.createApplicationIfNotExist(applicationId, "OpenAPI spec tests")
-                                      .thenCompose(v -> structureService.create(toCreate))
-                                      .thenCompose(created -> structureService.publish(created.getId())
-                                                                              .thenCompose(v -> structureService.findById(created.getId())))
-                                      .join();
-        saveNamedQueries();
+        return applicationService.createApplicationIfNotExist(applicationId, "OpenAPI spec tests")
+                                 .thenCompose(v -> structureService.create(toCreate))
+                                 .thenCompose(created -> structureService.publish(created.getId())
+                                                                         .thenCompose(v -> structureService.findById(created.getId())))
+                                 .join();
+    }
 
+    private JsonNode fetchSpec(String applicationId) throws Exception {
         URI uri = URI.create("http://localhost:" + structuresProperties.getOpenApiPort()
                                      + "/api-docs/" + applicationId + "/openapi.json");
         HttpResponse<String> response;
@@ -127,7 +136,7 @@ public class OpenApiSpecTests extends ElasticTestBase {
                                    HttpResponse.BodyHandlers.ofString());
         }
         Assertions.assertEquals(200, response.statusCode(), response::body);
-        spec = objectMapper.readTree(response.body());
+        return objectMapper.readTree(response.body());
     }
 
     @Test
@@ -155,6 +164,40 @@ public class OpenApiSpecTests extends ElasticTestBase {
             }
         }
         Assertions.assertEquals(List.of(), undocumented, "Routes missing from the spec");
+    }
+
+    /**
+     * The error schema's name is not reserved: a structure named ErrorResponse keeps its schema, its operations still
+     * answer it, and the errors of every operation reference the error schema under the next free name
+     */
+    @Test
+    public void aStructureNamedErrorResponseKeepsItsSchema() throws Exception {
+        publishStructure(structure.getApplicationId(), "ErrorResponse");
+        JsonNode spec = fetchSpec(structure.getApplicationId());
+        JsonNode schemas = spec.path("components").path("schemas");
+
+        Assertions.assertTrue(schemas.path("ErrorResponse").path("properties").has("firstName"),
+                              () -> "the structure's schema was replaced: " + schemas.path("ErrorResponse"));
+        Assertions.assertEquals("string", schemas.path("ErrorResponse2").path("properties").path("error").path("type").asString(),
+                                () -> schemas.path("ErrorResponse2").toString());
+
+        Set<String> errorRefs = new TreeSet<>();
+        Set<String> okRefs = new TreeSet<>();
+        String byId = structuresProperties.getOpenApiPath() + structure.getApplicationId().toLowerCase() + "/errorresponse/{id}";
+        for (Map.Entry<String, JsonNode> path : spec.path("paths").properties()) {
+            for (String method : operationMethods(path.getValue())) {
+                for (Map.Entry<String, JsonNode> response : path.getValue().path(method).path("responses").properties()) {
+                    String ref = response.getValue().path("content").path("application/json").path("schema").path("$ref").asString();
+                    if (!response.getKey().startsWith("2") && !response.getKey().equals("404")) {
+                        errorRefs.add(ref);
+                    } else if (path.getKey().equals(byId) && method.equals("get") && response.getKey().equals("200")) {
+                        okRefs.add(ref);
+                    }
+                }
+            }
+        }
+        Assertions.assertEquals(Set.of("#/components/schemas/ErrorResponse2"), errorRefs);
+        Assertions.assertEquals(Set.of("#/components/schemas/ErrorResponse"), okRefs, "GET " + byId + " must still answer the structure");
     }
 
     /**

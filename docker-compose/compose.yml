@@ -6,7 +6,7 @@ services:
   structures-migration:
     container_name: structures-migration
     pull_policy: always
-    image: mindsignited/structures-migration:${structuresVersion:-3.9.0-SNAPSHOT}
+    image: mindsignited/structures-migration:${structuresVersion:-3.9.0}
     depends_on:
       structures-elasticsearch:
         condition: service_healthy
@@ -17,7 +17,7 @@ services:
   structures-server:
     container_name: structures-server
     pull_policy: always
-    image: mindsignited/structures-server:${structuresVersion:-3.9.0-SNAPSHOT}
+    image: mindsignited/structures-server:${structuresVersion:-3.9.0}
     depends_on:
       structures-elasticsearch:
         condition: service_healthy
@@ -41,6 +41,7 @@ services:
       JAVA_TOOL_OPTIONS: -XX:MaxDirectMemorySize=512m -javaagent:/workspace/BOOT-INF/classes/opentelemetry-javaagent.jar
       CONTINUUM_MAX_OFF_HEAP_MEMORY: 419430400
       THC_PORT: 9090 # Health check port, used by health-check script above (must match STRUCTURES_WEB_SERVER_PORT),
+      THC_PATH: /health # Health check path (must match STRUCTURES_HEALTH_CHECK_PATH); without it the script checks /, which the static file server answers before the server is ready
       SPRING_PROFILES_ACTIVE: production
       SPRING_AI_OPENAI_API-KEY: "noop"
       SPRING_AI_OPENAI_BASE_URL: "https://api.x.ai"
