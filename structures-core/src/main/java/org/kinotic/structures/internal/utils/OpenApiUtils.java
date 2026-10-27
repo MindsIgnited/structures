@@ -1,18 +1,45 @@
 package org.kinotic.structures.internal.utils;
 
 import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.PathItem;
+import io.swagger.v3.oas.models.Paths;
 import io.swagger.v3.oas.models.examples.Example;
 import io.swagger.v3.oas.models.media.*;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Created by Navíd Mitchell 🤪 on 5/7/24.
  */
 public class OpenApiUtils {
+
+    /**
+     * Finds the operationIds that more than one operation in the spec shares. An operationId is built from the
+     * structure's name, so a structure named like another plus an operation's prefix or suffix repeats an id:
+     * {@code Job}'s saveSync and {@code SyncJob}'s save are both {@code saveSyncJob}, and {@code Job}'s countByQuery
+     * and {@code JobByQuery}'s count are both {@code countJobByQuery}. Every route still works, as the paths differ,
+     * but a spec's operationIds must be unique, so a client generated from it fails or renames one of the two.
+     *
+     * @param paths the paths of the spec
+     * @return each repeated operationId, in order, with the {@code METHOD path} of every operation that has it
+     */
+    public static Map<String, List<String>> repeatedOperationIds(Paths paths){
+        Map<String, List<String>> operationsById = new TreeMap<>();
+        for(Map.Entry<String, PathItem> path : paths.entrySet()){
+            for(Map.Entry<PathItem.HttpMethod, Operation> operation : path.getValue().readOperationsMap().entrySet()){
+                operationsById.computeIfAbsent(operation.getValue().getOperationId(), id -> new ArrayList<>())
+                              .add(operation.getKey() + " " + path.getKey());
+            }
+        }
+        operationsById.values().removeIf(operations -> operations.size() < 2);
+        return operationsById;
+    }
 
     public static void addCursorPagingWithoutSortParameters(Operation operation){
         operation.addParametersItem(new Parameter().name("cursor")
