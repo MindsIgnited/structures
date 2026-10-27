@@ -42,6 +42,7 @@ import org.kinotic.structures.api.domain.idl.decorators.TenantIdDecorator;
 import org.kinotic.structures.api.services.ApplicationService;
 import org.kinotic.structures.api.services.NamedQueriesService;
 import org.kinotic.structures.api.services.StructureService;
+import org.kinotic.structures.internal.endpoints.openapi.DefaultOpenApiService;
 import org.kinotic.structures.internal.endpoints.openapi.OpenApiVertxRouterFactory;
 import org.kinotic.structures.internal.sample.TestDataService;
 import org.kinotic.structures.support.elastic.ElasticTestBase;
@@ -164,6 +165,54 @@ public class OpenApiSpecTests extends ElasticTestBase {
             }
         }
         Assertions.assertEquals(List.of(), undocumented, "Routes missing from the spec");
+    }
+
+    /**
+     * Structures whose names differ by an operation's prefix share an operationId (Job's saveSync and SyncJob's save are
+     * both saveSyncJob). The spec is still served, with the repeat, and the server warns about it with both operations
+     */
+    @Test
+    public void warnsAboutOperationIdsRepeatedAcrossStructures() throws Exception {
+        String applicationId = "org.kinotic.openapiclash" + System.nanoTime();
+        String api = structuresProperties.getOpenApiPath() + applicationId.toLowerCase();
+        publishStructure(applicationId, "Job");
+
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(DefaultOpenApiService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            fetchSpec(applicationId);
+            Assertions.assertEquals(List.of(), warnings(appender), "one structure has no repeated operationIds");
+
+            publishStructure(applicationId, "SyncJob");
+            JsonNode spec = fetchSpec(applicationId);
+
+            Assertions.assertEquals("saveSyncJob", operation(spec, api + "/job/save-sync", "post").path("operationId").asString());
+            Assertions.assertEquals("saveSyncJob", operation(spec, api + "/syncjob", "post").path("operationId").asString());
+
+            // One warning per repeated id: each Sync write of Job repeats the plain write of SyncJob
+            List<String> warnings = warnings(appender);
+            Assertions.assertEquals(List.of("deleteSyncJob", "deleteSyncJobAdmin", "saveSyncJob", "updateSyncJob"),
+                                    warnings.stream().map(w -> w.replaceAll(".*operationId (\\S+):.*", "$1")).toList(),
+                                    warnings::toString);
+            String saveWarning = warnings.get(2);
+            Assertions.assertTrue(saveWarning.contains(applicationId)
+                                          && saveWarning.contains("POST " + api + "/job/save-sync")
+                                          && saveWarning.contains("POST " + api + "/syncjob"),
+                                  saveWarning);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    private static List<String> warnings(ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        return appender.list.stream()
+                            .filter(event -> event.getLevel().isGreaterOrEqual(ch.qos.logback.classic.Level.WARN))
+                            .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                            .toList();
     }
 
     /**
@@ -361,6 +410,10 @@ public class OpenApiSpecTests extends ElasticTestBase {
     }
 
     private JsonNode operation(String path, String method) {
+        return operation(spec, path, method);
+    }
+
+    private static JsonNode operation(JsonNode spec, String path, String method) {
         return spec.path("paths").path(path).path(method);
     }
 

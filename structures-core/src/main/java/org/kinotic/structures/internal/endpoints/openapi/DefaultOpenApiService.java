@@ -220,6 +220,13 @@ public class DefaultOpenApiService implements OpenApiService {
                                                                OpenApiUtils.createStringArraySchema("The list of tenants to use when executing the Query operation"));
                     components.addSchemas("QueryWithTenantSelection", queryWithTenantSelectionSchema);
 
+                    // Repeated operationIds are a problem for generated clients only, so the spec is still served
+                    OpenApiUtils.repeatedOperationIds(paths)
+                                .forEach((operationId, operations) -> log.warn(
+                                        "Application {} has {} operations sharing the operationId {}: {}. The routes work, but a client "
+                                        + "generated from the OpenAPI spec fails on, or renames, repeated operationIds",
+                                        applicationId, operations.size(), operationId, operations));
+
                     openAPI.setPaths(paths);
                     openAPI.components(components);
                     return CompletableFuture.completedFuture(openAPI);
